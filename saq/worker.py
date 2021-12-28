@@ -67,15 +67,10 @@ class Worker:
             if self.startup:
                 await self.startup(self.context)
 
-            await self.upkeep()
-
-            def process():
-                if not self.event.is_set():
-                    task = asyncio.create_task(self.process())
-                    task.add_done_callback(lambda _: process())
+            await self.upkeep(loop)
 
             for _ in range(self.concurrency):
-                process()
+                self._process()
 
             await self.event.wait()
         finally:
@@ -83,13 +78,12 @@ class Worker:
             if self.shutdown:
                 await self.shutdown(self.context)
 
-    async def upkeep(self):
+    async def upkeep(self, loop):
         async def poll(func, sleep, arg=None):
             while not self.event.is_set():
                 await func(arg or sleep)
                 await asyncio.sleep(sleep)
 
-        loop = asyncio.get_running_loop()
         loop.create_task(poll(self.queue.schedule, self.timers["schedule"]))
         loop.create_task(poll(self.queue.sweep, self.timers["sweep"]))
         loop.create_task(
@@ -167,3 +161,9 @@ class Worker:
         finally:
             if monitor and not monitor.done():
                 monitor.cancel()
+
+    def _process(self):
+        if not self.event.is_set():
+            asyncio.create_task(self.process()).add_done_callback(
+                lambda _: self._process()
+            )

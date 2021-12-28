@@ -12,8 +12,18 @@ logger = logging.getLogger("saq")
 
 
 class Queue:
+    """
+    Queue is used to interact with aioredis.
+
+    redis: instance of aioredis pool
+    name: name of the queue
+    dump: lambda that takes a dictionary and outputs bytes (default json.dumps)
+    load: lambda that takes bytes and outputs a python dictionary (default json.loads)
+    """
+
     @classmethod
     def from_url(cls, url, name="default"):
+        """Create a queue with a redis url a name."""
         return cls(aioredis.from_url(url), name)
 
     def __init__(self, redis, name="default", dump=None, load=None):
@@ -114,7 +124,7 @@ class Queue:
 
         return await self._schedule_script(
             keys=[self._schedule, self._incomplete, self._queued],
-            args=[lock, now()],
+            args=[lock, now() // 1000],
         )
 
     async def sweep(self, lock=60):
@@ -134,16 +144,18 @@ class Queue:
             keys=[self._sweep, self._active], args=[lock], client=self.redis
         )
 
-        if not job_ids:
-            return
+        swept = []
+        if job_ids:
+            for job_id, job_bytes in zip(job_ids, await self.redis.mget(job_ids)):
+                job = self.deserialize(job_bytes)
 
-        for job_id, job_bytes in zip(job_ids, await self.redis.mget(job_ids)):
-            job = self.deserialize(job_bytes)
-
-            if not job:
-                await self.redis.lrem(self._active, 0, job_id)
-            elif job.stuck:
-                await self.abort(job, error="sweeped")
+                if not job:
+                    swept.append(job_id)
+                    await self.redis.lrem(self._active, 0, job_id)
+                elif job.stuck:
+                    swept.append(job_id)
+                    await self.abort(job, error="sweeped")
+        return swept
 
     async def update(self, job):
         job.touched = now()
@@ -207,7 +219,7 @@ class Queue:
         except asyncio.CancelledError:
             pass
 
-    async def dequeue(self, timeout=0.0):
+    async def dequeue(self, timeout=0):
         if await self.version() < (6, 2, 0):
             job_id = await self.redis.brpoplpush(self._queued, self._active, timeout)
         else:
@@ -216,13 +228,24 @@ class Queue:
             )
         return await self.job(job_id)
 
-    async def enqueue(self, job):
+    async def enqueue(self, job_or_func, **kwargs):
+        job_kwargs = {}
+
+        for k, v in kwargs.items():
+            if k in self._fields:
+                job_kwargs[k] = v
+            else:
+                if "kwargs" not in job_kwargs:
+                    job_kwargs["kwargs"] = {}
+                job_kwargs["kwargs"][k] = v
+
+        if isinstance(job_or_func, str):
+            job = Job(function=job_or_func, **job_kwargs)
+        else:
+            job = dataclasses.replace(job_or_func, **job_kwargs)
+
         if job.queue and job.queue.name != self.name:
             raise ValueError(f"Job {job} registered to a different queue")
-
-        job.queue = self
-        job.enqueued = now()
-        job.status = Status.QUEUED
 
         if not self._enqueue_script:
             self._enqueue_script = self.redis.register_script(
@@ -231,17 +254,23 @@ class Queue:
                     redis.call('SET', KEYS[2], ARGV[1])
                     redis.call('ZADD', KEYS[1], ARGV[2], KEYS[2])
                     if ARGV[2] == '0' then redis.call('RPUSH', KEYS[3], KEYS[2]) end
-                    return 1
+                    return ARGV[1]
                 else
-                    return 0
+                    return redis.call('GET', KEYS[2])
                 end
                 """
             )
 
+        job.queue = self
+        job.enqueued = now()
+        job.status = Status.QUEUED
+
         logger.info("Enqueuing %s", job)
 
-        return await self._enqueue_script(
-            keys=[self._incomplete, job.job_id, self._queued],
-            args=[self.serialize(job), job.scheduled],
-            client=self.redis,
+        return self.deserialize(
+            await self._enqueue_script(
+                keys=[self._incomplete, job.job_id, self._queued],
+                args=[self.serialize(job), job.scheduled],
+                client=self.redis,
+            )
         )

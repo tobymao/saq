@@ -1,23 +1,171 @@
 import asyncio
+import time
 import unittest
+from unittest import mock
 
-import fakeredis.aioredis as redis
-from saq.job import Job
+from saq.job import Job, Status
 from saq.queue import Queue
 
 
 class TestQueue(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
-        self.redis = redis.FakeRedis()
-        self.queue = Queue(self.redis)
-        self.queue._version = (6, 2, 0)
+        self.queue = Queue.from_url("redis://localhost:6379")
 
-    async def test_enqueue(self):
+    async def asyncTearDown(self):
+        await self.queue.redis.flushdb()
+        await self.queue.redis.close()
+
+    async def test_enqueue_job(self):
         job = Job("test")
-        await self.queue.enqueue(job)
-        self.assertEqual(await self.queue.job(job.job_id), job)
+        self.assertEqual(
+            await self.queue.enqueue(job), await self.queue.job(job.job_id)
+        )
         self.assertEqual(await self.queue.count("queued"), 1)
         await self.queue.enqueue(job)
         self.assertEqual(await self.queue.count("queued"), 1)
         await self.queue.enqueue(Job("test"))
         self.assertEqual(await self.queue.count("queued"), 2)
+
+    async def test_enqueue_job_str(self):
+        job = await self.queue.enqueue("test")
+        self.assertIsNotNone(job)
+        self.assertEqual(await self.queue.job(job.job_id), job)
+        job = await self.queue.enqueue("test", y=1, timeout=1)
+        self.assertEqual(job.kwargs, {"y": 1})
+        self.assertEqual(job.timeout, 1)
+        self.assertEqual(job.heartbeat, 0)
+
+    async def test_enqueue_dup(self):
+        job = await self.queue.enqueue("test", job_id="1")
+        self.assertEqual(job.job_id, "1")
+        self.assertEqual(job, await self.queue.enqueue("test", job_id="1"))
+        self.assertEqual(job, await self.queue.enqueue(job))
+
+    async def test_enqueue_scheduled(self):
+        scheduled = time.time() + 10
+        job = await self.queue.enqueue("test", scheduled=scheduled)
+        self.assertEqual(await self.queue.count("queued"), 0)
+        self.assertEqual(await self.queue.count("incomplete"), 1)
+        self.assertEqual(
+            await self.queue.redis.zscore(
+                self.queue.namespace("incomplete"), job.job_id
+            ),
+            scheduled,
+        )
+
+    async def test_dequeue(self):
+        job = await self.queue.enqueue("test")
+        self.assertEqual(await self.queue.count("queued"), 1)
+        self.assertEqual(await self.queue.count("incomplete"), 1)
+        self.assertEqual(await self.queue.count("active"), 0)
+        dequeued = await self.queue.dequeue()
+        self.assertEqual(job, dequeued)
+        self.assertEqual(await self.queue.count("queued"), 0)
+        self.assertEqual(await self.queue.count("incomplete"), 1)
+        self.assertEqual(await self.queue.count("active"), 1)
+
+        task = asyncio.get_running_loop().create_task(self.queue.dequeue())
+        job = await self.queue.enqueue("test")
+        self.assertEqual(await self.queue.count("queued"), 1)
+        await asyncio.sleep(0.1)
+        self.assertEqual(await self.queue.count("queued"), 0)
+        await task
+
+    async def test_finish(self):
+        job = await self.queue.enqueue("test")
+        await self.queue.dequeue()
+        self.assertEqual(await self.queue.count("queued"), 0)
+        self.assertEqual(await self.queue.count("incomplete"), 1)
+        self.assertEqual(await self.queue.count("active"), 1)
+        await self.queue.finish(job, Status.COMPLETE, result=1)
+        self.assertEqual(job.status, Status.COMPLETE)
+        self.assertEqual(job.result, 1)
+        self.assertEqual(await self.queue.count("queued"), 0)
+        self.assertEqual(await self.queue.count("incomplete"), 0)
+        self.assertEqual(await self.queue.count("active"), 0)
+
+    async def test_retry(self):
+        job = await self.queue.enqueue("test", retries=2)
+        await self.queue.dequeue()
+        self.assertEqual(await self.queue.count("queued"), 0)
+        self.assertEqual(await self.queue.count("incomplete"), 1)
+        self.assertEqual(await self.queue.count("active"), 1)
+        self.assertEqual(self.queue.retried, 0)
+        await self.queue.retry(job, None)
+        self.assertEqual(self.queue.retried, 1)
+        self.assertEqual(await self.queue.count("queued"), 1)
+        self.assertEqual(await self.queue.count("incomplete"), 1)
+        self.assertEqual(await self.queue.count("active"), 0)
+
+    async def test_abort(self):
+        job = await self.queue.enqueue("test", retries=2)
+        self.assertEqual(await self.queue.count("queued"), 1)
+        self.assertEqual(await self.queue.count("incomplete"), 1)
+        await self.queue.abort(job)
+        self.assertEqual(await self.queue.count("queued"), 0)
+        self.assertEqual(await self.queue.count("incomplete"), 0)
+
+        job = await self.queue.enqueue("test", retries=2)
+        await self.queue.dequeue()
+        self.assertEqual(await self.queue.count("queued"), 0)
+        self.assertEqual(await self.queue.count("incomplete"), 1)
+        self.assertEqual(await self.queue.count("active"), 1)
+        await self.queue.abort(job)
+        self.assertEqual(await self.queue.count("queued"), 0)
+        self.assertEqual(await self.queue.count("incomplete"), 0)
+        self.assertEqual(await self.queue.count("active"), 0)
+
+    async def test_stats(self):
+        for _ in range(10):
+            await self.queue.enqueue("test")
+            job = await self.queue.dequeue()
+            await job.retry(None)
+            await job.abort()
+            await job.finish(Status.FAILED)
+            await job.finish(Status.COMPLETE)
+        stats = await self.queue.stats()
+        self.assertEqual(stats["complete"], 10)
+        self.assertEqual(stats["failed"], 10)
+        self.assertEqual(stats["retried"], 10)
+        self.assertEqual(stats["aborted"], 10)
+        assert stats["uptime"] > 0
+
+    @mock.patch("saq.utils.time")
+    async def test_schedule(self, mock_time):
+        mock_time.time.return_value = 2
+        self.assertEqual(await self.queue.count("queued"), 0)
+        self.assertEqual(await self.queue.count("incomplete"), 0)
+        await self.queue.enqueue("test")
+        job1 = await self.queue.enqueue("test", scheduled=1)
+        job2 = await self.queue.enqueue("test", scheduled=2)
+        await self.queue.enqueue("test", scheduled=3)
+        self.assertEqual(await self.queue.count("queued"), 1)
+        self.assertEqual(await self.queue.count("incomplete"), 4)
+        jobs1 = await self.queue.schedule()
+        jobs2 = await self.queue.schedule()
+        self.assertEqual(jobs1, [job1.job_id.encode(), job2.job_id.encode()])
+        self.assertIsNone(jobs2)
+        self.assertEqual(await self.queue.count("queued"), 3)
+        self.assertEqual(await self.queue.count("incomplete"), 4)
+
+    @mock.patch("saq.utils.time")
+    async def test_sweep(self, mock_time):
+        mock_time.time.return_value = 1
+        job1 = await self.queue.enqueue("test", heartbeat=1)
+        job2 = await self.queue.enqueue("test", timeout=1)
+        await self.queue.enqueue("test", timeout=2)
+        await self.queue.enqueue("test", heartbeat=2)
+        for _ in range(4):
+            job = await self.queue.dequeue()
+            job.status = Status.ACTIVE
+            job.started = 1000
+            await self.queue.update(job)
+        mock_time.time.return_value = 3
+        self.assertEqual(await self.queue.count("active"), 4)
+        swept = await self.queue.sweep()
+        self.assertEqual(swept, [job1.job_id.encode(), job2.job_id.encode()])
+        job1 = await self.queue.job(job1.job_id)
+        job2 = await self.queue.job(job2.job_id)
+        self.assertEqual(job1.status, Status.ABORTED)
+        self.assertEqual(job2.status, Status.ABORTED)
+        self.assertEqual(await self.queue.count("active"), 2)
