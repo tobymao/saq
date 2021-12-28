@@ -7,5 +7,5 @@ python -m venv env
 source env/bin/activate
 pip install -e .
 docker run -p 6379:6379 redis
-./run\_checks.sh
+./run_checks.sh
 ```
