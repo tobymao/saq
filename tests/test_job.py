@@ -1,3 +1,4 @@
+import asyncio
 import unittest
 
 from saq.job import Job, Status
@@ -21,12 +22,16 @@ class TestJob(unittest.IsolatedAsyncioTestCase):
             Job("").duration("x")
 
         self.assertEqual(Job("", completed=2, started=1).duration("process"), 1)
-        self.assertEqual(Job("", started=2, enqueued=1).duration("start"), 1)
-        self.assertEqual(Job("", completed=2, enqueued=1).duration("total"), 1)
+        self.assertEqual(Job("", started=2, queued=1).duration("start"), 1)
+        self.assertEqual(Job("", completed=2, queued=1).duration("total"), 1)
 
     async def test_enqueue(self):
         self.assertEqual(await self.queue.count("queued"), 0)
+        self.assertEqual(self.job.status, Status.NEW)
         await self.job.enqueue()
+        self.assertEqual(self.job.status, Status.QUEUED)
+        self.assertIsNotNone(self.job.queued)
+        self.assertEqual(self.job.started, 0)
         self.assertEqual(await self.queue.count("queued"), 1)
 
         with self.assertRaises(ValueError):
@@ -48,3 +53,24 @@ class TestJob(unittest.IsolatedAsyncioTestCase):
         self.job.attempts += 1
         await self.job.update()
         self.assertEqual(self.job.attempts, 1)
+
+    async def test_refresh(self):
+        with self.assertRaises(RuntimeError):
+            await self.job.refresh()
+
+        await self.job.enqueue()
+        await self.job.refresh()
+        with self.assertRaises(asyncio.TimeoutError):
+            await self.job.refresh(0.01, 0.01)
+
+        with self.assertRaises(asyncio.TimeoutError):
+            await asyncio.wait_for(self.job.refresh(0), 0.1)
+
+        async def finish():
+            await asyncio.sleep(0.01)
+            await self.job.finish(Status.COMPLETE)
+
+        self.assertEqual(self.job.status, Status.QUEUED)
+        asyncio.create_task(finish())
+        await self.job.refresh(0.05, 0.01)
+        self.assertEqual(self.job.status, Status.COMPLETE)

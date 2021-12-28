@@ -1,3 +1,4 @@
+import asyncio
 import dataclasses
 import enum
 import typing
@@ -33,7 +34,7 @@ class Job:
     Framework Set Properties
         attempts: number of attempts a job has had
         completed: job completion time epoch seconds
-        enqueued: job enqueued time epoch seconds
+        queued: job enqueued time epoch seconds
         started: job started time epoch seconds
         touched: job touched/updated time epoch seconds
         results: dictionary containing the results, this is the return of the function provided, must be serializable, defaults to json
@@ -52,7 +53,7 @@ class Job:
     scheduled: int = 0
     attempts: int = 0
     completed: int = 0
-    enqueued: int = 0
+    queued: int = 0
     started: int = 0
     touched: int = 0
     result: typing.Optional[dict] = None
@@ -89,9 +90,9 @@ class Job:
         if kind == "process":
             return self._duration(self.completed, self.started)
         if kind == "start":
-            return self._duration(self.started, self.enqueued)
+            return self._duration(self.started, self.queued)
         if kind == "total":
-            return self._duration(self.completed, self.enqueued)
+            return self._duration(self.completed, self.queued)
         raise ValueError(f"Unknown duration type: {kind}")
 
     def _duration(self, a, b):
@@ -110,14 +111,12 @@ class Job:
         """
         Enqueues the job to it's queue or a provided one.
 
-        A job that already has a queue cannot be re-enqueued.
-
-        Returns a new instance of the job that was actually queued
-        (job_ids are unique and so a different job may already have been queued).
+        A job that already has a queue cannot be re-enqueued. Job uniqueness is determined by job_id.
+        If a job has already been queued, it will update it's properties to match what is stored in the db.
         """
         queue = queue or self.queue
         assert queue, "Queue unspecified"
-        return await queue.enqueue(self)
+        await queue.enqueue(self)
 
     async def abort(self):
         """Tries to abort the job."""
@@ -134,3 +133,28 @@ class Job:
     async def update(self):
         """Updates the stored job in redis."""
         await self.queue.update(self)
+
+    async def refresh(self, until_complete=None, poll=1.0):
+        """
+        Refresh the current job with the latest data from the db.
+
+        until_complete: None or Float seconds. if None (default), don't wait,
+            else wait seconds until the job is complete or the interval has been reached. 0 means wait forever
+        poll: interval in which to poll in seconds
+        """
+        job = await self.queue.job(self.job_id)
+
+        if not job:
+            raise RuntimeError(f"{self} doesn't exist")
+
+        for field in job.__dataclass_fields__:
+            setattr(self, field, getattr(job, field))
+
+        started = now()
+
+        while not self.completed and until_complete is not None:
+            await asyncio.sleep(poll)
+            await self.refresh()
+
+            if until_complete and seconds(now() - started) > until_complete:
+                raise asyncio.TimeoutError

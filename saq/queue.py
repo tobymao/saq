@@ -242,7 +242,10 @@ class Queue:
         if isinstance(job_or_func, str):
             job = Job(function=job_or_func, **job_kwargs)
         else:
-            job = dataclasses.replace(job_or_func, **job_kwargs)
+            job = job_or_func
+
+            for k, v in job_kwargs.items():
+                setattr(job, k, v)
 
         if job.queue and job.queue.name != self.name:
             raise ValueError(f"Job {job} registered to a different queue")
@@ -254,23 +257,20 @@ class Queue:
                     redis.call('SET', KEYS[2], ARGV[1])
                     redis.call('ZADD', KEYS[1], ARGV[2], KEYS[2])
                     if ARGV[2] == '0' then redis.call('RPUSH', KEYS[3], KEYS[2]) end
-                    return ARGV[1]
-                else
-                    return redis.call('GET', KEYS[2])
                 end
                 """
             )
 
         job.queue = self
-        job.enqueued = now()
+        job.queued = now()
         job.status = Status.QUEUED
 
         logger.info("Enqueuing %s", job)
 
-        return self.deserialize(
-            await self._enqueue_script(
-                keys=[self._incomplete, job.job_id, self._queued],
-                args=[self.serialize(job), job.scheduled],
-                client=self.redis,
-            )
+        await self._enqueue_script(
+            keys=[self._incomplete, job.job_id, self._queued],
+            args=[self.serialize(job), job.scheduled],
+            client=self.redis,
         )
+        await job.refresh()
+        return job
