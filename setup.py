@@ -30,7 +30,6 @@ setup(
         "hiredis": ["aioredis[hiredis]>=2.0"],
         "development": [
             "black",
-            "fakeredis[lua]",
             "pylint",
         ],
     },

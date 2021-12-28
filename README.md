@@ -5,7 +5,7 @@ SAQ (Simple Async Queue) is a simple and performant job queueing framework built
 ```
 python -m venv env
 source env/bin/activate
-pip install -e .
+pip install -e .[development]
 docker run -p 6379:6379 redis
 ./run_checks.sh
 ```
