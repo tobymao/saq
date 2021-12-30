@@ -1,33 +1,28 @@
 import asyncio
-import logging
+import time
 
 from saq import Job, Queue
 
 
-logging.basicConfig()
-logger = logging.getLogger("saq")
-logger.setLevel(logging.INFO)
-
-
 async def test(ctx):
-    await asyncio.sleep(1.1)
+    await asyncio.sleep(1)
     return {"a": 1}
 
 
-queue = Queue.from_url("redis://localhost:6380")
+queue = Queue.from_url("redis://localhost")
 
 settings = {
     "queue": queue,
     "functions": [test],
-    "concurrency": 5,
+    "concurrency": 10,
 }
 
 async def enqueue():
-    count = 0
-    while count < 1:
-        count += 1
-        await Job("test",  queue=queue).enqueue()
+    for _ in range(10000):
+        await queue.enqueue("test")
 
 
 if __name__ == "__main__":
+    now = time.time()
     asyncio.run(enqueue())
+    print(time.time() - now)

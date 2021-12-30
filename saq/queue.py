@@ -70,6 +70,10 @@ class Queue:
         ), f"Job {job_dict} fetched by wrong queue: {self.name}"
         return Job(**job_dict, queue=self)
 
+    async def disconnect(self):
+        await self.redis.close()
+        await self.redis.connection_pool.disconnect()
+
     async def version(self):
         if not self._version:
             info = await self.redis.info()
@@ -152,29 +156,66 @@ class Queue:
                 if not job:
                     swept.append(job_id)
                     await self.redis.lrem(self._active, 0, job_id)
-                elif job.stuck:
+                elif job.status != Status.ACTIVE or job.stuck:
                     swept.append(job_id)
                     await self.abort(job, error="sweeped")
         return swept
 
+    async def listen(self, job, callback, timeout=10):
+        """
+        Listen to updates on job.
+
+        job: job instance
+        callback: callback function, if it returns truthy, break
+        timeout: if timeout is truthy, wait for timeout seconds
+        """
+        pubsub = self.redis.pubsub()
+        await pubsub.subscribe(job.id)
+
+        async def listen():
+            async for message in pubsub.listen():
+                if message["type"] == "message":
+                    job_id = message["channel"].decode("utf-8")
+                    status = Status[message["data"].decode("utf-8").upper()]
+                    if asyncio.iscoroutinefunction(callback):
+                        stop = await callback(job_id, status)
+                    else:
+                        stop = callback(job_id, status)
+
+                    if stop:
+                        break
+
+        try:
+            if timeout:
+                await asyncio.wait_for(listen(), timeout)
+            else:
+                await listen()
+        finally:
+            await pubsub.unsubscribe(job.id)
+
+    async def notify(self, job):
+        await self.redis.publish(job.id, job.status)
+
     async def update(self, job):
         job.touched = now()
-        await self.redis.set(job.job_id, self.serialize(job))
+        await self.redis.set(job.id, self.serialize(job))
+        await self.notify(job)
 
     async def job(self, job_id):
         return self.deserialize(await self.redis.get(job_id))
 
     async def abort(self, job, error="aborted"):
-        await self.redis.lrem(self._queued, 0, job.job_id)
+        await self.redis.lrem(self._queued, 0, job.id)
         await self.finish(job, Status.ABORTED, error=error)
 
     async def retry(self, job, error):
         try:
-            job_id = job.job_id
+            job_id = job.id
             job.status = Status.QUEUED
             job.error = error
             job.completed = 0
             job.started = 0
+            job.touched = now()
 
             async with self.redis.pipeline(transaction=True) as pipe:
                 await (
@@ -184,13 +225,14 @@ class Queue:
                     .execute()
                 )
                 self.retried += 1
+                await self.notify(job)
                 logger.info("Retrying %s", job)
         except asyncio.CancelledError:
             pass
 
     async def finish(self, job, status, *, result=None, error=None):
         try:
-            job_id = job.job_id
+            job_id = job.id
             job.status = status
             job.result = result
             job.error = error
@@ -215,6 +257,7 @@ class Queue:
                 elif status == Status.ABORTED:
                     self.aborted += 1
 
+                await self.notify(job)
                 logger.info("Finished %s", job)
         except asyncio.CancelledError:
             pass
@@ -268,7 +311,7 @@ class Queue:
         logger.info("Enqueuing %s", job)
 
         await self._enqueue_script(
-            keys=[self._incomplete, job.job_id, self._queued],
+            keys=[self._incomplete, job.id, self._queued],
             args=[self.serialize(job), job.scheduled],
             client=self.redis,
         )

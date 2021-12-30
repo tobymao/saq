@@ -2,17 +2,16 @@ import asyncio
 import unittest
 
 from saq.job import Job, Status
-from saq.queue import Queue
+from tests.helpers import create_queue, cleanup_queue
 
 
 class TestJob(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
-        self.queue = Queue.from_url("redis::localhost:6379")
+        self.queue = create_queue()
         self.job = Job("func", queue=self.queue)
 
     async def asyncTearDown(self):
-        await self.queue.redis.flushdb()
-        await self.queue.redis.close()
+        await cleanup_queue(self.queue)
 
     def test_duration(self):
         self.assertIsNone(Job("").duration("process"))
@@ -35,9 +34,7 @@ class TestJob(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await self.queue.count("queued"), 1)
 
         with self.assertRaises(ValueError):
-            await self.job.enqueue(
-                Queue.from_url("redis://localhost:6379", name="queue2")
-            )
+            await self.job.enqueue(create_queue(name="queue2"))
 
     async def test_finish(self):
         await self.job.finish(Status.COMPLETE, result={})
@@ -61,7 +58,7 @@ class TestJob(unittest.IsolatedAsyncioTestCase):
         await self.job.enqueue()
         await self.job.refresh()
         with self.assertRaises(asyncio.TimeoutError):
-            await self.job.refresh(0.01, 0.01)
+            await self.job.refresh(0.01)
 
         with self.assertRaises(asyncio.TimeoutError):
             await asyncio.wait_for(self.job.refresh(0), 0.1)
@@ -72,5 +69,5 @@ class TestJob(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(self.job.status, Status.QUEUED)
         asyncio.create_task(finish())
-        await self.job.refresh(0.05, 0.01)
+        await self.job.refresh(0.1)
         self.assertEqual(self.job.status, Status.COMPLETE)

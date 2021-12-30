@@ -1,4 +1,3 @@
-import asyncio
 import dataclasses
 import enum
 import typing
@@ -25,12 +24,13 @@ class Job:
         function: the async function name to run
         kwargs: kwargs to pass to the function
         queue: the saq.Queue object associated with the job
-        job_id: unique identifier of a job, defaults to uuid1, can be passed in to avoid duplicate jobs
+        key: unique identifier of a job, defaults to uuid1, can be passed in to avoid duplicate jobs
         timeout: the maximum amount of time a job can run for in seconds, defaults to 10 (0 means disabled)
         heartbeat: the maximum amount of time a job can survive without a heartebat in seconds, defaults to 0 (disabled)
         retries: the maximum number of attempts to retry a job, defaults to 1
         ttl: the maximum time in seconds to store information about a job including results, defaults to 60
         scheduled: epoch seconds for when the job should be scheduled, defaults to 0 (schedule right away)
+        progress: job progress 0.0..1.0
     Framework Set Properties
         attempts: number of attempts a job has had
         completed: job completion time epoch seconds
@@ -45,12 +45,13 @@ class Job:
     function: str
     kwargs: typing.Optional[dict] = None
     queue: typing.Optional["Queue"] = None
-    job_id: str = dataclasses.field(default_factory=uuid1)
+    key: str = dataclasses.field(default_factory=uuid1)
     timeout: int = 10
     heartbeat: int = 0
     retries: int = 1
     ttl: int = 60
     scheduled: int = 0
+    progress: float = 0.0
     attempts: int = 0
     completed: int = 0
     queued: int = 0
@@ -67,7 +68,8 @@ class Job:
                 "function": self.function,
                 "kwargs": self.kwargs,
                 "queue": self.queue.name,
-                "job_id": self.job_id,
+                "id": self.id,
+                "progress": self.progress,
                 "process_ms": self.duration("process"),
                 "start_ms": self.duration("start"),
                 "total_ms": self.duration("total"),
@@ -79,6 +81,10 @@ class Job:
             if v is not None
         )
         return f"Job<{kwargs}>"
+
+    @property
+    def id(self):
+        return f"saq:job:{self.key}"
 
     def duration(self, kind):
         """
@@ -111,7 +117,7 @@ class Job:
         """
         Enqueues the job to it's queue or a provided one.
 
-        A job that already has a queue cannot be re-enqueued. Job uniqueness is determined by job_id.
+        A job that already has a queue cannot be re-enqueued. Job uniqueness is determined by its id.
         If a job has already been queued, it will update it's properties to match what is stored in the db.
         """
         queue = queue or self.queue
@@ -130,31 +136,40 @@ class Job:
         """Retries the job by removing it from active and requeueing it."""
         await self.queue.retry(self, error)
 
-    async def update(self):
-        """Updates the stored job in redis."""
+    async def update(self, **kwargs):
+        """
+        Updates the stored job in redis.
+
+        Set properties with passed in kwargs.
+        """
+        for k, v in kwargs.items():
+            setattr(self, k, v)
         await self.queue.update(self)
 
-    async def refresh(self, until_complete=None, poll=1.0):
+    async def refresh(self, until_complete=None):
         """
         Refresh the current job with the latest data from the db.
 
-        until_complete: None or Float seconds. if None (default), don't wait,
+        until_complete: None or Numeric seconds. if None (default), don't wait,
             else wait seconds until the job is complete or the interval has been reached. 0 means wait forever
-        poll: interval in which to poll in seconds
         """
-        job = await self.queue.job(self.job_id)
+        job = await self.queue.job(self.id)
 
         if not job:
             raise RuntimeError(f"{self} doesn't exist")
 
+        self.replace(job)
+
+        if until_complete is not None and not self.completed:
+
+            async def callback(_id, status):
+                if status == Status.COMPLETE:
+                    await self.refresh()
+                    return True
+
+            await self.queue.listen(self, callback, until_complete)
+
+    def replace(self, job):
+        """Replace current attributes with job attributes."""
         for field in job.__dataclass_fields__:
             setattr(self, field, getattr(job, field))
-
-        started = now()
-
-        while not self.completed and until_complete is not None:
-            await asyncio.sleep(poll)
-            await self.refresh()
-
-            if until_complete and seconds(now() - started) > until_complete:
-                raise asyncio.TimeoutError

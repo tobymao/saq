@@ -41,15 +41,15 @@ module = importlib.import_module(module_path)
 settings = getattr(module, name)
 
 level = args.verbose
-logging.basicConfig()
-logger = logging.getLogger("saq")
 
 if level == 0:
-    logger.setLevel(logging.ERROR)
+    level = logging.ERROR
 elif level == 1:
-    logger.setLevel(logging.INFO)
+    level = logging.INFO
 else:
-    logger.setLevel(logging.DEBUG)
+    level = logging.DEBUG
+
+logging.basicConfig(level=level)
 
 workers = args.workers
 

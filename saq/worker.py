@@ -67,7 +67,7 @@ class Worker:
             if self.startup:
                 await self.startup(self.context)
 
-            await self.upkeep(loop)
+            await self.upkeep()
 
             for _ in range(self.concurrency):
                 self._process()
@@ -78,30 +78,34 @@ class Worker:
             if self.shutdown:
                 await self.shutdown(self.context)
 
-    async def upkeep(self, loop):
+    async def stop(self):
+        """Stop the worker and cleanup."""
+        self.event.set()
+        await self.queue.disconnect()
+        for task in asyncio.all_tasks(asyncio.get_running_loop()):
+            if task is not asyncio.current_task():
+                task.cancel()
+                try:
+                    await task
+                except (Exception, asyncio.CancelledError):
+                    pass
+
+    async def handle_signal(self):
+        logger.info("Received signal")
+        await self.stop()
+        asyncio.get_running_loop().stop()
+
+    async def upkeep(self):
         async def poll(func, sleep, arg=None):
             while not self.event.is_set():
                 await func(arg or sleep)
                 await asyncio.sleep(sleep)
 
-        loop.create_task(poll(self.queue.schedule, self.timers["schedule"]))
-        loop.create_task(poll(self.queue.sweep, self.timers["sweep"]))
-        loop.create_task(
+        asyncio.create_task(poll(self.queue.schedule, self.timers["schedule"]))
+        asyncio.create_task(poll(self.queue.sweep, self.timers["sweep"]))
+        asyncio.create_task(
             poll(self.queue.stats, self.timers["stats"], self.timers["stats"] + 1)
         )
-
-    async def handle_signal(self):
-        logger.info("Received signal")
-        self.event.set()
-        loop = asyncio.get_running_loop()
-        for task in asyncio.all_tasks(loop):
-            if task is not asyncio.current_task():
-                task.cancel()
-                try:
-                    await task
-                except asyncio.CancelledError:
-                    pass
-        loop.stop()
 
     async def monitor(self, task, job_id):
         while self.timers["monitor"]:
@@ -120,7 +124,7 @@ class Worker:
 
     async def process(self):
         job = await self.queue.dequeue()
-        job_id = job.job_id
+        job_id = job.id
         job.started = now()
         job.status = Status.ACTIVE
         job.attempts += 1
@@ -150,7 +154,7 @@ class Worker:
             job = await self.queue.job(job_id)
             if job and job.status == Status.ACTIVE:
                 await self.queue.retry(job, "cancelled")
-        except Exception:  # pylint: disable=broad-except
+        except Exception:
             error = traceback.format_exc()
             logger.error(error)
 
