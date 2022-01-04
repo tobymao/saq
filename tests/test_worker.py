@@ -93,23 +93,19 @@ class TestWorker(unittest.IsolatedAsyncioTestCase):
         assert 'ValueError("oops")' in job.error
 
     def test_handle_signal(self):
-        print(f"****** TEST HANDLE SIGNAL *******")
         loop = asyncio.new_event_loop()
         queue = create_queue()
         worker = Worker(queue, functions=functions)
         job = loop.run_until_complete(queue.enqueue("sleeper"))
         self.assertEqual(job.status, Status.QUEUED)
-        loop.create_task(worker.process())
+        worker.tasks.add(loop.create_task(worker.process()))
+
         loop.run_until_complete(asyncio.sleep(0.05))
         loop.run_until_complete(job.refresh())
         self.assertEqual(job.status, Status.ACTIVE)
-        loop.run_until_complete(worker.handle_signal())
-        assert not loop.is_running()
 
-        loop = asyncio.new_event_loop()
-        queue = create_queue()
+        loop.run_until_complete(worker.handle_signal())
         job = loop.run_until_complete(queue.job(job.id))
-        print(f"****** {job.id} {job.started}")
         loop.run_until_complete(cleanup_queue(queue))
         assert job.queued != 0
         assert job.started == 0
@@ -125,7 +121,6 @@ class TestWorker(unittest.IsolatedAsyncioTestCase):
         async def before_process(ctx):
             self.assertIsNotNone(ctx["job"])
             x["before"] += 1
-            print(f"RETRYING {job_id}")
 
         async def after_process(ctx):
             self.assertIsNotNone(ctx["job"])

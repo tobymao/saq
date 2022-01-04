@@ -41,6 +41,7 @@ class Worker:
         self.event = asyncio.Event()
         self.functions = {}
         self.context = {"worker": self}
+        self.tasks = set()
 
         for function in functions:
             if isinstance(function, tuple):
@@ -56,7 +57,7 @@ class Worker:
 
     async def start(self):
         try:
-            self.event.clear()
+            self.event = asyncio.Event()
             loop = asyncio.get_running_loop()
 
             for signum in self.SIGNALS:
@@ -67,35 +68,34 @@ class Worker:
             if self.startup:
                 await self.startup(self.context)
 
-            await self.upkeep()
+            self.tasks.update(await self.upkeep())
 
             for _ in range(self.concurrency):
                 self._process()
 
             await self.event.wait()
+        except asyncio.CancelledError:
+            logger.error("coming here to cancel")
+            await self.stop()
         finally:
             logger.info("Shutting down")
+
             if self.shutdown:
                 await self.shutdown(self.context)
 
     async def stop(self):
         """Stop the worker and cleanup."""
         self.event.set()
+        all_tasks = list(self.tasks)
+        self.tasks.clear()
+        for task in all_tasks:
+            task.cancel()
+        await asyncio.gather(*all_tasks, return_exceptions=True)
         await self.queue.disconnect()
-        for task in asyncio.all_tasks(asyncio.get_running_loop()):
-            print(task.get_name(), task.get_coro())
-            if task is not asyncio.current_task():
-                task.cancel()
-                try:
-                    await task
-                except (Exception, asyncio.CancelledError):
-                    pass
 
     async def handle_signal(self):
         logger.info("Received signal")
         await self.stop()
-        print("FINISHED STOPPING")
-        asyncio.get_running_loop().stop()
 
     async def upkeep(self):
         async def poll(func, sleep, arg=None):
@@ -103,11 +103,13 @@ class Worker:
                 await func(arg or sleep)
                 await asyncio.sleep(sleep)
 
-        asyncio.create_task(poll(self.queue.schedule, self.timers["schedule"]))
-        asyncio.create_task(poll(self.queue.sweep, self.timers["sweep"]))
-        asyncio.create_task(
-            poll(self.queue.stats, self.timers["stats"], self.timers["stats"] + 1)
-        )
+        return [
+            asyncio.create_task(poll(self.queue.schedule, self.timers["schedule"])),
+            asyncio.create_task(poll(self.queue.sweep, self.timers["sweep"])),
+            asyncio.create_task(
+                poll(self.queue.stats, self.timers["stats"], self.timers["stats"] + 1)
+            ),
+        ]
 
     async def monitor(self, task, job_id):
         while self.timers["monitor"]:
@@ -122,7 +124,7 @@ class Worker:
             if job.heartbeat and self.timers["sweep"]:
                 # touch the job only if we care about heartbeats
                 # and if we use upkeep to sweep it up
-                await self.queue.update(job)
+                await job.update()
 
     async def process(self):
         job = await self.queue.dequeue()
@@ -131,7 +133,7 @@ class Worker:
         job.status = Status.ACTIVE
         job.attempts += 1
         logger.info("Processing %s", job)
-        await self.queue.update(job)
+        await job.update()
         monitor = None
         context = {**self.context, "job": job}
 
@@ -151,25 +153,26 @@ class Worker:
             if self.after_process:
                 await self.after_process(context)
 
-            await self.queue.finish(job, Status.COMPLETE, result=result)
+            await job.finish(Status.COMPLETE, result=result)
         except asyncio.CancelledError:
-            print("COMING HERE 1")
-            await asyncio.shield(self.queue.retry(job, "cancelled"))
-            print("COMING HERE 2")
+            await job.retry("cancelled")
         except Exception:
             error = traceback.format_exc()
             logger.error(error)
 
             if job.attempts >= job.retries:
-                await self.queue.finish(job, Status.FAILED, error=error)
+                await job.finish(Status.FAILED, error=error)
             else:
-                await self.queue.retry(job, error)
+                await job.retry(error)
         finally:
             if monitor and not monitor.done():
                 monitor.cancel()
 
-    def _process(self):
+    def _process(self, previous_task=None):
+        if previous_task:
+            self.tasks.remove(previous_task)
+
         if not self.event.is_set():
-            asyncio.create_task(self.process()).add_done_callback(
-                lambda _: self._process()
-            )
+            new_task = asyncio.create_task(self.process())
+            self.tasks.add(new_task)
+            new_task.add_done_callback(self._process)

@@ -14,7 +14,6 @@ def start(options, web=False):
 
     loop = asyncio.new_event_loop()
     worker = Worker(**options)
-    loop.create_task(worker.start())
 
     if web:
         import aiohttp
@@ -24,9 +23,10 @@ def start(options, web=False):
             await worker.stop()
 
         app.on_shutdown.append(shutdown)
+        loop.create_task(worker.start())
         aiohttp.web.run_app(app, loop=loop)
     else:
-        loop.run_forever()
+        loop.run_until_complete(worker.start())
 
 
 parser = argparse.ArgumentParser(description="Start Simple Async Queue Worker")

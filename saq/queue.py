@@ -265,12 +265,8 @@ class Queue:
         job.started = 0
         job.progress = 0
         job.touched = now()
-        print("coming to shield")
-        await asyncio.shield(job.update())
-        print("finishing shield")
 
         async with self.redis.pipeline(transaction=True) as pipe:
-            print("COMING HERE RETRY")
             await (
                 pipe.lrem(self._active, 1, job_id)
                 .lrem(self._queued, 1, job_id)
@@ -279,7 +275,6 @@ class Queue:
                 .set(job_id, self.serialize(job))
                 .execute()
             )
-            print("COMING HERE RETRY FINISHED")
             self.retried += 1
             await self.notify(job)
             logger.info("Retrying %s", job)
