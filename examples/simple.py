@@ -4,8 +4,8 @@ import time
 from saq import Job, Queue
 
 
-async def test(ctx):
-    await asyncio.sleep(1)
+async def test(ctx, a, b, c):
+    await asyncio.sleep(5)
     return {"a": 1}
 
 
@@ -18,8 +18,15 @@ settings = {
 }
 
 async def enqueue():
-    for _ in range(10000):
-        await queue.enqueue("test")
+    sem = asyncio.Semaphore(100)
+    async def sem_task(task):
+        async with sem:
+            return await task
+    tasks = [
+        asyncio.create_task(sem_task(queue.enqueue("test", a=1, b=2, c=3)))
+        for _ in range(10000)
+    ]
+    await asyncio.gather(*tasks)
 
 
 if __name__ == "__main__":

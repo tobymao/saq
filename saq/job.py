@@ -28,7 +28,7 @@ class Job:
         timeout: the maximum amount of time a job can run for in seconds, defaults to 10 (0 means disabled)
         heartbeat: the maximum amount of time a job can survive without a heartebat in seconds, defaults to 0 (disabled)
         retries: the maximum number of attempts to retry a job, defaults to 1
-        ttl: the maximum time in seconds to store information about a job including results, defaults to 60
+        ttl: the maximum time in seconds to store information about a job including results, defaults to 600
         scheduled: epoch seconds for when the job should be scheduled, defaults to 0 (schedule right away)
         progress: job progress 0.0..1.0
     Framework Set Properties
@@ -49,7 +49,7 @@ class Job:
     timeout: int = 10
     heartbeat: int = 0
     retries: int = 1
-    ttl: int = 60
+    ttl: int = 600
     scheduled: int = 0
     progress: float = 0.0
     attempts: int = 0
@@ -85,6 +85,13 @@ class Job:
     @property
     def id(self):
         return f"saq:job:{self.key}"
+
+    def to_dict(self):
+        return {
+            k: v.name if k == "queue" else v
+            for k, v in self.__dict__.items()
+            if v != self.__dataclass_fields__[k].default  # pylint: disable=no-member
+        }
 
     def duration(self, kind):
         """
@@ -124,9 +131,9 @@ class Job:
         assert queue, "Queue unspecified"
         await queue.enqueue(self)
 
-    async def abort(self):
+    async def abort(self, error):
         """Tries to abort the job."""
-        await self.queue.abort(self)
+        await self.queue.abort(self, error)
 
     async def finish(self, status, *, result=None, error=None):
         """Finishes the job with a Job.Status, result, and or error."""

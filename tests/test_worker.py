@@ -36,7 +36,37 @@ class TestWorker(unittest.IsolatedAsyncioTestCase):
         await cleanup_queue(self.queue)
 
     async def test_start(self):
-        pass
+        task = asyncio.create_task(self.worker.start())
+        job = await self.queue.enqueue("noop")
+        await job.refresh(1)
+        self.assertEqual(job.result, 1)
+        job = await self.queue.enqueue("error")
+        await asyncio.sleep(0.05)
+        await job.refresh()
+        self.assertEqual(job.status, Status.FAILED)
+        assert "oops" in job.error
+        job = await self.queue.enqueue("sleeper")
+        self.assertEqual(job.status, Status.QUEUED)
+        await asyncio.sleep(0.05)
+        await job.refresh()
+        self.assertEqual(job.status, Status.ACTIVE)
+        task.cancel()
+        await task
+        await job.refresh()
+        self.assertEqual(job.status, Status.QUEUED)
+
+        asyncio.create_task(self.worker.start())
+        job = await self.queue.enqueue("noop")
+        await job.refresh(1)
+        self.assertEqual(job.result, 1)
+        job = await self.queue.enqueue("sleeper")
+        self.assertEqual(job.status, Status.QUEUED)
+        await asyncio.sleep(0.05)
+        await job.refresh()
+        self.assertEqual(job.status, Status.ACTIVE)
+        await self.worker.handle_signal()
+        await job.refresh()
+        self.assertEqual(job.status, Status.QUEUED)
 
     async def test_noop(self):
         job = await self.queue.enqueue("noop")
@@ -98,15 +128,13 @@ class TestWorker(unittest.IsolatedAsyncioTestCase):
         worker = Worker(queue, functions=functions)
         job = loop.run_until_complete(queue.enqueue("sleeper"))
         self.assertEqual(job.status, Status.QUEUED)
-        loop.create_task(worker.process())
+        worker.tasks.add(loop.create_task(worker.process()))
+
         loop.run_until_complete(asyncio.sleep(0.05))
         loop.run_until_complete(job.refresh())
         self.assertEqual(job.status, Status.ACTIVE)
-        loop.run_until_complete(worker.handle_signal())
-        assert not loop.is_running()
 
-        loop = asyncio.new_event_loop()
-        queue = create_queue()
+        loop.run_until_complete(worker.handle_signal())
         job = loop.run_until_complete(queue.job(job.id))
         loop.run_until_complete(cleanup_queue(queue))
         assert job.queued != 0
@@ -166,6 +194,6 @@ class TestWorker(unittest.IsolatedAsyncioTestCase):
             return True
 
         await self.queue.listen(job, callback)
-        await job.abort()
+        await job.abort("test")
         await job.refresh()
         self.assertEqual(job.status, Status.ABORTED)

@@ -28,7 +28,8 @@ setup(
     ],
     extras_require={
         "hiredis": ["aioredis[hiredis]>=2.0"],
-        "development": [
+        "web": ["aiohttp"],
+        "dev": [
             "black",
             "pylint",
         ],
