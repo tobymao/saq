@@ -79,7 +79,7 @@ const link = function(data, children) {
 const format_time = time => time ? new Date(time).toLocaleString() : ""
 
 const home_view = function(data) {
-    const queues = h("div", [
+    return h("div", [
         h("h1", "Queues"),
         h("table", [
             h("thead", [
@@ -102,33 +102,25 @@ const home_view = function(data) {
             )),
         ]),
     ])
-
-    return h("div", [
-        queues,
-    ])
 }
 
-const job_headers = function() {
-    return [
-        h("th", "Function"),
-        h("th", "Args"),
-        h("th", "Queued"),
-        h("th", "Started"),
-        h("td", "Completed"),
-        h("th", "Status"),
-    ]
-}
+const job_headers = () => [
+    h("th", "Function"),
+    h("th", "Args"),
+    h("th", "Queued"),
+    h("th", "Started"),
+    h("td", "Completed"),
+    h("th", "Status"),
+]
 
-const job_columns = function(job) {
-    return [
-        h("td", job.function),
-        h("td", JSON.stringify(job.kwargs)),
-        h("td", format_time(job.queued)),
-        h("td", format_time(job.started)),
-        h("td", format_time(job.completed)),
-        h("td", job.status),
-    ]
-}
+const job_columns = job => [
+    h("td", job.function),
+    h("td", JSON.stringify(job.kwargs)),
+    h("td", format_time(job.queued)),
+    h("td", format_time(job.started)),
+    h("td", format_time(job.completed)),
+    h("td", job.status),
+]
 
 const queue_view = function(data, queue_name) {
     const queue = data.queue
