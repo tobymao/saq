@@ -36,7 +36,37 @@ class TestWorker(unittest.IsolatedAsyncioTestCase):
         await cleanup_queue(self.queue)
 
     async def test_start(self):
-        pass
+        task = asyncio.create_task(self.worker.start())
+        job = await self.queue.enqueue("noop")
+        await job.refresh(1)
+        self.assertEqual(job.result, 1)
+        job = await self.queue.enqueue("error")
+        await asyncio.sleep(0.05)
+        await job.refresh()
+        self.assertEqual(job.status, Status.FAILED)
+        assert "oops" in job.error
+        job = await self.queue.enqueue("sleeper")
+        self.assertEqual(job.status, Status.QUEUED)
+        await asyncio.sleep(0.05)
+        await job.refresh()
+        self.assertEqual(job.status, Status.ACTIVE)
+        task.cancel()
+        await task
+        await job.refresh()
+        self.assertEqual(job.status, Status.QUEUED)
+
+        asyncio.create_task(self.worker.start())
+        job = await self.queue.enqueue("noop")
+        await job.refresh(1)
+        self.assertEqual(job.result, 1)
+        job = await self.queue.enqueue("sleeper")
+        self.assertEqual(job.status, Status.QUEUED)
+        await asyncio.sleep(0.05)
+        await job.refresh()
+        self.assertEqual(job.status, Status.ACTIVE)
+        await self.worker.handle_signal()
+        await job.refresh()
+        self.assertEqual(job.status, Status.QUEUED)
 
     async def test_noop(self):
         job = await self.queue.enqueue("noop")

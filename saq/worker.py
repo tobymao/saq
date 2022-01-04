@@ -75,7 +75,6 @@ class Worker:
 
             await self.event.wait()
         except asyncio.CancelledError:
-            logger.error("coming here to cancel")
             await self.stop()
         finally:
             logger.info("Shutting down")
@@ -91,7 +90,6 @@ class Worker:
         for task in all_tasks:
             task.cancel()
         await asyncio.gather(*all_tasks, return_exceptions=True)
-        await self.queue.disconnect()
 
     async def handle_signal(self):
         logger.info("Received signal")
