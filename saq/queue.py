@@ -1,5 +1,4 @@
 import asyncio
-import dataclasses
 import json
 import logging
 
@@ -35,7 +34,6 @@ class Queue:
         self.failed = 0
         self.retried = 0
         self.aborted = 0
-        self._fields = {f.name: f.default for f in dataclasses.fields(Job)}
         self._version = None
         self._schedule_script = None
         self._enqueue_script = None
@@ -52,13 +50,7 @@ class Queue:
         return ":".join(["saq", self.name, key])
 
     def serialize(self, job):
-        return self._dump(
-            {
-                k: v.name if k == "queue" else v
-                for k, v in job.__dict__.items()
-                if v != self._fields[k]
-            }
-        )
+        return self._dump(job.to_dict())
 
     def deserialize(self, job_bytes):
         if not job_bytes:
@@ -80,6 +72,63 @@ class Queue:
             self._version = tuple(int(i) for i in info["redis_version"].split("."))
         return self._version
 
+    async def info(self, queue=None, jobs=False, offset=0, limit=10):
+        # pylint: disable=too-many-locals
+        queues = {}
+        keys = []
+        pattern = f"saq:{queue if queue else '*'}:stats:*"
+
+        async for key in self.redis.scan_iter(match=pattern):
+            key = key.decode("utf-8")
+            _, name, _, worker = key.split(":")
+            queues[name] = {"workers": {}}
+            keys.append((name, worker))
+
+        worker_stats = await self.redis.mget(
+            f"saq:{name}:stats:{worker}" for name, worker in keys
+        )
+
+        for (name, worker), stats in zip(keys, worker_stats):
+            stats = json.loads(stats.decode("UTF-8"))
+            queues[name]["workers"][worker] = stats
+
+        for name in queues:
+            queue = Queue(self.redis, name=name)
+            queued = await queue.count("queued")
+            active = await queue.count("active")
+            incomplete = await queue.count("incomplete")
+            jobs = (
+                [
+                    queue.deserialize(job_bytes).to_dict()
+                    for job_bytes in await self.redis.mget(
+                        (
+                            await self.redis.lrange(
+                                queue.namespace("active"), offset, limit - 1
+                            )
+                        )
+                        + (
+                            await self.redis.lrange(
+                                queue.namespace("queued"), offset, limit - 1
+                            )
+                        )
+                    )
+                ]
+                if jobs
+                else []
+            )
+            scheduled = incomplete - queued - active
+
+            queues[name] = {
+                "name": name,
+                "queued": queued,
+                "active": active,
+                "scheduled": scheduled,
+                "jobs": jobs,
+                **queues[name],
+            }
+
+        return queues
+
     async def stats(self, ttl=60):
         stats = {
             "complete": self.complete,
@@ -91,7 +140,7 @@ class Queue:
         await self.redis.setex(
             self.namespace(f"stats:{self.uuid}"),
             ttl,
-            self._dump(stats),
+            json.dumps(stats),
         )
         return stats
 
@@ -204,63 +253,68 @@ class Queue:
     async def job(self, job_id):
         return self.deserialize(await self.redis.get(job_id))
 
-    async def abort(self, job, error="aborted"):
+    async def abort(self, job, error):
         await self.redis.lrem(self._queued, 0, job.id)
         await self.finish(job, Status.ABORTED, error=error)
 
     async def retry(self, job, error):
-        try:
-            job_id = job.id
-            job.status = Status.QUEUED
-            job.error = error
-            job.completed = 0
-            job.started = 0
-            job.touched = now()
+        job_id = job.id
+        job.status = Status.QUEUED
+        job.error = error
+        job.completed = 0
+        job.started = 0
+        job.progress = 0
+        job.touched = now()
+        print("coming to shield")
+        await asyncio.shield(job.update())
+        print("finishing shield")
 
-            async with self.redis.pipeline(transaction=True) as pipe:
-                await (
-                    pipe.lrem(self._active, 1, job_id)
-                    .rpush(self._queued, job_id)
-                    .set(job_id, self.serialize(job))
-                    .execute()
-                )
-                self.retried += 1
-                await self.notify(job)
-                logger.info("Retrying %s", job)
-        except asyncio.CancelledError:
-            pass
+        async with self.redis.pipeline(transaction=True) as pipe:
+            print("COMING HERE RETRY")
+            await (
+                pipe.lrem(self._active, 1, job_id)
+                .lrem(self._queued, 1, job_id)
+                .zadd(self._incomplete, {job_id: job.scheduled})
+                .rpush(self._queued, job_id)
+                .set(job_id, self.serialize(job))
+                .execute()
+            )
+            print("COMING HERE RETRY FINISHED")
+            self.retried += 1
+            await self.notify(job)
+            logger.info("Retrying %s", job)
 
     async def finish(self, job, status, *, result=None, error=None):
-        try:
-            job_id = job.id
-            job.status = status
-            job.result = result
-            job.error = error
-            job.completed = now()
+        job_id = job.id
+        job.status = status
+        job.result = result
+        job.error = error
+        job.completed = now()
 
-            async with self.redis.pipeline(transaction=True) as pipe:
-                pipe = pipe.lrem(
-                    self._active, 0 if status == Status.ABORTED else 1, job_id
-                ).zrem(self._incomplete, job_id)
+        if status == Status.COMPLETE:
+            job.progress = 1.0
 
-                if job.ttl:
-                    pipe = pipe.setex(job_id, job.ttl, self.serialize(job))
-                else:
-                    pipe = pipe.set(job_id, self.serialize(job))
+        async with self.redis.pipeline(transaction=True) as pipe:
+            pipe = pipe.lrem(
+                self._active, 0 if status == Status.ABORTED else 1, job_id
+            ).zrem(self._incomplete, job_id)
 
-                await pipe.execute()
+            if job.ttl:
+                pipe = pipe.setex(job_id, job.ttl, self.serialize(job))
+            else:
+                pipe = pipe.set(job_id, self.serialize(job))
 
-                if status == Status.COMPLETE:
-                    self.complete += 1
-                elif status == Status.FAILED:
-                    self.failed += 1
-                elif status == Status.ABORTED:
-                    self.aborted += 1
+            await pipe.execute()
 
-                await self.notify(job)
-                logger.info("Finished %s", job)
-        except asyncio.CancelledError:
-            pass
+            if status == Status.COMPLETE:
+                self.complete += 1
+            elif status == Status.FAILED:
+                self.failed += 1
+            elif status == Status.ABORTED:
+                self.aborted += 1
+
+            await self.notify(job)
+            logger.info("Finished %s", job)
 
     async def dequeue(self, timeout=0):
         if await self.version() < (6, 2, 0):
@@ -275,7 +329,7 @@ class Queue:
         job_kwargs = {}
 
         for k, v in kwargs.items():
-            if k in self._fields:
+            if k in Job.__dataclass_fields__:  # pylint: disable=no-member
                 job_kwargs[k] = v
             else:
                 if "kwargs" not in job_kwargs:

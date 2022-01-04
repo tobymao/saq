@@ -83,6 +83,7 @@ class Worker:
         self.event.set()
         await self.queue.disconnect()
         for task in asyncio.all_tasks(asyncio.get_running_loop()):
+            print(task.get_name(), task.get_coro())
             if task is not asyncio.current_task():
                 task.cancel()
                 try:
@@ -93,6 +94,7 @@ class Worker:
     async def handle_signal(self):
         logger.info("Received signal")
         await self.stop()
+        print("FINISHED STOPPING")
         asyncio.get_running_loop().stop()
 
     async def upkeep(self):
@@ -151,9 +153,9 @@ class Worker:
 
             await self.queue.finish(job, Status.COMPLETE, result=result)
         except asyncio.CancelledError:
-            job = await self.queue.job(job_id)
-            if job and job.status == Status.ACTIVE:
-                await self.queue.retry(job, "cancelled")
+            print("COMING HERE 1")
+            await asyncio.shield(self.queue.retry(job, "cancelled"))
+            print("COMING HERE 2")
         except Exception:
             error = traceback.format_exc()
             logger.error(error)

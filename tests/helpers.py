@@ -6,5 +6,6 @@ def create_queue(**kwargs):
 
 
 async def cleanup_queue(queue):
+    print(f"****** CLEANING UP QUEUE *******")
     await queue.redis.flushdb()
     await queue.disconnect()
