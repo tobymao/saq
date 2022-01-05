@@ -23,7 +23,7 @@ setup(
     author_email="toby.mao@gmail.com",
     license="MIT",
     packages=["saq"],
-    package_data={"static": ["*"]},
+    include_package_data=True,
     entry_points="""
         [console_scripts]
         saq=saq.__main__:main
