@@ -78,15 +78,15 @@ async def redis_queue(app_):
 
 @web.middleware
 async def exceptions(request, handler):
-    try:
-        resp = await handler(request)
-        return resp
-    except Exception:
-        error = traceback.format_exc()
-        logging.error(error)
-        if request.path.startswith("/api"):
+    if request.path.startswith("/api"):
+        try:
+            resp = await handler(request)
+            return resp
+        except Exception:
+            error = traceback.format_exc()
+            logging.error(error)
             return web.json_response({"error": error})
-        return web.Response(text=error)
+    return await handler(request)
 
 
 app = web.Application(middlewares=[exceptions])
@@ -94,12 +94,14 @@ app = web.Application(middlewares=[exceptions])
 app.add_routes(
     [
         web.static("/static", "static", append_version=True),
-        web.get("/api/jobs/{job:.*}", jobs),
-        web.post("/api/jobs/{job:.*}/retry", retry),
-        web.post("/api/jobs/{job:.*}/abort", abort),
+        web.get("/api/jobs/{job}", jobs),
+        web.post("/api/jobs/{job}/retry", retry),
+        web.post("/api/jobs/{job}/abort", abort),
         web.get("/api/queues", queues),
-        web.get("/api/queues/{queue:.*}", queues),
-        web.get("/{view:.*}", views),
+        web.get("/api/queues/{queue}", queues),
+        web.get("/", views),
+        web.get("/queues/{queue}", views),
+        web.get("/jobs/{job}", views),
     ]
 )
 app.cleanup_ctx.append(redis_queue)

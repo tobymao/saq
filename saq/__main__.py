@@ -1,32 +1,8 @@
 import argparse
-import asyncio
-import importlib
 import logging
 import multiprocessing
 
-from saq.queue import Queue
-from saq.worker import Worker
-
-
-def start(options, web=False):
-    if "queue" not in settings:
-        settings["queue"] = Queue.from_url("redis://localhost")
-
-    loop = asyncio.new_event_loop()
-    worker = Worker(**options)
-
-    if web:
-        import aiohttp
-        from saq.web import app
-
-        async def shutdown(_app):
-            await worker.stop()
-
-        app.on_shutdown.append(shutdown)
-        loop.create_task(worker.start())
-        aiohttp.web.run_app(app, loop=loop)
-    else:
-        loop.run_until_complete(worker.start())
+from saq.worker import start
 
 
 parser = argparse.ArgumentParser(description="Start Simple Async Queue Worker")
@@ -51,11 +27,6 @@ parser.add_argument(
 
 args = parser.parse_args()
 
-# given a.b.c, parses out a.b as the  module path and c as the variable
-module_path, name = args.settings.strip().rsplit(".", 1)
-module = importlib.import_module(module_path)
-settings = getattr(module, name)
-
 level = args.verbose
 
 if level == 0:
@@ -67,11 +38,12 @@ else:
 
 logging.basicConfig(level=level)
 
+settings = args.settings
 workers = args.workers
 
 if workers > 1:
     for _ in range(workers - 1):
-        p = multiprocessing.Process(target=start, args=(settings))
+        p = multiprocessing.Process(target=start, args=(settings,))
         p.start()
 
 start(settings, web=args.web)

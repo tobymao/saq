@@ -38,6 +38,7 @@ class Queue:
         self._schedule_script = None
         self._enqueue_script = None
         self._cleanup_script = None
+        self._stats = "saq:stats"
         self._incomplete = self.namespace("incomplete")
         self._queued = self.namespace("queued")
         self._active = self.namespace("active")
@@ -76,9 +77,8 @@ class Queue:
         # pylint: disable=too-many-locals
         queues = {}
         keys = []
-        pattern = f"saq:{queue if queue else '*'}:stats:*"
 
-        async for key in self.redis.scan_iter(match=pattern):
+        for key in await self.redis.zrangebyscore(self._stats, now(), "inf"):
             key = key.decode("utf-8")
             _, name, _, worker = key.split(":")
             queues[name] = {"workers": {}}
@@ -89,8 +89,9 @@ class Queue:
         )
 
         for (name, worker), stats in zip(keys, worker_stats):
-            stats = json.loads(stats.decode("UTF-8"))
-            queues[name]["workers"][worker] = stats
+            if stats:
+                stats = json.loads(stats.decode("UTF-8"))
+                queues[name]["workers"][worker] = stats
 
         for name in queues:
             queue = Queue(self.redis, name=name)
@@ -130,18 +131,22 @@ class Queue:
         return queues
 
     async def stats(self, ttl=60):
+        current = now()
         stats = {
             "complete": self.complete,
             "failed": self.failed,
             "retried": self.retried,
             "aborted": self.aborted,
-            "uptime": seconds(now() - self.started),
+            "uptime": current - self.started,
         }
-        await self.redis.setex(
-            self.namespace(f"stats:{self.uuid}"),
-            ttl,
-            json.dumps(stats),
-        )
+        async with self.redis.pipeline(transaction=True) as pipe:
+            key = self.namespace(f"stats:{self.uuid}")
+            await (
+                pipe.setex(key, ttl, json.dumps(stats))
+                .zremrangebyscore(self._stats, 0, current)
+                .zadd(self._stats, {key: current + ttl * 1000})
+                .execute()
+            )
         return stats
 
     async def count(self, kind):
@@ -177,7 +182,7 @@ class Queue:
 
         return await self._schedule_script(
             keys=[self._schedule, self._incomplete, self._queued],
-            args=[lock, now() // 1000],
+            args=[lock, seconds(now())],
         )
 
     async def sweep(self, lock=60):

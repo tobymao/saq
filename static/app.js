@@ -161,7 +161,7 @@ const queue_view = function(data, queue_name) {
                     h("td", worker.complete),
                     h("td", worker.retried),
                     h("td", worker.failed),
-                    h("td", worker.uptime),
+                    h("td", worker.uptime / 1000),
                 ])
             )),
         ]),
@@ -255,12 +255,7 @@ const page = async function(path) {
     if (route) {
         const data = await get(route.data || path)
 
-        if (data.error) {
-            view = error_view(data.error)
-        } else {
-            const args = path.match(route.path).slice(1)
-            view = route.view(data, ...args)
-        }
+        view = data.error ? error_view(data.error) : route.view(data, ...path.match(route.path).slice(1))
     }
 
     return h("div", [

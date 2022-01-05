@@ -51,7 +51,7 @@ class TestWorker(unittest.IsolatedAsyncioTestCase):
         await job.refresh()
         self.assertEqual(job.status, Status.ACTIVE)
         task.cancel()
-        await task
+        await asyncio.sleep(0.05)
         await job.refresh()
         self.assertEqual(job.status, Status.QUEUED)
 
@@ -64,7 +64,7 @@ class TestWorker(unittest.IsolatedAsyncioTestCase):
         await asyncio.sleep(0.05)
         await job.refresh()
         self.assertEqual(job.status, Status.ACTIVE)
-        await self.worker.handle_signal()
+        await self.worker.stop()
         await job.refresh()
         self.assertEqual(job.status, Status.QUEUED)
 
@@ -122,7 +122,7 @@ class TestWorker(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(job.status, Status.FAILED)
         assert 'ValueError("oops")' in job.error
 
-    def test_handle_signal(self):
+    def test_stop(self):
         loop = asyncio.new_event_loop()
         queue = create_queue()
         worker = Worker(queue, functions=functions)
@@ -134,7 +134,7 @@ class TestWorker(unittest.IsolatedAsyncioTestCase):
         loop.run_until_complete(job.refresh())
         self.assertEqual(job.status, Status.ACTIVE)
 
-        loop.run_until_complete(worker.handle_signal())
+        loop.run_until_complete(worker.stop())
         job = loop.run_until_complete(queue.job(job.id))
         loop.run_until_complete(cleanup_queue(queue))
         assert job.queued != 0
