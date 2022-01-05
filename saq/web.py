@@ -1,10 +1,14 @@
 import html
 import logging
+import os
+import pathlib
 import traceback
 
 from aiohttp import web
 from saq.queue import Queue
 
+
+static = os.path.join(pathlib.Path(__file__).parent.resolve(), "static")
 
 body = """
 <!DOCTYPE html>
@@ -93,7 +97,7 @@ app = web.Application(middlewares=[exceptions])
 
 app.add_routes(
     [
-        web.static("/static", "static", append_version=True),
+        web.static("/static", static, append_version=True),
         web.get("/api/jobs/{job}", jobs),
         web.post("/api/jobs/{job}/retry", retry),
         web.post("/api/jobs/{job}/abort", abort),
