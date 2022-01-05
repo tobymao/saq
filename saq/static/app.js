@@ -1,7 +1,8 @@
 const patch = snabbdom.init([
     snabbdom.attributesModule,
-    snabbdom.styleModule,
     snabbdom.eventListenersModule,
+    snabbdom.propsModule,
+    snabbdom.styleModule,
 ])
 
 const h = snabbdom.h
@@ -67,7 +68,7 @@ const button = function(children, handler, data) {
 const link = function(data, children) {
     const handler = function(event) {
         event.preventDefault()
-        const path = data.attrs.href
+        const path = data.props.href
         page(path).then(view => render(view))
         window.history.pushState(null, null, path)
         event.target.blur()
@@ -93,7 +94,7 @@ const home_view = function(data) {
             ]),
             h("tbody", {attrs: {role: "grid"}}, data.queues.map(queue =>
                 h("tr", [
-                    h("td", link({attrs: {href: "/queues/" + queue.name}}, queue.name)),
+                    h("td", link({props: {href: "/queues/" + queue.name}}, queue.name)),
                     h("td", queue.active),
                     h("td", queue.queued),
                     h("td", queue.scheduled),
@@ -170,7 +171,7 @@ const queue_view = function(data, queue_name) {
             h("thead", h("tr", [h("th", "Key"), ...job_headers()])),
             h("tbody", queue.jobs.map(job =>
                 h("tr", [
-                    link({attrs: {href: "/jobs/" + job.key}}, h("td", job.key)),
+                    link({props: {href: "/jobs/" + job.key}}, h("td", job.key)),
                     ...job_columns(job),
                 ])
             )),
@@ -209,16 +210,16 @@ const job_view = function(data, job_key) {
             ])),
             h("tbody", h("tr", [
                 ...job_columns(job),
-                h("td", link({attrs: {href: "/queue/" + job.queue}}, job.queue)),
-                h("td", h("progress", {attrs: {value: job.progress || 0, max: 1.0}})),
+                h("td", link({props: {href: "/queue/" + job.queue}}, job.queue)),
+                h("td", h("progress", {props: {value: job.progress || 0, max: 1.0}})),
                 h("td", job.attempts),
             ])),
         ])),
-        h("details", {attrs: {open: true}}, [
+        h("details", {props: {open: true}}, [
             h("summary", "Result"),
             h("p", JSON.stringify(job.result)),
         ]),
-        h("details", {attrs: {open: true}}, [
+        h("details", {props: {open: true}}, [
             h("summary", "Error"),
             h("p", job.error),
         ]),
@@ -260,9 +261,9 @@ const page = async function(path) {
 
     return h("div", [
         h("nav.container", [
-            h("ul", h("li", link({attrs: {href: "/"}}, h("strong", "SAQ")))),
+            h("ul", h("li", link({props: {href: "/"}}, h("strong", "SAQ")))),
             h("ul", [
-                h("li", h("a", {attrs: {href: "https://github.com/tobymao/saq"}}, "Docs")),
+                h("li", h("a", {props: {href: "https://github.com/tobymao/saq"}}, "Docs")),
             ]),
         ]),
         h("main.container", view),
