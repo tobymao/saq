@@ -26,7 +26,7 @@ setup(
     package_data={"static": ["*"]},
     entry_points="""
         [console_scripts]
-        saq=saq.__main__
+        saq=saq.__main__:main
     """,
     install_requires=[
         "aioredis>=2.0",
