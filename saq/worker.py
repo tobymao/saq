@@ -12,6 +12,23 @@ logger = logging.getLogger("saq")
 
 
 class Worker:
+    """
+    Worker is used to process and monitor jobs.
+
+    queue: instance of saq.queue.Queue
+    functions: list of async functions
+    concurrency: number of jobs to process concurrently
+    startup: async function to call on startup
+    shutdown: async function to call on shutdown
+    before_process: async function to call before a job processes
+    before_process: async function to call after a job processes
+    timers: dict with various timer overrides in seconds
+        schedule: how often we poll to schedule jobs
+        stats: how often to update stats
+        sweep: how often to cleanup stuck jobs
+        monitor: how often to check if a job is aborted or to update it's heartbeat
+    """
+
     SIGNALS = [signal.SIGINT, signal.SIGTERM]
 
     def __init__(
@@ -19,7 +36,7 @@ class Worker:
         queue,
         functions,
         *,
-        concurrency=5,
+        concurrency=10,
         startup=None,
         shutdown=None,
         before_process=None,
@@ -57,6 +74,7 @@ class Worker:
             self.functions[name] = function
 
     async def start(self):
+        """Start processing jobs and upkeep tasks."""
         try:
             self.event = asyncio.Event()
             loop = asyncio.get_running_loop()
@@ -91,6 +109,8 @@ class Worker:
         await asyncio.gather(*all_tasks, return_exceptions=True)
 
     async def upkeep(self):
+        """Start various upkeep tasks async."""
+
         async def poll(func, sleep, arg=None):
             while not self.event.is_set():
                 await func(arg or sleep)

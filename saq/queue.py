@@ -327,6 +327,12 @@ class Queue:
         return await self.job(job_id)
 
     async def enqueue(self, job_or_func, **kwargs):
+        """
+        Enqueue a job by instance or string.
+
+        Kwargs can be arguments of the function or properties of the job.
+        If a job instance is passed in, it's properties are overriden.
+        """
         job_kwargs = {}
 
         for k, v in kwargs.items():
