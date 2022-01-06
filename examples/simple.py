@@ -1,35 +1,33 @@
 import asyncio
+import random
 import time
 
 from saq import Queue
 
 
-async def test(ctx, *, a, b, c):
-    await asyncio.sleep(5)
-    return {"a": 1}
+async def sleeper(ctx, *, a):
+    await asyncio.sleep(1)
+    return {"a": a}
 
 
-queue = Queue.from_url("redis://localhost")
+async def adder(ctx, *, a, b):
+    await asyncio.sleep(1)
+    return a + b
+
 
 settings = {
-    "queue": queue,
-    "functions": [test],
-    "concurrency": 100,
+    "functions": [sleeper, adder],
+    "concurrency": 10,
 }
 
-async def enqueue():
-    sem = asyncio.Semaphore(100)
-    async def sem_task(task):
-        async with sem:
-            return await task
-    tasks = [
-        asyncio.create_task(sem_task(queue.enqueue("test", a=1, b=2, c=3)))
-        for _ in range(10000)
-    ]
-    await asyncio.gather(*tasks)
+async def enqueue(func, **kwargs):
+    queue = Queue.from_url("redis://localhost")
+    for _ in range(10000):
+        await queue.enqueue(func, **kwargs)
 
 
 if __name__ == "__main__":
     now = time.time()
-    asyncio.run(enqueue())
+    asyncio.run(enqueue("sleeper", a=random.randint(0, 100)))
+    asyncio.run(enqueue("adder", a=random.randint(0, 100), b=random.randint(0, 100)))
     print(time.time() - now)
