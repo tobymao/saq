@@ -44,7 +44,7 @@ from saq import Queue
 async def test(ctx, *, a):
     await asyncio.sleep(0.5)
     # result should be json serializable
-    # custom serializers and deserializers can be passed in
+    # custom serializers and deserializers can be used through Queue(dump=,load=)
     return {"x": a}
 
 async def startup(ctx):
