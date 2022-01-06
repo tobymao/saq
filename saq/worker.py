@@ -196,7 +196,7 @@ class Worker:
             new_task.add_done_callback(self._process)
 
 
-def start(settings, web=False):
+def start(settings, web=False, port=8080):
     import importlib
 
     # given a.b.c, parses out a.b as the  module path and c as the variable
@@ -219,7 +219,8 @@ def start(settings, web=False):
             await worker.queue.disconnect()
 
         app.on_shutdown.append(shutdown)
+        app["queue"] = worker.queue
         loop.create_task(worker.start())
-        aiohttp.web.run_app(app, loop=loop)
+        aiohttp.web.run_app(app, port=port, loop=loop)
     else:
         loop.run_until_complete(worker.start())

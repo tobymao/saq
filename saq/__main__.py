@@ -27,6 +27,11 @@ def main():
         action="store_true",
         help="Start web app",
     )
+    parser.add_argument(
+        "--port",
+        type=str,
+        help="Web app port, defaults to 8080",
+    )
 
     args = parser.parse_args()
 
@@ -49,7 +54,7 @@ def main():
             p = multiprocessing.Process(target=start, args=(settings,))
             p.start()
 
-    start(settings, web=args.web)
+    start(settings, web=args.web, port=args.port)
 
 
 if __name__ == "__main__":

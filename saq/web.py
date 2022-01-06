@@ -75,7 +75,8 @@ async def _get_job(request):
 
 
 async def redis_queue(app_):
-    app_["queue"] = Queue.from_url("redis://localhost")
+    if "queue" not in app_:
+        app_["queue"] = Queue.from_url("redis://localhost")
     yield
     await app_["queue"].disconnect()
 
