@@ -98,6 +98,7 @@ class Queue:
             queued = await queue.count("queued")
             active = await queue.count("active")
             incomplete = await queue.count("incomplete")
+
             jobs = (
                 [
                     queue.deserialize(job_bytes).to_dict()
@@ -117,13 +118,12 @@ class Queue:
                 if jobs
                 else []
             )
-            scheduled = incomplete - queued - active
 
             queues[name] = {
                 "name": name,
                 "queued": queued,
                 "active": active,
-                "scheduled": scheduled,
+                "scheduled": incomplete - queued - active,
                 "jobs": jobs,
                 **queues[name],
             }
@@ -145,6 +145,7 @@ class Queue:
                 pipe.setex(key, ttl, json.dumps(stats))
                 .zremrangebyscore(self._stats, 0, current)
                 .zadd(self._stats, {key: current + ttl * 1000})
+                .expire(self._stats, ttl)
                 .execute()
             )
         return stats
@@ -354,6 +355,9 @@ class Queue:
                     redis.call('SET', KEYS[2], ARGV[1])
                     redis.call('ZADD', KEYS[1], ARGV[2], KEYS[2])
                     if ARGV[2] == '0' then redis.call('RPUSH', KEYS[3], KEYS[2]) end
+                    return 1
+                else
+                    return nil
                 end
                 """
             )
@@ -364,10 +368,10 @@ class Queue:
 
         logger.info("Enqueuing %s", job)
 
-        await self._enqueue_script(
+        if not await self._enqueue_script(
             keys=[self._incomplete, job.id, self._queued],
             args=[self.serialize(job), job.scheduled],
             client=self.redis,
-        )
-        await job.refresh()
+        ):
+            await job.refresh()
         return job
