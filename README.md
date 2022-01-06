@@ -3,10 +3,11 @@ SAQ (Simple Async Queue) is a simple and performant job queueing framework built
 
 It uses [aioredis](https://github.com/aio-libs/aioredis-py) >= 2.0.
 
-It is similar to [RQ](https://github.com/rq/rq) and heavily inspired by [ARQ](https://github.com/samuelcolvin/arq). Unlike RQ, it is async and so is [significantly faster](benchmarks) if your jobs are async. Even if they are not, SAQ is considerably faster due to lower overhead.
+It is similar to [RQ](https://github.com/rq/rq) and heavily inspired by [ARQ](https://github.com/samuelcolvin/arq). Unlike RQ, it is async and thus [significantly faster](benchmarks) if your jobs are async. Even if they are not, SAQ is still considerably faster due to lower overhead.
 
 SAQ optionally comes with a simple UI for monitor workers and jobs.
-[SAQ Web UI](web.png)
+
+<img src="web.png" alt="SAQ Web UI" style="width:100%;"/>
 
 ## Install
 ```
