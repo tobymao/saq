@@ -255,8 +255,8 @@ const page = async function(path) {
     let view = error_view("404 not found")
     if (route) {
         const data = await get(route.data || path)
-
-        view = data.error ? error_view(data.error) : route.view(data, ...path.match(route.path).slice(1))
+        const args = path.match(route.path).slice(1)
+        view = data.error ? error_view(data.error) : route.view(data, ...args)
     }
 
     return h("div", [
