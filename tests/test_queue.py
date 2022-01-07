@@ -4,6 +4,7 @@ import unittest
 from unittest import mock
 
 from saq.job import Job, Status
+from saq.queue import Queue
 from tests.helpers import create_queue, cleanup_queue
 
 
@@ -47,6 +48,12 @@ class TestQueue(unittest.IsolatedAsyncioTestCase):
             await self.queue.redis.zscore(self.queue.namespace("incomplete"), job.id),
             scheduled,
         )
+
+    async def test_enqueue_job_classmethod(self):
+        job = Job("test")
+        await Queue.enqueue_job(job, self.queue.redis, queue_name="foo")
+        self.assertEqual(job.queue.name, "foo")
+        self.assertEqual(await job.queue.count("queued"), 1)
 
     async def test_dequeue(self):
         job = await self.queue.enqueue("test")

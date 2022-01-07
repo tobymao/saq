@@ -381,3 +381,8 @@ class Queue:
         ):
             await job.refresh()
         return job
+
+    @classmethod
+    async def enqueue_job(cls, job_or_func, redis, queue_name='default', **kwargs):
+        queue = cls(redis, name=queue_name)
+        return await queue.enqueue(job_or_func, **kwargs)
