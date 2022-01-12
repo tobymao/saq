@@ -163,10 +163,11 @@ class Worker:
             if self.timers["monitor"]:
                 monitor = asyncio.create_task(self.monitor(task, job_id))
 
-            result = await asyncio.wait_for(task, job.timeout)
-
-            if self.after_process:
-                await self.after_process(context)
+            try:
+                result = await asyncio.wait_for(task, job.timeout)
+            finally:
+                if self.after_process:
+                    await self.after_process(context)
 
             await job.finish(Status.COMPLETE, result=result)
         except asyncio.CancelledError:

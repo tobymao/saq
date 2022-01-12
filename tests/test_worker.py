@@ -170,7 +170,7 @@ class TestWorker(unittest.IsolatedAsyncioTestCase):
         await self.queue.enqueue("error")
         await worker.process()
         self.assertEqual(x["before"], 2)
-        self.assertEqual(x["after"], 1)
+        self.assertEqual(x["after"], 2)
 
     @mock.patch("saq.utils.time")
     async def test_schedule(self, mock_time):
