@@ -163,11 +163,7 @@ class Worker:
             if self.timers["monitor"]:
                 monitor = asyncio.create_task(self.monitor(task, job_id))
 
-            try:
-                result = await asyncio.wait_for(task, job.timeout)
-            finally:
-                if self.after_process:
-                    await self.after_process(context)
+            result = await self.wait_for_task(context, task, job.timeout)
 
             await job.finish(Status.COMPLETE, result=result)
         except asyncio.CancelledError:
@@ -195,6 +191,13 @@ class Worker:
             new_task = asyncio.create_task(self.process())
             self.tasks.add(new_task)
             new_task.add_done_callback(self._process)
+
+    async def wait_for_task(self, context, task, timeout):
+        try:
+            return await asyncio.wait_for(task, timeout)
+        finally:
+            if self.after_process:
+                await self.after_process(context)
 
 
 def start(settings, web=False, port=8080):
