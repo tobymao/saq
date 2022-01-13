@@ -172,6 +172,12 @@ class TestWorker(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(x["before"], 2)
         self.assertEqual(x["after"], 2)
 
+        task = asyncio.create_task(worker.process())
+        await asyncio.sleep(0.05)
+        task.cancel()
+        self.assertEqual(x["before"], 2)
+        self.assertEqual(x["after"], 2)
+
     @mock.patch("saq.utils.time")
     async def test_schedule(self, mock_time):
         mock_time.time.return_value = 1
