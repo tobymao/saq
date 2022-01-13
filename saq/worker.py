@@ -179,7 +179,11 @@ class Worker:
                 else:
                     await job.retry(error)
         finally:
-            if self.after_process and job.status in (Status.FAILED, Status.COMPLETE):
+            if (
+                self.after_process
+                and job
+                and job.status in (Status.FAILED, Status.COMPLETE)
+            ):
                 await self.after_process(context)
 
             if monitor and not monitor.done():
