@@ -165,9 +165,6 @@ class Worker:
 
             result = await asyncio.wait_for(task, job.timeout)
 
-            if self.after_process:
-                await self.after_process(context)
-
             await job.finish(Status.COMPLETE, result=result)
         except asyncio.CancelledError:
             if job:
@@ -182,6 +179,13 @@ class Worker:
                 else:
                     await job.retry(error)
         finally:
+            if (
+                self.after_process
+                and job
+                and job.status in (Status.FAILED, Status.COMPLETE)
+            ):
+                await self.after_process(context)
+
             if monitor and not monitor.done():
                 monitor.cancel()
                 await asyncio.gather(monitor, return_exceptions=True)
