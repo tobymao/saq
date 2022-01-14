@@ -1,6 +1,7 @@
 import argparse
 import logging
 import multiprocessing
+import sys
 
 from saq.worker import check_health, start
 
@@ -47,7 +48,7 @@ def main():
     logging.basicConfig(level=level)
 
     if args.check:
-        exit(check_health(settings))
+        sys.exit(check_health(settings))
     else:
         workers = args.workers
 
