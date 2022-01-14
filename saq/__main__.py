@@ -24,13 +24,19 @@ def main():
         default=0,
     )
     parser.add_argument(
-        "--web", action="store_true", help="Start web app",
+        "--web",
+        action="store_true",
+        help="Start web app",
     )
     parser.add_argument(
-        "--port", type=str, help="Web app port, defaults to 8080",
+        "--port",
+        type=str,
+        help="Web app port, defaults to 8080",
     )
     parser.add_argument(
-        "--check", action="store_true", help="Perform a health check",
+        "--check",
+        action="store_true",
+        help="Perform a health check",
     )
 
     args = parser.parse_args()
