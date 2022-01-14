@@ -200,13 +200,17 @@ class Worker:
             new_task.add_done_callback(self._process)
 
 
-def start(settings, web=False, port=8080):
+def import_settings(settings):
     import importlib
 
-    # given a.b.c, parses out a.b as the  module path and c as the variable
+    # given a.b.c, parses out a.b as the module path and c as the variable
     module_path, name = settings.strip().rsplit(".", 1)
     module = importlib.import_module(module_path)
-    settings = getattr(module, name)
+    return getattr(module, name)
+
+
+def start(settings, web=False, port=8080):
+    settings = import_settings(settings)
 
     if "queue" not in settings:
         settings["queue"] = Queue.from_url("redis://localhost")
@@ -228,3 +232,22 @@ def start(settings, web=False, port=8080):
         aiohttp.web.run_app(app, port=port, loop=loop)
     else:
         loop.run_until_complete(worker.start())
+
+
+async def async_check_health(queue: Queue) -> int:
+    info = await queue.info()
+    if not info.get(queue.name):
+        logger.warning("Health check failed")
+        status = 1
+    else:
+        logger.info(info[queue.name])
+        status = 0
+    await queue.disconnect()
+    return status
+
+
+def check_health(settings: str) -> int:
+    settings = import_settings(settings)
+    loop = asyncio.new_event_loop()
+    queue = settings.get("queue", Queue.from_url("redis://localhost"))
+    return loop.run_until_complete(async_check_health(queue))

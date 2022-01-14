@@ -1,8 +1,9 @@
 import argparse
 import logging
 import multiprocessing
+import sys
 
-from saq.worker import start
+from saq.worker import check_health, start
 
 
 def main():
@@ -32,6 +33,11 @@ def main():
         type=str,
         help="Web app port, defaults to 8080",
     )
+    parser.add_argument(
+        "--check",
+        action="store_true",
+        help="Perform a health check",
+    )
 
     args = parser.parse_args()
 
@@ -44,17 +50,20 @@ def main():
     else:
         level = logging.DEBUG
 
+    settings = args.settings
     logging.basicConfig(level=level)
 
-    settings = args.settings
-    workers = args.workers
+    if args.check:
+        sys.exit(check_health(settings))
+    else:
+        workers = args.workers
 
-    if workers > 1:
-        for _ in range(workers - 1):
-            p = multiprocessing.Process(target=start, args=(settings,))
-            p.start()
+        if workers > 1:
+            for _ in range(workers - 1):
+                p = multiprocessing.Process(target=start, args=(settings,))
+                p.start()
 
-    start(settings, web=args.web, port=args.port)
+        start(settings, web=args.web, port=args.port)
 
 
 if __name__ == "__main__":
