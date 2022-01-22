@@ -148,28 +148,31 @@ class Worker:
 
         try:
             job = await self.queue.dequeue(self.dequeue_timeout)
-            if job:
-                job_id = job.id
-                job.started = now()
-                job.status = Status.ACTIVE
-                job.attempts += 1
-                logger.info("Processing %s", job)
-                await job.update()
-                context = {**self.context, "job": job}
+            if not job:
+                # Dequeue timed out so return early
+                return
 
-                if self.before_process:
-                    await self.before_process(context)
+            job_id = job.id
+            job.started = now()
+            job.status = Status.ACTIVE
+            job.attempts += 1
+            logger.info("Processing %s", job)
+            await job.update()
+            context = {**self.context, "job": job}
 
-                task = asyncio.create_task(
-                    self.functions[job.function](context, **(job.kwargs or {}))
-                )
+            if self.before_process:
+                await self.before_process(context)
 
-                if self.timers["monitor"]:
-                    monitor = asyncio.create_task(self.monitor(task, job_id))
+            task = asyncio.create_task(
+                self.functions[job.function](context, **(job.kwargs or {}))
+            )
 
-                result = await asyncio.wait_for(task, job.timeout)
+            if self.timers["monitor"]:
+                monitor = asyncio.create_task(self.monitor(task, job_id))
 
-                await job.finish(Status.COMPLETE, result=result)
+            result = await asyncio.wait_for(task, job.timeout)
+
+            await job.finish(Status.COMPLETE, result=result)
         except asyncio.CancelledError:
             if job:
                 await job.retry("cancelled")
