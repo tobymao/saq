@@ -65,6 +65,13 @@ class TestQueue(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await self.queue.count("queued"), 0)
         await task
 
+    async def test_dequeue_timeout(self):
+        dequeued = await self.queue.dequeue(timeout=0.1)
+        self.assertEqual(None, dequeued)
+        self.assertEqual(await self.queue.count("queued"), 0)
+        self.assertEqual(await self.queue.count("incomplete"), 0)
+        self.assertEqual(await self.queue.count("active"), 0)
+
     async def test_finish(self):
         job = await self.queue.enqueue("test")
         await self.queue.dequeue()

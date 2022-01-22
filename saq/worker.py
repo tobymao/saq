@@ -42,6 +42,7 @@ class Worker:
         before_process=None,
         after_process=None,
         timers=None,
+        dequeue_timeout=0,
     ):
         self.queue = queue
         self.concurrency = concurrency
@@ -60,6 +61,7 @@ class Worker:
         self.functions = {}
         self.context = {"worker": self}
         self.tasks = set()
+        self.dequeue_timeout = dequeue_timeout
 
         for function in functions:
             if isinstance(function, tuple):
@@ -140,32 +142,34 @@ class Worker:
                 await job.update()
 
     async def process(self):
+        # pylint: disable=too-many-branches
         job = None
         monitor = None
 
         try:
-            job = await self.queue.dequeue()
-            job_id = job.id
-            job.started = now()
-            job.status = Status.ACTIVE
-            job.attempts += 1
-            logger.info("Processing %s", job)
-            await job.update()
-            context = {**self.context, "job": job}
+            job = await self.queue.dequeue(self.dequeue_timeout)
+            if job:
+                job_id = job.id
+                job.started = now()
+                job.status = Status.ACTIVE
+                job.attempts += 1
+                logger.info("Processing %s", job)
+                await job.update()
+                context = {**self.context, "job": job}
 
-            if self.before_process:
-                await self.before_process(context)
+                if self.before_process:
+                    await self.before_process(context)
 
-            task = asyncio.create_task(
-                self.functions[job.function](context, **(job.kwargs or {}))
-            )
+                task = asyncio.create_task(
+                    self.functions[job.function](context, **(job.kwargs or {}))
+                )
 
-            if self.timers["monitor"]:
-                monitor = asyncio.create_task(self.monitor(task, job_id))
+                if self.timers["monitor"]:
+                    monitor = asyncio.create_task(self.monitor(task, job_id))
 
-            result = await asyncio.wait_for(task, job.timeout)
+                result = await asyncio.wait_for(task, job.timeout)
 
-            await job.finish(Status.COMPLETE, result=result)
+                await job.finish(Status.COMPLETE, result=result)
         except asyncio.CancelledError:
             if job:
                 await job.retry("cancelled")
