@@ -42,6 +42,7 @@ class Worker:
         before_process=None,
         after_process=None,
         timers=None,
+        dequeue_timeout=0,
     ):
         self.queue = queue
         self.concurrency = concurrency
@@ -60,6 +61,7 @@ class Worker:
         self.functions = {}
         self.context = {"worker": self}
         self.tasks = set()
+        self.dequeue_timeout = dequeue_timeout
 
         for function in functions:
             if isinstance(function, tuple):
@@ -140,11 +142,16 @@ class Worker:
                 await job.update()
 
     async def process(self):
+        # pylint: disable=too-many-branches
         job = None
         monitor = None
 
         try:
-            job = await self.queue.dequeue()
+            job = await self.queue.dequeue(self.dequeue_timeout)
+            if not job:
+                # Dequeue timed out so return early
+                return
+
             job_id = job.id
             job.started = now()
             job.status = Status.ACTIVE

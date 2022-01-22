@@ -324,7 +324,11 @@ class Queue:
             job_id = await self.redis.execute_command(
                 "BLMOVE", self._queued, self._active, "RIGHT", "LEFT", timeout
             )
-        return await self.job(job_id)
+        if job_id is not None:
+            return await self.job(job_id)
+
+        logger.debug("Dequeue timed out")
+        return None
 
     async def enqueue(self, job_or_func, **kwargs):
         """
