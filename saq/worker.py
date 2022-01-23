@@ -2,6 +2,7 @@ import asyncio
 import logging
 import signal
 import traceback
+import os
 
 from saq.job import Status
 from saq.queue import Queue
@@ -29,7 +30,7 @@ class Worker:
         monitor: how often to check if a job is aborted or to update it's heartbeat
     """
 
-    SIGNALS = [signal.SIGINT, signal.SIGTERM]
+    SIGNALS = [signal.SIGINT, signal.SIGTERM] if os.name != "nt" else [signal.SIGTERM]
 
     def __init__(
         self,
