@@ -115,6 +115,7 @@ class TestQueue(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await self.queue.count("queued"), 0)
         self.assertEqual(await self.queue.count("incomplete"), 0)
         self.assertEqual(await self.queue.count("active"), 0)
+        self.assertEqual(await self.queue.redis.get(job.abort_id), b"test")
 
     async def test_stats(self):
         for _ in range(10):
@@ -128,7 +129,8 @@ class TestQueue(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(stats["complete"], 10)
         self.assertEqual(stats["failed"], 10)
         self.assertEqual(stats["retried"], 10)
-        self.assertEqual(stats["aborted"], 10)
+        # aborting doesn't happen until upkeep
+        self.assertEqual(stats["aborted"], 0)
         assert stats["uptime"] > 0
 
     @mock.patch("saq.utils.time")
@@ -163,20 +165,26 @@ class TestQueue(unittest.IsolatedAsyncioTestCase):
             job.started = 1000
             await self.queue.update(job)
         await self.queue.dequeue()
+
+        # missing job
+        job4 = Job(function="")
+        await self.queue.redis.lpush(self.queue._active, job4.id)
+
         mock_time.time.return_value = 3
-        self.assertEqual(await self.queue.count("active"), 5)
+        self.assertEqual(await self.queue.count("active"), 6)
         swept = await self.queue.sweep()
         self.assertEqual(
-            swept,
-            [
+            set(swept),
+            {
                 job1.id.encode(),
                 job2.id.encode(),
                 job3.id.encode(),
-            ],
+                job4.id.encode(),
+            },
         )
-        job1 = await self.queue.job(job1.id)
-        job2 = await self.queue.job(job2.id)
-        job3 = await self.queue.job(job3.id)
+        await job1.refresh()
+        await job2.refresh()
+        await job3.refresh()
         self.assertEqual(job1.status, Status.ABORTED)
         self.assertEqual(job2.status, Status.ABORTED)
         self.assertEqual(job3.status, Status.ABORTED)
