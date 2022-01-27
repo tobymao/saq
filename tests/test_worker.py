@@ -193,7 +193,6 @@ class TestWorker(unittest.IsolatedAsyncioTestCase):
     async def test_abort(self, mock_logger):
         job = await self.queue.enqueue("sleeper")
         self.worker.context["sleep"] = 60
-        self.worker.timers["abort"] = 0.0001
         asyncio.create_task(self.worker.process())
 
         # wait for the job to actually start
@@ -217,7 +216,7 @@ class TestWorker(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await self.queue.count("incomplete"), 0)
         self.assertEqual(await self.queue.count("active"), 0)
 
-        await self.worker.abort()
+        await self.worker.abort(0.0001)
         mock_logger.info.assert_any_call("Aborting %s", job.id)
         await job.refresh()
         self.assertEqual(await self.queue.count("queued"), 0)

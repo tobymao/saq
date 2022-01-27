@@ -129,8 +129,7 @@ class TestQueue(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(stats["complete"], 10)
         self.assertEqual(stats["failed"], 10)
         self.assertEqual(stats["retried"], 10)
-        # aborting doesn't happen until upkeep
-        self.assertEqual(stats["aborted"], 0)
+        self.assertEqual(stats["aborted"], 10)
         assert stats["uptime"] > 0
 
     @mock.patch("saq.utils.time")
@@ -168,6 +167,8 @@ class TestQueue(unittest.IsolatedAsyncioTestCase):
 
         # missing job
         job4 = Job(function="")
+
+        # pylint: disable=protected-access
         await self.queue.redis.lpush(self.queue._active, job4.id)
 
         mock_time.time.return_value = 3

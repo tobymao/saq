@@ -129,11 +129,11 @@ class Worker:
             ),
         ]
 
-    async def abort(self):
+    async def abort(self, abort_threshold):
         jobs = [
             job
             for job in self.job_task_contexts
-            if job.duration("running") >= millis(self.timers["abort"])
+            if job.duration("running") >= millis(abort_threshold)
         ]
 
         if not jobs:
