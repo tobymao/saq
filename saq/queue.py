@@ -267,21 +267,19 @@ class Queue:
 
     async def abort(self, job, error, ttl=5):
         async with self.redis.pipeline(transaction=True) as pipe:
-            dequeued, _, _ = await (
+            dequeued, *_ = await (
                 pipe.lrem(self._queued, 0, job.id)
                 .zrem(self._incomplete, job.id)
                 .expire(job.id, ttl + 1)
+                .setex(job.abort_id, ttl, error)
                 .execute()
             )
 
-            if dequeued:
-                await job.finish(Status.ABORTED, error=error)
-            else:
-                await (
-                    pipe.lrem(self._active, 0, job.id)
-                    .setex(job.abort_id, ttl, error)
-                    .execute()
-                )
+        if dequeued:
+            await job.finish(Status.ABORTED, error=error)
+            await self.redis.delete(job.abort_id)
+        else:
+            await self.redis.lrem(self._active, 0, job.id)
 
     async def retry(self, job, error):
         job_id = job.id
