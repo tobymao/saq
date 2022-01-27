@@ -27,6 +27,7 @@ class Job:
         key: unique identifier of a job, defaults to uuid1, can be passed in to avoid duplicate jobs
         timeout: the maximum amount of time a job can run for in seconds, defaults to 10 (0 means disabled)
         heartbeat: the maximum amount of time a job can survive without a heartebat in seconds, defaults to 0 (disabled)
+            a heartbeat can be triggered manually within a job by calling await job.update()
         retries: the maximum number of attempts to retry a job, defaults to 1
         ttl: the maximum time in seconds to store information about a job including results, defaults to 600
         scheduled: epoch seconds for when the job should be scheduled, defaults to 0 (schedule right away)
@@ -82,9 +83,16 @@ class Job:
         )
         return f"Job<{kwargs}>"
 
+    def __hash__(self):
+        return hash(self.key)
+
     @property
     def id(self):
         return f"saq:job:{self.key}"
+
+    @property
+    def abort_id(self):
+        return f"saq:abort:{self.key}"
 
     def to_dict(self):
         return {
@@ -106,6 +114,8 @@ class Job:
             return self._duration(self.started, self.queued)
         if kind == "total":
             return self._duration(self.completed, self.queued)
+        if kind == "running":
+            return self._duration(now(), self.started)
         raise ValueError(f"Unknown duration type: {kind}")
 
     def _duration(self, a, b):
@@ -131,9 +141,9 @@ class Job:
         assert queue, "Queue unspecified"
         await queue.enqueue(self)
 
-    async def abort(self, error):
+    async def abort(self, error, ttl=5):
         """Tries to abort the job."""
-        await self.queue.abort(self, error)
+        await self.queue.abort(self, error, ttl=ttl)
 
     async def finish(self, status, *, result=None, error=None):
         """Finishes the job with a Job.Status, result, and or error."""

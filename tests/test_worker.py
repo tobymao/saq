@@ -189,17 +189,44 @@ class TestWorker(unittest.IsolatedAsyncioTestCase):
         await job.refresh()
         self.assertEqual(job.result, 1)
 
-    async def test_abort(self):
+    @mock.patch("saq.worker.logger")
+    async def test_abort(self, mock_logger):
         job = await self.queue.enqueue("sleeper")
-        self.worker.context["sleep"] = 2
+        self.worker.context["sleep"] = 60
         asyncio.create_task(self.worker.process())
 
+        # wait for the job to actually start
         def callback(job_id, status):
             self.assertEqual(job.id, job_id)
             self.assertEqual(status, Status.ACTIVE)
             return True
 
         await self.queue.listen(job, callback)
+        self.assertEqual(await self.queue.count("queued"), 0)
+        self.assertEqual(await self.queue.count("incomplete"), 1)
+        self.assertEqual(await self.queue.count("active"), 1)
         await job.abort("test")
+        self.assertEqual(await self.queue.count("queued"), 0)
+        self.assertEqual(await self.queue.count("incomplete"), 0)
+        self.assertEqual(await self.queue.count("active"), 0)
+
+        # ensure job doens't get requeued
+        await job.enqueue()
+        self.assertEqual(await self.queue.count("queued"), 0)
+        self.assertEqual(await self.queue.count("incomplete"), 0)
+        self.assertEqual(await self.queue.count("active"), 0)
+
+        await self.worker.abort(0.0001)
+        mock_logger.info.assert_any_call("Aborting %s", job.id)
         await job.refresh()
+        self.assertEqual(await self.queue.count("queued"), 0)
+        self.assertEqual(await self.queue.count("incomplete"), 0)
+        self.assertEqual(await self.queue.count("active"), 0)
         self.assertEqual(job.status, Status.ABORTED)
+        self.assertEqual(job.error, "test")
+
+        # ensure job can get requeued
+        await job.enqueue()
+        self.assertEqual(await self.queue.count("queued"), 1)
+        self.assertEqual(await self.queue.count("incomplete"), 1)
+        self.assertEqual(await self.queue.count("active"), 0)

@@ -6,7 +6,7 @@ import os
 
 from saq.job import Status
 from saq.queue import Queue
-from saq.utils import now
+from saq.utils import millis, now
 
 
 logger = logging.getLogger("saq")
@@ -27,7 +27,7 @@ class Worker:
         schedule: how often we poll to schedule jobs
         stats: how often to update stats
         sweep: how often to cleanup stuck jobs
-        monitor: how often to check if a job is aborted or to update it's heartbeat
+        abort: how often to check if a job is aborted
     """
 
     SIGNALS = [signal.SIGINT, signal.SIGTERM] if os.name != "nt" else [signal.SIGTERM]
@@ -55,13 +55,14 @@ class Worker:
             "schedule": 1,
             "stats": 10,
             "sweep": 60,
-            "monitor": 1,
+            "abort": 1,
             **(timers or {}),
         }
         self.event = asyncio.Event()
         self.functions = {}
         self.context = {"worker": self}
         self.tasks = set()
+        self.job_task_contexts = {}
         self.dequeue_timeout = dequeue_timeout
 
         for function in functions:
@@ -120,6 +121,7 @@ class Worker:
                 await asyncio.sleep(sleep)
 
         return [
+            asyncio.create_task(poll(self.abort, self.timers["abort"])),
             asyncio.create_task(poll(self.queue.schedule, self.timers["schedule"])),
             asyncio.create_task(poll(self.queue.sweep, self.timers["sweep"])),
             asyncio.create_task(
@@ -127,33 +129,44 @@ class Worker:
             ),
         ]
 
-    async def monitor(self, task, job_id):
-        while self.timers["monitor"]:
-            await asyncio.sleep(self.timers["monitor"])
-            job = await self.queue.job(job_id)
+    async def abort(self, abort_threshold):
+        jobs = [
+            job
+            for job in self.job_task_contexts
+            if job.duration("running") >= millis(abort_threshold)
+        ]
 
-            if not job or job.status == Status.ABORTED:
-                logger.info("Aborting %s", job or job_id)
+        if not jobs:
+            return
+
+        aborted = await self.queue.redis.mget(job.abort_id for job in jobs)
+
+        for job, abort in zip(jobs, aborted):
+            if not abort:
+                continue
+
+            task_data = self.job_task_contexts.get(job, {})
+            task = task_data.get("task")
+
+            if task and not task.done():
+                task_data["aborted"] = True
                 task.cancel()
-                return
+                await asyncio.gather(task, return_exceptions=True)
 
-            if job.heartbeat and self.timers["sweep"]:
-                # touch the job only if we care about heartbeats
-                # and if we use upkeep to sweep it up
-                await job.update()
+            await job.finish(Status.ABORTED, error=abort.decode("utf-8"))
+            await self.queue.redis.delete(job.abort_id)
+            logger.info("Aborting %s", job.id)
 
     async def process(self):
         # pylint: disable=too-many-branches
         job = None
-        monitor = None
 
         try:
             job = await self.queue.dequeue(self.dequeue_timeout)
+
             if not job:
-                # Dequeue timed out so return early
                 return
 
-            job_id = job.id
             job.started = now()
             job.status = Status.ACTIVE
             job.attempts += 1
@@ -167,15 +180,11 @@ class Worker:
             task = asyncio.create_task(
                 self.functions[job.function](context, **(job.kwargs or {}))
             )
-
-            if self.timers["monitor"]:
-                monitor = asyncio.create_task(self.monitor(task, job_id))
-
+            self.job_task_contexts[job] = {"task": task, "aborted": False}
             result = await asyncio.wait_for(task, job.timeout)
-
             await job.finish(Status.COMPLETE, result=result)
         except asyncio.CancelledError:
-            if job:
+            if job and not self.job_task_contexts.get(job, {}).get("aborted"):
                 await job.retry("cancelled")
         except Exception:
             error = traceback.format_exc()
@@ -187,16 +196,11 @@ class Worker:
                 else:
                     await job.retry(error)
         finally:
-            if monitor and not monitor.done():
-                monitor.cancel()
-                await asyncio.gather(monitor, return_exceptions=True)
+            if job:
+                self.job_task_contexts.pop(job)
 
-            if (
-                self.after_process
-                and job
-                and job.status in (Status.FAILED, Status.COMPLETE)
-            ):
-                await self.after_process(context)
+                if self.after_process and job.completed:
+                    await self.after_process(context)
 
     def _process(self, previous_task=None):
         if previous_task:

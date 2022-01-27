@@ -4,7 +4,7 @@ import logging
 
 import aioredis
 from saq.job import Job, Status
-from saq.utils import now, seconds, uuid1
+from saq.utils import millis, now, seconds, uuid1
 
 
 logger = logging.getLogger("saq")
@@ -144,7 +144,7 @@ class Queue:
             await (
                 pipe.setex(key, ttl, json.dumps(stats))
                 .zremrangebyscore(self._stats, 0, current)
-                .zadd(self._stats, {key: current + ttl * 1000})
+                .zadd(self._stats, {key: current + millis(ttl)})
                 .expire(self._stats, ttl)
                 .execute()
             )
@@ -197,8 +197,6 @@ class Queue:
                 """
             )
 
-        logger.info("Sweeping stuck jobs")
-
         job_ids = await self._cleanup_script(
             keys=[self._sweep, self._active], args=[lock], client=self.redis
         )
@@ -210,10 +208,18 @@ class Queue:
 
                 if not job:
                     swept.append(job_id)
-                    await self.redis.lrem(self._active, 0, job_id)
+
+                    async with self.redis.pipeline(transaction=True) as pipe:
+                        await (
+                            pipe.lrem(self._active, 0, job_id)
+                            .zrem(self._incomplete, job_id)
+                            .execute()
+                        )
+                    logger.info("Sweeping missing job %s", job_id)
                 elif job.status != Status.ACTIVE or job.stuck:
                     swept.append(job_id)
-                    await self.abort(job, error="sweeped")
+                    await job.finish(Status.ABORTED, error="swept")
+                    logger.info("Sweeping job %s", job)
         return swept
 
     async def listen(self, job, callback, timeout=10):
@@ -259,9 +265,23 @@ class Queue:
     async def job(self, job_id):
         return self.deserialize(await self.redis.get(job_id))
 
-    async def abort(self, job, error):
-        await self.redis.lrem(self._queued, 0, job.id)
-        await self.finish(job, Status.ABORTED, error=error)
+    async def abort(self, job, error, ttl=5):
+        async with self.redis.pipeline(transaction=True) as pipe:
+            dequeued, _, _ = await (
+                pipe.lrem(self._queued, 0, job.id)
+                .zrem(self._incomplete, job.id)
+                .expire(job.id, ttl + 1)
+                .execute()
+            )
+
+            if dequeued:
+                await job.finish(Status.ABORTED, error=error)
+            else:
+                await (
+                    pipe.lrem(self._active, 0, job.id)
+                    .setex(job.abort_id, ttl, error)
+                    .execute()
+                )
 
     async def retry(self, job, error):
         job_id = job.id
@@ -296,9 +316,7 @@ class Queue:
             job.progress = 1.0
 
         async with self.redis.pipeline(transaction=True) as pipe:
-            pipe = pipe.lrem(
-                self._active, 0 if status == Status.ABORTED else 1, job_id
-            ).zrem(self._incomplete, job_id)
+            pipe = pipe.lrem(self._active, 1, job_id).zrem(self._incomplete, job_id)
 
             if job.ttl:
                 pipe = pipe.setex(job_id, job.ttl, self.serialize(job))
@@ -361,7 +379,7 @@ class Queue:
         if not self._enqueue_script:
             self._enqueue_script = self.redis.register_script(
                 """
-                if not redis.call('ZSCORE', KEYS[1], KEYS[2]) then
+                if not redis.call('ZSCORE', KEYS[1], KEYS[2]) and redis.call('EXISTS', KEYS[4]) == 0 then
                     redis.call('SET', KEYS[2], ARGV[1])
                     redis.call('ZADD', KEYS[1], ARGV[2], KEYS[2])
                     if ARGV[2] == '0' then redis.call('RPUSH', KEYS[3], KEYS[2]) end
@@ -379,7 +397,7 @@ class Queue:
         logger.info("Enqueuing %s", job)
 
         if not await self._enqueue_script(
-            keys=[self._incomplete, job.id, self._queued],
+            keys=[self._incomplete, job.id, self._queued, job.abort_id],
             args=[self.serialize(job), job.scheduled],
             client=self.redis,
         ):
