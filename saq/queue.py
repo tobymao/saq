@@ -160,26 +160,27 @@ class Queue:
         raise ValueError("Can't count unknown type {kind}")
 
     async def schedule(self, lock=1):
-        self._schedule_script = self.redis.register_script(
-            """
-            if redis.call('EXISTS', KEYS[1]) == 0 then
-                redis.call('SETEX', KEYS[1], ARGV[1], 1)
-                local jobs = redis.call('ZRANGE', KEYS[2], 1, ARGV[2], 'BYSCORE')
+        if not self._schedule_script:
+            self._schedule_script = self.redis.register_script(
+                """
+                if redis.call('EXISTS', KEYS[1]) == 0 then
+                    redis.call('SETEX', KEYS[1], ARGV[1], 1)
+                    local jobs = redis.call('ZRANGE', KEYS[2], 1, ARGV[2], 'BYSCORE')
 
-                if next(jobs) then
-                    local scores = {}
-                    for _, v in ipairs(jobs) do
-                        table.insert(scores, 0)
-                        table.insert(scores, v)
+                    if next(jobs) then
+                        local scores = {}
+                        for _, v in ipairs(jobs) do
+                            table.insert(scores, 0)
+                            table.insert(scores, v)
+                        end
+                        redis.call('ZADD', KEYS[2], unpack(scores))
+                        redis.call('RPUSH', KEYS[3], unpack(jobs))
                     end
-                    redis.call('ZADD', KEYS[2], unpack(scores))
-                    redis.call('RPUSH', KEYS[3], unpack(jobs))
-                end
 
-                return jobs
-            end
-            """
-        )
+                    return jobs
+                end
+                """
+            )
 
         return await self._schedule_script(
             keys=[self._schedule, self._incomplete, self._queued],
