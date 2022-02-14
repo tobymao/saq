@@ -3,7 +3,7 @@ import logging
 import unittest
 from unittest import mock
 
-from saq.job import Status
+from saq.job import CronJob, Status
 from saq.worker import Worker
 from tests.helpers import create_queue, cleanup_queue
 
@@ -18,6 +18,10 @@ async def noop(_ctx):
 async def sleeper(ctx):
     await asyncio.sleep(ctx.get("sleep", 0.1))
     return {"a": 1, "b": []}
+
+
+async def cron(_ctx):
+    return 1
 
 
 async def error(_ctx):
@@ -188,6 +192,36 @@ class TestWorker(unittest.IsolatedAsyncioTestCase):
         await self.worker.process()
         await job.refresh()
         self.assertEqual(job.result, 1)
+
+    @mock.patch("saq.worker.logger")
+    @mock.patch("saq.utils.time")
+    async def test_cron(self, mock_time, mock_logger):
+        with self.assertRaises(ValueError):
+            Worker(
+                self.queue,
+                functions=functions,
+                cron_jobs=[CronJob(cron, cron="x")],
+            )
+
+        mock_time.time.return_value = 1
+        worker = Worker(
+            self.queue,
+            functions=functions,
+            cron_jobs=[CronJob(cron, cron="* * * * *")],
+        )
+        self.assertEqual(await self.queue.count("queued"), 0)
+        self.assertEqual(await self.queue.count("incomplete"), 0)
+        await worker.schedule()
+        self.assertEqual(await self.queue.count("queued"), 0)
+        self.assertEqual(await self.queue.count("incomplete"), 1)
+
+        mock_time.time.return_value = 60
+        # pylint: disable=protected-access
+        await self.queue.redis.delete(self.queue._schedule)
+        await worker.schedule()
+        self.assertEqual(await self.queue.count("queued"), 1)
+        self.assertEqual(await self.queue.count("incomplete"), 1)
+        mock_logger.info.assert_any_call("Scheduled %s", [b"saq:job:cron:cron"])
 
     @mock.patch("saq.worker.logger")
     async def test_abort(self, mock_logger):

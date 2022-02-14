@@ -38,7 +38,7 @@ options:
 ```python
 import asyncio
 
-from saq import Queue
+from saq import CronJob, Queue
 
 # all functions take in context dict and kwargs
 async def test(ctx, *, a):
@@ -46,6 +46,9 @@ async def test(ctx, *, a):
     # result should be json serializable
     # custom serializers and deserializers can be used through Queue(dump=,load=)
     return {"x": a}
+
+async def cron(ctx):
+  print("i am a cron job")
 
 async def startup(ctx):
     await ctx["db"] = create_db()
@@ -65,6 +68,7 @@ settings = {
     "queue": queue,
     "functions": [test],
     "concurrency": 10,
+    "cron_jobs": [CronJob(cron, cron="* * * * * */5")], # run every 5 seconds
     "startup": startup,
     "shutdown": shutdown,
     "before_process": before_process,

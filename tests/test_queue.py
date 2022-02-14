@@ -35,8 +35,8 @@ class TestQueue(unittest.IsolatedAsyncioTestCase):
     async def test_enqueue_dup(self):
         job = await self.queue.enqueue("test", key="1")
         self.assertEqual(job.id, "saq:job:1")
-        self.assertEqual(job, await self.queue.enqueue("test", key="1"))
-        self.assertEqual(job, await self.queue.enqueue(job))
+        self.assertIsNone(await self.queue.enqueue("test", key="1"))
+        self.assertIsNone(await self.queue.enqueue(job))
 
     async def test_enqueue_scheduled(self):
         scheduled = time.time() + 10

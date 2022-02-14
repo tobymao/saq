@@ -16,6 +16,27 @@ class Status(str, enum.Enum):
 
 
 @dataclasses.dataclass
+class CronJob:
+    """
+    Allows scheduling of repeated jobs with cron syntax.
+
+    function: the async function to run
+    cron: cron string for a job to be repeated, uses croniter
+    unique: unique jobs only one once per queue, defaults true
+
+    Remaining kwargs are pass through to Job
+    """
+
+    function: typing.Callable
+    cron: str
+    unique: bool = True
+    timeout: typing.Optional[int] = None
+    heartbeat: typing.Optional[int] = None
+    retries: typing.Optional[int] = None
+    ttl: typing.Optional[int] = None
+
+
+@dataclasses.dataclass
 class Job:
     """
     Main job class representing a run of a function.
@@ -70,6 +91,7 @@ class Job:
                 "kwargs": self.kwargs,
                 "queue": self.queue.name,
                 "id": self.id,
+                "scheduled": self.scheduled,
                 "progress": self.progress,
                 "process_ms": self.duration("process"),
                 "start_ms": self.duration("start"),
@@ -139,7 +161,8 @@ class Job:
         """
         queue = queue or self.queue
         assert queue, "Queue unspecified"
-        await queue.enqueue(self)
+        if not await queue.enqueue(self):
+            await self.refresh()
 
     async def abort(self, error, ttl=5):
         """Tries to abort the job."""

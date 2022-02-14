@@ -2,7 +2,7 @@ import asyncio
 import random
 import time
 
-from saq import Queue
+from saq import CronJob, Queue
 
 
 async def sleeper(ctx, *, a):
@@ -15,9 +15,14 @@ async def adder(ctx, *, a, b):
     return a + b
 
 
+async def cron_job(ctx):
+    print("excuting cron job")
+
+
 settings = {
     "functions": [sleeper, adder],
     "concurrency": 100,
+    "cron_jobs": [CronJob(cron_job, cron="* * * * * */5")],
 }
 
 async def enqueue(func, **kwargs):

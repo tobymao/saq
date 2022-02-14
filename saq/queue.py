@@ -393,12 +393,12 @@ class Queue:
         job.queued = now()
         job.status = Status.QUEUED
 
-        logger.info("Enqueuing %s", job)
-
         if not await self._enqueue_script(
             keys=[self._incomplete, job.id, self._queued, job.abort_id],
             args=[self.serialize(job), job.scheduled],
             client=self.redis,
         ):
-            await job.refresh()
+            return None
+
+        logger.info("Enqueuing %s", job)
         return job

@@ -4,9 +4,11 @@ import signal
 import traceback
 import os
 
+from croniter import croniter
+
 from saq.job import Status
 from saq.queue import Queue
-from saq.utils import millis, now
+from saq.utils import millis, now, seconds
 
 
 logger = logging.getLogger("saq")
@@ -38,6 +40,7 @@ class Worker:
         functions,
         *,
         concurrency=10,
+        cron_jobs=None,
         startup=None,
         shutdown=None,
         before_process=None,
@@ -59,11 +62,18 @@ class Worker:
             **(timers or {}),
         }
         self.event = asyncio.Event()
+        functions = set(functions)
         self.functions = {}
+        self.cron_jobs = cron_jobs or []
         self.context = {"worker": self}
         self.tasks = set()
         self.job_task_contexts = {}
         self.dequeue_timeout = dequeue_timeout
+
+        for job in self.cron_jobs:
+            if not croniter.is_valid(job.cron):
+                raise ValueError(f"Cron is invalid {job.cron}")
+            functions.add(job.function)
 
         for function in functions:
             if isinstance(function, tuple):
@@ -112,6 +122,24 @@ class Worker:
             task.cancel()
         await asyncio.gather(*all_tasks, return_exceptions=True)
 
+    async def schedule(self, lock=1):
+        for cron_job in self.cron_jobs:
+            kwargs = cron_job.__dict__.copy()
+            function = kwargs.pop("function").__qualname__
+            kwargs["key"] = f"cron:{function}" if kwargs.pop("unique") else None
+            scheduled = croniter(kwargs.pop("cron"), seconds(now())).get_next()
+
+            await self.queue.enqueue(
+                function,
+                scheduled=int(scheduled),
+                **{k: v for k, v in kwargs.items() if v is not None},
+            )
+
+        scheduled = await self.queue.schedule(lock)
+
+        if scheduled:
+            logger.info("Scheduled %s", scheduled)
+
     async def upkeep(self):
         """Start various upkeep tasks async."""
 
@@ -122,7 +150,7 @@ class Worker:
 
         return [
             asyncio.create_task(poll(self.abort, self.timers["abort"])),
-            asyncio.create_task(poll(self.queue.schedule, self.timers["schedule"])),
+            asyncio.create_task(poll(self.schedule, self.timers["schedule"])),
             asyncio.create_task(poll(self.queue.sweep, self.timers["sweep"])),
             asyncio.create_task(
                 poll(self.queue.stats, self.timers["stats"], self.timers["stats"] + 1)

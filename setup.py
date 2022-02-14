@@ -30,6 +30,7 @@ setup(
     """,
     install_requires=[
         "aioredis>=2.0",
+        "croniter>=0.3.18",
     ],
     extras_require={
         "hiredis": ["aioredis[hiredis]>=2.0"],

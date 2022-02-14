@@ -33,6 +33,10 @@ class TestJob(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.job.started, 0)
         self.assertEqual(await self.queue.count("queued"), 1)
 
+        queued = self.job.queued
+        await self.job.enqueue()
+        self.assertEqual(queued, self.job.queued)
+
         with self.assertRaises(ValueError):
             await self.job.enqueue(create_queue(name="queue2"))
 
