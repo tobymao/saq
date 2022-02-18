@@ -66,7 +66,7 @@ async def views(_request):
     return web.Response(text=render(), content_type="text/html")
 
 
-async def health(request):
+async def health(_request):
     info = await app["queue"].info()
     if info.get(app["queue"].name):
         return web.Response(text="OK")
