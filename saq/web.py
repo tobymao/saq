@@ -66,6 +66,13 @@ async def views(_request):
     return web.Response(text=render(), content_type="text/html")
 
 
+async def health(_request):
+    info = await app["queue"].info()
+    if info.get(app["queue"].name):
+        return web.Response(text="OK")
+    raise web.HTTPInternalServerError
+
+
 async def _get_job(request):
     job_key = request.match_info.get("job")
     job = await app["queue"].job(f"saq:job:{job_key}")
@@ -107,6 +114,7 @@ app.add_routes(
         web.get("/", views),
         web.get("/queues/{queue}", views),
         web.get("/jobs/{job}", views),
+        web.get("/health", health),
     ]
 )
 app.cleanup_ctx.append(redis_queue)
