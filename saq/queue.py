@@ -166,7 +166,7 @@ class Queue:
                 """
                 if redis.call('EXISTS', KEYS[1]) == 0 then
                     redis.call('SETEX', KEYS[1], ARGV[1], 1)
-                    local jobs = redis.call('ZRANGE', KEYS[2], 1, ARGV[2], 'BYSCORE')
+                    local jobs = redis.call('ZRANGEBYSCORE', KEYS[2], 1, ARGV[2])
 
                     if next(jobs) then
                         local scores = {}
