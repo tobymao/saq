@@ -119,13 +119,15 @@ class Queue:
                 else []
             )
 
-            queue_info.update({
-                "name": name,
-                "queued": queued,
-                "active": active,
-                "scheduled": incomplete - queued - active,
-                "jobs": jobs,
-            })
+            queue_info.update(
+                {
+                    "name": name,
+                    "queued": queued,
+                    "active": active,
+                    "scheduled": incomplete - queued - active,
+                    "jobs": jobs,
+                }
+            )
 
         return queues
 
