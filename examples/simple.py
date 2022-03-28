@@ -25,6 +25,7 @@ settings = {
     "cron_jobs": [CronJob(cron_job, cron="* * * * * */5")],
 }
 
+
 async def enqueue(func, **kwargs):
     queue = Queue.from_url("redis://localhost")
     for _ in range(10000):

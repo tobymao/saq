@@ -8,6 +8,7 @@ from benchmarks.funcs import *
 SEM = asyncio.Semaphore(20)
 N = 1000
 
+
 async def sem_task(task):
     async with SEM:
         return await task
@@ -19,10 +20,9 @@ async def bench_arq():
     from arq.worker import Worker
 
     async def enqueue(func):
-        await asyncio.gather(*[
-            asyncio.create_task(sem_task(redis.enqueue_job(func)))
-            for _ in range(N)
-        ])
+        await asyncio.gather(
+            *[asyncio.create_task(sem_task(redis.enqueue_job(func))) for _ in range(N)]
+        )
 
     redis = await create_pool(RedisSettings())
     worker = Worker(functions=[noop, sleeper], max_jobs=10, burst=True)
@@ -46,10 +46,9 @@ async def bench_saq():
     from saq import Queue, Worker
 
     async def enqueue(func):
-        await asyncio.gather(*[
-            asyncio.create_task(sem_task(queue.enqueue(func)))
-            for _ in range(N)
-        ])
+        await asyncio.gather(
+            *[asyncio.create_task(sem_task(queue.enqueue(func))) for _ in range(N)]
+        )
 
     queue = Queue.from_url("redis://localhost")
     worker = Worker(queue=queue, functions=[noop, sleeper], concurrency=10)
@@ -104,5 +103,6 @@ async def main():
     else:
         await bench_saq()
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     asyncio.run(main())

@@ -3,8 +3,20 @@ import time
 import unittest
 from unittest import mock
 
-from saq.job import Job, Status
+from saq.job import Job, Status, JobError
+from saq.worker import Worker
 from tests.helpers import create_queue, cleanup_queue
+
+
+async def echo(_ctx, *, a):
+    return a
+
+
+async def error(_ctx):
+    raise ValueError("oops")
+
+
+functions = [echo, error]
 
 
 class TestQueue(unittest.IsolatedAsyncioTestCase):
@@ -207,3 +219,68 @@ class TestQueue(unittest.IsolatedAsyncioTestCase):
         await self.queue.update(job)
         await task
         self.assertEqual(counter["x"], 2)
+
+    async def test_apply(self):
+        worker = Worker(self.queue, functions=functions)
+        task = asyncio.create_task(worker.start())
+
+        assert await self.queue.apply("echo", a=1) == 1
+        with self.assertRaises(JobError):
+            await self.queue.apply("error")
+
+        task.cancel()
+
+    async def test_map(self):
+        worker = Worker(self.queue, functions=functions)
+        task = asyncio.create_task(worker.start())
+
+        assert await self.queue.map("echo", []) == []
+        assert await self.queue.map("echo", [{"a": 1}]) == [1]
+        assert await self.queue.map("echo", [{"a": 1}, {"a": 2}]) == [1, 2]
+        assert await self.queue.map("echo", [{}, {"a": 2}], timeout=10, a=3) == [3, 2]
+        with self.assertRaises(JobError):
+            await self.queue.map("error", [{}, {}])
+
+        task.cancel()
+
+    async def test_cancel_scope(self):
+        job = None
+        try:
+            async with self.queue.cancel_scope():
+                job = await self.queue.enqueue("echo", a=1)
+                raise ValueError()
+        except ValueError:
+            pass
+
+        assert job.status == Status.ABORTED
+
+    async def test_on_enqueue(self):
+        called_with_job = None
+
+        async def on_enqueue(job):
+            nonlocal called_with_job
+            called_with_job = job
+
+        self.queue.register_on_enqueue(on_enqueue)
+        await self.queue.enqueue("test")
+        assert called_with_job is not None
+
+        called_with_job = None
+        self.queue.unregister_on_enqueue(on_enqueue)
+        await self.queue.enqueue("test")
+        assert called_with_job is None
+
+    async def test_on_enqueue_generator(self):
+        before = None
+        after = None
+
+        async def on_enqueue_gen(job):
+            nonlocal before, after
+            before = job
+            yield
+            after = job
+
+        self.queue.register_on_enqueue(on_enqueue_gen)
+        await self.queue.enqueue("test")
+        assert before is not None
+        assert after is not None

@@ -15,6 +15,18 @@ class Status(str, enum.Enum):
     COMPLETE = "complete"
 
 
+TERMINAL_STATUSES = {Status.COMPLETE, Status.FAILED, Status.ABORTED}
+UNSUCCESSFUL_TERMINAL_STATUSES = TERMINAL_STATUSES - {Status.COMPLETE}
+
+
+class JobError(Exception):
+    def __init__(self, job):
+        super().__init__(
+            f"Job {job.id} {job.status}\n\nThe above job failed with the following error:\n\n{job.error}"
+        )
+        self.job = job
+
+
 @dataclasses.dataclass
 class CronJob:
     """
@@ -203,11 +215,26 @@ class Job:
         if until_complete is not None and not self.completed:
 
             async def callback(_id, status):
-                if status == Status.COMPLETE:
+                if status in TERMINAL_STATUSES:
                     await self.refresh()
                     return True
 
             await self.queue.listen(self, callback, until_complete)
+
+    async def wait_for_result(self, timeout=None):
+        """
+        Wait for the current job to complete and return its result.
+
+        If the job is unsuccessful, this raises a JobError.
+
+        timeout: None or Numeric seconds. if None (default) or 0, wait forever.
+        """
+        await self.refresh(until_complete=timeout or 0)
+
+        if self.status in UNSUCCESSFUL_TERMINAL_STATUSES:
+            raise JobError(self)
+
+        return self.result
 
     def replace(self, job):
         """Replace current attributes with job attributes."""
