@@ -79,7 +79,7 @@ class Job:
     queued: int = 0
     started: int = 0
     touched: int = 0
-    result: typing.Optional[dict] = None
+    result: typing.Any = None
     error: typing.Optional[str] = None
     status: Status = Status.NEW
 

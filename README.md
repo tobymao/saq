@@ -51,7 +51,7 @@ async def cron(ctx):
   print("i am a cron job")
 
 async def startup(ctx):
-    await ctx["db"] = create_db()
+    ctx["db"] = await create_db()
 
 async def shutdown(ctx):
     await ctx["db"].disconnect()
@@ -130,7 +130,7 @@ SAQ is heavily inspired by [ARQ](https://github.com/samuelcolvin/arq) but has se
 ```
 python -m venv env
 source env/bin/activate
-pip install -e .[dev,web]
+pip install -e ".[dev,web]"
 docker run -p 6379:6379 redis
 ./run_checks.sh
 ```
