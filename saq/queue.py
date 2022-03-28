@@ -93,7 +93,7 @@ class Queue:
                 stats = json.loads(stats.decode("UTF-8"))
                 queues[name]["workers"][worker] = stats
 
-        for name in queues:
+        for name, queue_info in queues.items():
             queue = Queue(self.redis, name=name)
             queued = await queue.count("queued")
             active = await queue.count("active")
@@ -119,14 +119,15 @@ class Queue:
                 else []
             )
 
-            queues[name] = {
-                "name": name,
-                "queued": queued,
-                "active": active,
-                "scheduled": incomplete - queued - active,
-                "jobs": jobs,
-                **queues[name],
-            }
+            queue_info.update(
+                {
+                    "name": name,
+                    "queued": queued,
+                    "active": active,
+                    "scheduled": incomplete - queued - active,
+                    "jobs": jobs,
+                }
+            )
 
         return queues
 
