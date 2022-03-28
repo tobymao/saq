@@ -3,7 +3,8 @@ import time
 import unittest
 from unittest import mock
 
-from saq.job import Job, Status, JobError
+from saq.job import Job, Status
+from saq.queue import JobError
 from saq.worker import Worker
 from tests.helpers import create_queue, cleanup_queue
 
@@ -243,10 +244,10 @@ class TestQueue(unittest.IsolatedAsyncioTestCase):
 
         task.cancel()
 
-    async def test_cancel_scope(self):
+    async def test_batch(self):
         job = None
         try:
-            async with self.queue.cancel_scope():
+            async with self.queue.batch():
                 job = await self.queue.enqueue("echo", a=1)
                 raise ValueError()
         except ValueError:
@@ -254,33 +255,18 @@ class TestQueue(unittest.IsolatedAsyncioTestCase):
 
         assert job.status == Status.ABORTED
 
-    async def test_on_enqueue(self):
+    async def test_before_enqueue(self):
         called_with_job = None
 
-        async def on_enqueue(job):
+        async def callback(job):
             nonlocal called_with_job
             called_with_job = job
 
-        self.queue.register_on_enqueue(on_enqueue)
+        self.queue.register_before_enqueue(callback)
         await self.queue.enqueue("test")
         assert called_with_job is not None
 
         called_with_job = None
-        self.queue.unregister_on_enqueue(on_enqueue)
+        self.queue.unregister_before_enqueue(callback)
         await self.queue.enqueue("test")
         assert called_with_job is None
-
-    async def test_on_enqueue_generator(self):
-        before = None
-        after = None
-
-        async def on_enqueue_gen(job):
-            nonlocal before, after
-            before = job
-            yield
-            after = job
-
-        self.queue.register_on_enqueue(on_enqueue_gen)
-        await self.queue.enqueue("test")
-        assert before is not None
-        assert after is not None
