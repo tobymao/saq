@@ -5,6 +5,7 @@ from unittest import mock
 
 from saq.job import Job, Status
 from saq.queue import JobError
+from saq.utils import uuid1
 from saq.worker import Worker
 from tests.helpers import create_queue, cleanup_queue
 
@@ -214,7 +215,7 @@ class TestQueue(unittest.IsolatedAsyncioTestCase):
             counter["x"] += 1
             return counter["x"] == 2
 
-        task = asyncio.create_task(self.queue.listen(job, listen, 0.1))
+        task = asyncio.create_task(self.queue.listen([job.id], listen, timeout=0.1))
         await asyncio.sleep(0)
         await self.queue.update(job)
         await self.queue.update(job)
@@ -225,7 +226,7 @@ class TestQueue(unittest.IsolatedAsyncioTestCase):
         worker = Worker(self.queue, functions=functions)
         task = asyncio.create_task(worker.start())
 
-        assert await self.queue.apply("echo", a=1) == 1
+        self.assertEqual(await self.queue.apply("echo", a=1), 1)
         with self.assertRaises(JobError):
             await self.queue.apply("error")
 
@@ -235,12 +236,21 @@ class TestQueue(unittest.IsolatedAsyncioTestCase):
         worker = Worker(self.queue, functions=functions)
         task = asyncio.create_task(worker.start())
 
-        assert await self.queue.map("echo", []) == []
-        assert await self.queue.map("echo", [{"a": 1}]) == [1]
-        assert await self.queue.map("echo", [{"a": 1}, {"a": 2}]) == [1, 2]
-        assert await self.queue.map("echo", [{}, {"a": 2}], timeout=10, a=3) == [3, 2]
+        self.assertEqual(await self.queue.map("echo", []), [])
+        self.assertEqual(await self.queue.map("echo", [{"a": 1}]), [1])
+        self.assertEqual(await self.queue.map("echo", [{"a": 1}, {"a": 2}]), [1, 2])
+        self.assertEqual(
+            await self.queue.map("echo", [{}, {"a": 2}], timeout=10, a=3), [3, 2]
+        )
         with self.assertRaises(JobError):
             await self.queue.map("error", [{}, {}])
+
+        results = await self.queue.map("error", [{}, {}], return_exceptions=True)
+        self.assertTrue(all(isinstance(r, JobError) for r in results))
+
+        key = uuid1()
+        await self.queue.enqueue("echo", key=key, a=3)
+        self.assertEqual(await self.queue.map("echo", [{"a": 1, "key": key}]), [3])
 
         task.cancel()
 
@@ -253,7 +263,7 @@ class TestQueue(unittest.IsolatedAsyncioTestCase):
         except ValueError:
             pass
 
-        assert job.status == Status.ABORTED
+        self.assertEqual(job.status, Status.ABORTED)
 
     async def test_before_enqueue(self):
         called_with_job = None
@@ -264,9 +274,9 @@ class TestQueue(unittest.IsolatedAsyncioTestCase):
 
         self.queue.register_before_enqueue(callback)
         await self.queue.enqueue("test")
-        assert called_with_job is not None
+        self.assertIsNotNone(called_with_job)
 
         called_with_job = None
         self.queue.unregister_before_enqueue(callback)
         await self.queue.enqueue("test")
-        assert called_with_job is None
+        self.assertIsNone(called_with_job)

@@ -5,6 +5,10 @@ import typing
 from saq.utils import now, seconds, uuid1
 
 
+ID_PREFIX = "saq:job:"
+ABORT_ID_PREFIX = "saq:abort:"
+
+
 class Status(str, enum.Enum):
     NEW = "new"
     DEFERRED = "deferred"
@@ -114,11 +118,15 @@ class Job:
 
     @property
     def id(self):
-        return f"saq:job:{self.key}"
+        return self.id_from_key(self.key)
+
+    @classmethod
+    def id_from_key(cls, job_key):
+        return f"{ID_PREFIX}{job_key}"
 
     @property
     def abort_id(self):
-        return f"saq:abort:{self.key}"
+        return f"{ABORT_ID_PREFIX}{self.key}"
 
     def to_dict(self):
         return {
@@ -208,10 +216,10 @@ class Job:
 
             async def callback(_id, status):
                 if status in TERMINAL_STATUSES:
-                    await self.refresh()
                     return True
 
-            await self.queue.listen(self, callback, until_complete)
+            await self.queue.listen([self.id], callback, until_complete)
+            await self.refresh()
 
     def replace(self, job):
         """Replace current attributes with job attributes."""

@@ -235,7 +235,7 @@ class TestWorker(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(status, Status.ACTIVE)
             return True
 
-        await self.queue.listen(job, callback)
+        await self.queue.listen([job.id], callback)
         self.assertEqual(await self.queue.count("queued"), 0)
         self.assertEqual(await self.queue.count("incomplete"), 1)
         self.assertEqual(await self.queue.count("active"), 1)

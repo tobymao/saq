@@ -1,18 +1,9 @@
 import asyncio
 
-import aioredis
 from saq import Queue
 
 
-def get_queue():
-    # Spawning 10,000 jobs at once can easily exceed connection limits.
-    # Using a effectively BlockingConnectionPool throttles the throughput of enqueue jobs.
-    pool = aioredis.BlockingConnectionPool.from_url("redis://localhost")
-    return Queue(
-        redis=aioredis.Redis(
-            connection_pool=pool
-        )
-    )
+queue = Queue.from_url("redis://localhost")
 
 
 async def square(ctx, *, a):
@@ -20,7 +11,6 @@ async def square(ctx, *, a):
 
 
 async def sum_of_squares(ctx, *, n):
-    queue = get_queue()
     async with queue.batch():
         squares = await queue.map(
             square.__name__,
@@ -36,8 +26,7 @@ settings = {
 
 
 async def enqueue():
-    queue = get_queue()
-    result = await queue.apply(sum_of_squares.__name__, n=10000, timeout=60)
+    result = await queue.apply(sum_of_squares.__name__, n=10000)
     print(result)
 
 
