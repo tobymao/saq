@@ -47,7 +47,7 @@ async def bench_saq():
 
     async def enqueue(func):
         await asyncio.gather(
-            *[asyncio.create_task(sem_task(queue.enqueue(func))) for _ in range(N)]
+            *[asyncio.create_task(queue.enqueue(func)) for _ in range(N)]
         )
 
     queue = Queue.from_url("redis://localhost")

@@ -32,11 +32,9 @@ class Queue:
     name: name of the queue
     dump: lambda that takes a dictionary and outputs bytes (default json.dumps)
     load: lambda that takes bytes and outputs a python dictionary (default json.loads)
-
-    The following parameters help prevent the Queue from consuming too many Redis connections.
-    enqueue_concurrency: max concurrent calls to enqueue jobs
-    get_job_concurrency: max concurrent calls to get jobs
-    abort_concurrency: max concurrent calls to abort jobs
+    max_concurrent_ops: maximum concurrent operations.
+        This throttles calls to `enqueue`, `job`, and `abort` to prevent the Queue
+        from consuming too many Redis connections.
     """
 
     @classmethod
@@ -50,9 +48,7 @@ class Queue:
         name="default",
         dump=None,
         load=None,
-        enqueue_concurrency=100,
-        get_job_concurrency=100,
-        abort_concurrency=100,
+        max_concurrent_ops=20,
     ):
         self.redis = redis
         self.name = name
@@ -75,9 +71,7 @@ class Queue:
         self._dump = dump or json.dumps
         self._load = load or json.loads
         self._before_enqueues = {}
-        self._enqueue_sem = asyncio.Semaphore(enqueue_concurrency)
-        self._get_job_sem = asyncio.Semaphore(get_job_concurrency)
-        self._abort_sem = asyncio.Semaphore(abort_concurrency)
+        self._op_sem = asyncio.Semaphore(max_concurrent_ops)
 
     def register_before_enqueue(self, callback):
         self._before_enqueues[id(callback)] = callback
@@ -304,11 +298,11 @@ class Queue:
         await self.notify(job)
 
     async def job(self, job_id):
-        async with self._get_job_sem:
+        async with self._op_sem:
             return self.deserialize(await self.redis.get(job_id))
 
     async def abort(self, job, error, ttl=5):
-        async with self._abort_sem:
+        async with self._op_sem:
             async with self.redis.pipeline(transaction=True) as pipe:
                 dequeued, *_ = await (
                     pipe.lrem(self._queued, 0, job.id)
@@ -440,7 +434,7 @@ class Queue:
         for cb in self._before_enqueues.values():
             await cb(job)
 
-        async with self._enqueue_sem:
+        async with self._op_sem:
             if not await self._enqueue_script(
                 keys=[self._incomplete, job.id, self._queued, job.abort_id],
                 args=[self.serialize(job), job.scheduled],
@@ -505,8 +499,6 @@ class Queue:
         pending_job_ids = set(job_ids)
 
         async def callback(job_id, status):
-            nonlocal pending_job_ids
-
             if status in TERMINAL_STATUSES:
                 pending_job_ids.discard(job_id)
 
