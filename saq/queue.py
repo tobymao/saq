@@ -1,13 +1,33 @@
 import asyncio
 import json
 import logging
+from contextlib import asynccontextmanager
 
 import aioredis
-from saq.job import Job, Status
-from saq.utils import millis, now, seconds, uuid1
+from saq.job import (
+    Job,
+    Status,
+    TERMINAL_STATUSES,
+    UNSUCCESSFUL_TERMINAL_STATUSES,
+    get_default_job_key,
+)
+from saq.utils import (
+    millis,
+    now,
+    seconds,
+    uuid1,
+)
 
 
 logger = logging.getLogger("saq")
+
+
+class JobError(Exception):
+    def __init__(self, job):
+        super().__init__(
+            f"Job {job.id} {job.status}\n\nThe above job failed with the following error:\n\n{job.error}"
+        )
+        self.job = job
 
 
 class Queue:
@@ -18,14 +38,24 @@ class Queue:
     name: name of the queue
     dump: lambda that takes a dictionary and outputs bytes (default json.dumps)
     load: lambda that takes bytes and outputs a python dictionary (default json.loads)
+    max_concurrent_ops: maximum concurrent operations.
+        This throttles calls to `enqueue`, `job`, and `abort` to prevent the Queue
+        from consuming too many Redis connections.
     """
 
     @classmethod
-    def from_url(cls, url, name="default"):
+    def from_url(cls, url, **kwargs):
         """Create a queue with a redis url a name."""
-        return cls(aioredis.from_url(url), name)
+        return cls(aioredis.from_url(url), **kwargs)
 
-    def __init__(self, redis, name="default", dump=None, load=None):
+    def __init__(  # pylint: disable=too-many-arguments
+        self,
+        redis,
+        name="default",
+        dump=None,
+        load=None,
+        max_concurrent_ops=20,
+    ):
         self.redis = redis
         self.name = name
         self.uuid = uuid1()
@@ -46,6 +76,14 @@ class Queue:
         self._sweep = self.namespace("sweep")
         self._dump = dump or json.dumps
         self._load = load or json.loads
+        self._before_enqueues = {}
+        self._op_sem = asyncio.Semaphore(max_concurrent_ops)
+
+    def register_before_enqueue(self, callback):
+        self._before_enqueues[id(callback)] = callback
+
+    def unregister_before_enqueue(self, callback):
+        self._before_enqueues.pop(id(callback), None)
 
     def namespace(self, key):
         return ":".join(["saq", self.name, key])
@@ -224,16 +262,17 @@ class Queue:
                     logger.info("Sweeping job %s", job)
         return swept
 
-    async def listen(self, job, callback, timeout=10):
+    async def listen(self, job_ids, callback, timeout=10):
         """
-        Listen to updates on job.
+        Listen to updates on jobs.
 
-        job: job instance
+        job_ids: sequence of job ids
         callback: callback function, if it returns truthy, break
         timeout: if timeout is truthy, wait for timeout seconds
         """
         pubsub = self.redis.pubsub()
-        await pubsub.subscribe(job.id)
+
+        await pubsub.subscribe(*job_ids)
 
         async def listen():
             async for message in pubsub.listen():
@@ -254,7 +293,7 @@ class Queue:
             else:
                 await listen()
         finally:
-            await pubsub.unsubscribe(job.id)
+            await pubsub.unsubscribe(*job_ids)
 
     async def notify(self, job):
         await self.redis.publish(job.id, job.status)
@@ -265,23 +304,25 @@ class Queue:
         await self.notify(job)
 
     async def job(self, job_id):
-        return self.deserialize(await self.redis.get(job_id))
+        async with self._op_sem:
+            return self.deserialize(await self.redis.get(job_id))
 
     async def abort(self, job, error, ttl=5):
-        async with self.redis.pipeline(transaction=True) as pipe:
-            dequeued, *_ = await (
-                pipe.lrem(self._queued, 0, job.id)
-                .zrem(self._incomplete, job.id)
-                .expire(job.id, ttl + 1)
-                .setex(job.abort_id, ttl, error)
-                .execute()
-            )
+        async with self._op_sem:
+            async with self.redis.pipeline(transaction=True) as pipe:
+                dequeued, *_ = await (
+                    pipe.lrem(self._queued, 0, job.id)
+                    .zrem(self._incomplete, job.id)
+                    .expire(job.id, ttl + 1)
+                    .setex(job.abort_id, ttl, error)
+                    .execute()
+                )
 
-        if dequeued:
-            await job.finish(Status.ABORTED, error=error)
-            await self.redis.delete(job.abort_id)
-        else:
-            await self.redis.lrem(self._active, 0, job.id)
+            if dequeued:
+                await job.finish(Status.ABORTED, error=error)
+                await self.redis.delete(job.abort_id)
+            else:
+                await self.redis.lrem(self._active, 0, job.id)
 
     async def retry(self, job, error):
         job_id = job.id
@@ -354,6 +395,8 @@ class Queue:
 
         Kwargs can be arguments of the function or properties of the job.
         If a job instance is passed in, it's properties are overriden.
+
+        If the job has already been enqueued, this returns None.
         """
         job_kwargs = {}
 
@@ -394,12 +437,144 @@ class Queue:
         job.queued = now()
         job.status = Status.QUEUED
 
-        if not await self._enqueue_script(
-            keys=[self._incomplete, job.id, self._queued, job.abort_id],
-            args=[self.serialize(job), job.scheduled],
-            client=self.redis,
-        ):
-            return None
+        for cb in self._before_enqueues.values():
+            await cb(job)
+
+        async with self._op_sem:
+            if not await self._enqueue_script(
+                keys=[self._incomplete, job.id, self._queued, job.abort_id],
+                args=[self.serialize(job), job.scheduled],
+                client=self.redis,
+            ):
+                return None
 
         logger.info("Enqueuing %s", job)
         return job
+
+    async def apply(self, job_or_func, timeout=None, **kwargs):
+        """
+        Enqueue a job and wait for its result.
+
+        If the job is successful, this returns its result.
+        If the job is unsuccessful, this raises a JobError.
+
+        Example::
+            try:
+                assert await queue.apply("add", a=1, b=2) == 3
+            except JobError:
+                print("job failed")
+
+        job_or_func: Same as Queue.enqueue
+        kwargs: Same as Queue.enqueue
+        """
+        results = await self.map(job_or_func, timeout=timeout, iter_kwargs=[kwargs])
+        return results[0]
+
+    async def map(
+        self, job_or_func, iter_kwargs, timeout=None, return_exceptions=False, **kwargs
+    ):
+        """
+        Enqueue multiple jobs and collect all of their results.
+
+        Example::
+            try:
+                assert await queue.map(
+                    "add",
+                    [
+                        {"a": 1, "b": 2},
+                        {"a": 3, "b": 4},
+                    ]
+                ) == [3, 7]
+            except JobError:
+                print("any of the jobs failed")
+
+        job_or_func: Same as Queue.enqueue
+        iter_kwargs: Enqueue a job for each item in this sequence. Each item is the same
+            as kwargs for Queue.enqueue.
+        timeout: Total seconds to wait for all jobs to complete. If None (default) or 0, wait forever.
+        return_exceptions: If False (default), an exception is immediately raised as soon as any jobs
+            fail. Other jobs won't be cancelled and will continue to run.
+            If True, exceptions are treated the same as successful results and aggregated in the result list.
+        kwargs: Default kwargs for all jobs. These will be overridden by those in iter_kwargs.
+        """
+        iter_kwargs = [
+            {
+                "timeout": timeout,
+                "key": kwargs.get("key") or get_default_job_key(),
+                **kwargs,
+                **kw,
+            }
+            for kw in iter_kwargs
+        ]
+        job_ids = [Job.id_from_key(key["key"]) for key in iter_kwargs]
+        pending_job_ids = set(job_ids)
+
+        async def callback(job_id, status):
+            if status in TERMINAL_STATUSES:
+                pending_job_ids.discard(job_id)
+
+            if status in UNSUCCESSFUL_TERMINAL_STATUSES and not return_exceptions:
+                return True
+
+            if not pending_job_ids:
+                return True
+
+        # Start listening before we enqueue the jobs.
+        # This ensures we don't miss any updates.
+        task = asyncio.create_task(
+            self.listen(pending_job_ids, callback, timeout=timeout)
+        )
+
+        try:
+            await asyncio.gather(
+                *[self.enqueue(job_or_func, **kw) for kw in iter_kwargs]
+            )
+        except:
+            task.cancel()
+            raise
+
+        await asyncio.wait_for(task, timeout=timeout)
+
+        jobs = await asyncio.gather(*[self.job(job_id) for job_id in job_ids])
+
+        results = []
+        for job in jobs:
+            if job.status in UNSUCCESSFUL_TERMINAL_STATUSES:
+                exc = JobError(job)
+                if not return_exceptions:
+                    raise exc
+                results.append(exc)
+            else:
+                results.append(job.result)
+        return results
+
+    @asynccontextmanager
+    async def batch(self):
+        """
+        Context manager to batch enqueue jobs.
+
+        This tracks all jobs enqueued within the context manager scope and ensures that
+        all are aborted if any exception is raised.
+
+        Example::
+            async with queue.batch():
+                await queue.enqueue("test")  # This will get cancelled
+                raise asyncio.CancelledError
+        """
+        children = set()
+
+        async def track_child(job):
+            children.add(job)
+
+        self.register_before_enqueue(track_child)
+
+        try:
+            yield
+        except:
+            await asyncio.gather(
+                *[self.abort(child, "cancelled") for child in children],
+                return_exceptions=True,
+            )
+            raise
+        finally:
+            self.unregister_before_enqueue(track_child)

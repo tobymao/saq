@@ -5,6 +5,14 @@ import typing
 from saq.utils import now, seconds, uuid1
 
 
+ID_PREFIX = "saq:job:"
+ABORT_ID_PREFIX = "saq:abort:"
+
+
+def get_default_job_key():
+    return uuid1()
+
+
 class Status(str, enum.Enum):
     NEW = "new"
     DEFERRED = "deferred"
@@ -13,6 +21,10 @@ class Status(str, enum.Enum):
     ABORTED = "aborted"
     FAILED = "failed"
     COMPLETE = "complete"
+
+
+TERMINAL_STATUSES = {Status.COMPLETE, Status.FAILED, Status.ABORTED}
+UNSUCCESSFUL_TERMINAL_STATUSES = TERMINAL_STATUSES - {Status.COMPLETE}
 
 
 @dataclasses.dataclass
@@ -67,7 +79,7 @@ class Job:
     function: str
     kwargs: typing.Optional[dict] = None
     queue: typing.Optional["Queue"] = None
-    key: str = dataclasses.field(default_factory=uuid1)
+    key: str = dataclasses.field(default_factory=get_default_job_key)
     timeout: int = 10
     heartbeat: int = 0
     retries: int = 1
@@ -110,11 +122,15 @@ class Job:
 
     @property
     def id(self):
-        return f"saq:job:{self.key}"
+        return self.id_from_key(self.key)
+
+    @classmethod
+    def id_from_key(cls, job_key):
+        return f"{ID_PREFIX}{job_key}"
 
     @property
     def abort_id(self):
-        return f"saq:abort:{self.key}"
+        return f"{ABORT_ID_PREFIX}{self.key}"
 
     def to_dict(self):
         return {
@@ -203,11 +219,11 @@ class Job:
         if until_complete is not None and not self.completed:
 
             async def callback(_id, status):
-                if status == Status.COMPLETE:
-                    await self.refresh()
+                if status in TERMINAL_STATUSES:
                     return True
 
-            await self.queue.listen(self, callback, until_complete)
+            await self.queue.listen([self.id], callback, until_complete)
+            await self.refresh()
 
     def replace(self, job):
         """Replace current attributes with job attributes."""
