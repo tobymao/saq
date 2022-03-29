@@ -4,7 +4,13 @@ import logging
 from contextlib import asynccontextmanager
 
 import aioredis
-from saq.job import Job, Status, TERMINAL_STATUSES, UNSUCCESSFUL_TERMINAL_STATUSES
+from saq.job import (
+    Job,
+    Status,
+    TERMINAL_STATUSES,
+    UNSUCCESSFUL_TERMINAL_STATUSES,
+    get_default_job_key,
+)
 from saq.utils import (
     millis,
     now,
@@ -492,7 +498,12 @@ class Queue:
         kwargs: Default kwargs for all jobs. These will be overridden by those in iter_kwargs.
         """
         iter_kwargs = [
-            {"timeout": timeout, "key": kwargs.get("key") or uuid1(), **kwargs, **kw}
+            {
+                "timeout": timeout,
+                "key": kwargs.get("key") or get_default_job_key(),
+                **kwargs,
+                **kw,
+            }
             for kw in iter_kwargs
         ]
         job_ids = [Job.id_from_key(key["key"]) for key in iter_kwargs]

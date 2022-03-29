@@ -9,6 +9,10 @@ ID_PREFIX = "saq:job:"
 ABORT_ID_PREFIX = "saq:abort:"
 
 
+def get_default_job_key():
+    return uuid1()
+
+
 class Status(str, enum.Enum):
     NEW = "new"
     DEFERRED = "deferred"
@@ -75,7 +79,7 @@ class Job:
     function: str
     kwargs: typing.Optional[dict] = None
     queue: typing.Optional["Queue"] = None
-    key: str = dataclasses.field(default_factory=uuid1)
+    key: str = dataclasses.field(default_factory=get_default_job_key)
     timeout: int = 10
     heartbeat: int = 0
     retries: int = 1
