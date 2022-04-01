@@ -3,6 +3,7 @@ import logging
 import signal
 import traceback
 import os
+from functools import partial, wraps
 
 from croniter import croniter
 
@@ -80,10 +81,6 @@ class Worker:
                 name, function = function
             else:
                 name = function.__qualname__
-
-            assert asyncio.iscoroutinefunction(
-                function
-            ), f"{function} is not a coroutine"
 
             self.functions[name] = function
 
@@ -205,9 +202,8 @@ class Worker:
             if self.before_process:
                 await self.before_process(context)
 
-            task = asyncio.create_task(
-                self.functions[job.function](context, **(job.kwargs or {}))
-            )
+            function = ensure_coroutine_function(self.functions[job.function])
+            task = asyncio.create_task(function(context, **(job.kwargs or {})))
             self.job_task_contexts[job] = {"task": task, "aborted": False}
             result = await asyncio.wait_for(task, job.timeout)
             await job.finish(Status.COMPLETE, result=result)
@@ -238,6 +234,20 @@ class Worker:
             new_task = asyncio.create_task(self.process())
             self.tasks.add(new_task)
             new_task.add_done_callback(self._process)
+
+
+def ensure_coroutine_function(func):
+    if asyncio.iscoroutinefunction(func):
+        return func
+
+    @wraps(func)
+    async def wrapped(*args, **kwargs):
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(
+            executor=None, func=partial(func, *args, **kwargs)
+        )
+
+    return wrapped
 
 
 def import_settings(settings):
