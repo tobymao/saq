@@ -3,7 +3,6 @@ import logging
 import signal
 import traceback
 import os
-from functools import partial, wraps
 
 from croniter import croniter
 
@@ -240,11 +239,10 @@ def ensure_coroutine_function(func):
     if asyncio.iscoroutinefunction(func):
         return func
 
-    @wraps(func)
     async def wrapped(*args, **kwargs):
         loop = asyncio.get_running_loop()
         return await loop.run_in_executor(
-            executor=None, func=partial(func, *args, **kwargs)
+            executor=None, func=lambda: func(*args, **kwargs)
         )
 
     return wrapped
