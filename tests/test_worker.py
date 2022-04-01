@@ -28,7 +28,11 @@ async def error(_ctx):
     raise ValueError("oops")
 
 
-functions = [noop, sleeper, error]
+def sync_echo(_ctx, *, a):
+    return a
+
+
+functions = [noop, sleeper, error, sync_echo]
 
 
 class TestWorker(unittest.IsolatedAsyncioTestCase):
@@ -264,3 +268,7 @@ class TestWorker(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await self.queue.count("queued"), 1)
         self.assertEqual(await self.queue.count("incomplete"), 1)
         self.assertEqual(await self.queue.count("active"), 0)
+
+    async def test_sync_function(self):
+        asyncio.create_task(self.worker.start())
+        assert await self.queue.apply("sync_echo", a=1) == 1
