@@ -68,12 +68,12 @@ class Queue:
         self._schedule_script = None
         self._enqueue_script = None
         self._cleanup_script = None
-        self._stats = "saq:stats"
         self._incomplete = self.namespace("incomplete")
         self._queued = self.namespace("queued")
         self._active = self.namespace("active")
         self._schedule = self.namespace("schedule")
         self._sweep = self.namespace("sweep")
+        self._stats = self.namespace("stats")
         self._dump = dump or json.dumps
         self._load = load or json.loads
         self._before_enqueues = {}
@@ -111,63 +111,56 @@ class Queue:
             self._version = tuple(int(i) for i in info["redis_version"].split("."))
         return self._version
 
-    async def info(self, queue=None, jobs=False, offset=0, limit=10):
+    async def info(self, jobs=False, offset=0, limit=10):
         # pylint: disable=too-many-locals
-        queues = {}
-        keys = []
+        worker_uuids = []
 
         for key in await self.redis.zrangebyscore(self._stats, now(), "inf"):
             key = key.decode("utf-8")
-            _, name, _, worker = key.split(":")
-            queues[name] = {"workers": {}}
-            keys.append((name, worker))
+            *_, worker_uuid = key.split(":")
+            worker_uuids.append(worker_uuid)
 
         worker_stats = await self.redis.mget(
-            f"saq:{name}:stats:{worker}" for name, worker in keys
+            self.namespace(f"stats:{worker_uuid}") for worker_uuid in worker_uuids
         )
 
-        for (name, worker), stats in zip(keys, worker_stats):
+        worker_info = {}
+        for worker_uuid, stats in zip(worker_uuids, worker_stats):
             if stats:
                 stats = json.loads(stats.decode("UTF-8"))
-                queues[name]["workers"][worker] = stats
+                worker_info[worker_uuid] = stats
 
-        for name, queue_info in queues.items():
-            queue = Queue(self.redis, name=name)
-            queued = await queue.count("queued")
-            active = await queue.count("active")
-            incomplete = await queue.count("incomplete")
+        queued = await self.count("queued")
+        active = await self.count("active")
+        incomplete = await self.count("incomplete")
 
-            jobs = (
-                [
-                    queue.deserialize(job_bytes).to_dict()
-                    for job_bytes in await self.redis.mget(
-                        (
-                            await self.redis.lrange(
-                                queue.namespace("active"), offset, limit - 1
-                            )
-                        )
-                        + (
-                            await self.redis.lrange(
-                                queue.namespace("queued"), offset, limit - 1
-                            )
+        if jobs:
+            job_info = [
+                self.deserialize(job_bytes).to_dict()
+                for job_bytes in await self.redis.mget(
+                    (
+                        await self.redis.lrange(
+                            self.namespace("active"), offset, limit - 1
                         )
                     )
-                ]
-                if jobs
-                else []
-            )
+                    + (
+                        await self.redis.lrange(
+                            self.namespace("queued"), offset, limit - 1
+                        )
+                    )
+                )
+            ]
+        else:
+            job_info = []
 
-            queue_info.update(
-                {
-                    "name": name,
-                    "queued": queued,
-                    "active": active,
-                    "scheduled": incomplete - queued - active,
-                    "jobs": jobs,
-                }
-            )
-
-        return queues
+        return {
+            "workers": worker_info,
+            "name": self.name,
+            "queued": queued,
+            "active": active,
+            "scheduled": incomplete - queued - active,
+            "jobs": job_info,
+        }
 
     async def stats(self, ttl=60):
         current = now()

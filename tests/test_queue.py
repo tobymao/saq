@@ -144,7 +144,30 @@ class TestQueue(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(stats["failed"], 10)
         self.assertEqual(stats["retried"], 10)
         self.assertEqual(stats["aborted"], 10)
-        assert stats["uptime"] > 0
+        self.assertGreater(stats["uptime"], 0)
+
+    async def test_info(self):
+        queue2 = create_queue(name=self.queue.name)
+        self.addAsyncCleanup(cleanup_queue, queue2)
+        worker = Worker(self.queue, functions=functions)
+        info = await self.queue.info(jobs=True)
+        self.assertEqual(info["workers"], {})
+        self.assertEqual(info["active"], 0)
+        self.assertEqual(info["queued"], 0)
+        self.assertEqual(info["scheduled"], 0)
+        self.assertEqual(info["jobs"], [])
+
+        await self.queue.enqueue("echo", a=1)
+        await queue2.enqueue("echo", a=1)
+        await worker.process()
+        await self.queue.stats()
+        await queue2.stats()
+
+        info = await self.queue.info(jobs=True)
+        self.assertEqual(set(info["workers"].keys()), {self.queue.uuid, queue2.uuid})
+        self.assertEqual(info["active"], 0)
+        self.assertEqual(info["queued"], 1)
+        self.assertEqual(len(info["jobs"]), 1)
 
     @mock.patch("saq.utils.time")
     async def test_schedule(self, mock_time):

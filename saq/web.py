@@ -5,7 +5,8 @@ import pathlib
 import traceback
 
 from aiohttp import web
-from saq.queue import Queue
+
+from saq import Job
 
 
 static = os.path.join(pathlib.Path(__file__).parent.resolve(), "static")
@@ -32,22 +33,27 @@ def render(**kwargs):
     return body.format(**{k: html.escape(v) for k, v in kwargs.items()})
 
 
-async def queues(request):
-    queue = request.match_info.get("queue")
-    info = await app["queue"].info(queue=queue, jobs=queue)
+async def queues_(request):
+    queue_name = request.match_info.get("queue")
+
     response = {}
 
-    if queue:
-        response["queue"] = info[queue]
+    if queue_name:
+        response["queue"] = await _get_queue(request, queue_name).info(jobs=True)
     else:
-        response["queues"] = list(info.values())
+        response["queues"] = await _get_all_info(request)
 
     return web.json_response(response)
 
 
 async def jobs(request):
     job = await _get_job(request)
-    return web.json_response({"job": job.to_dict()})
+    job_dict = job.to_dict()
+    if "kwargs" in job_dict:
+        job_dict["kwargs"] = repr(job_dict["kwargs"])
+    if "result" in job_dict:
+        job_dict["result"] = repr(job_dict["result"])
+    return web.json_response({"job": job_dict})
 
 
 async def retry(request):
@@ -66,26 +72,28 @@ async def views(_request):
     return web.Response(text=render(), content_type="text/html")
 
 
-async def health(_request):
-    info = await app["queue"].info()
-    if info.get(app["queue"].name):
+async def health(request):
+    if await _get_all_info(request):
         return web.Response(text="OK")
     raise web.HTTPInternalServerError
 
 
+async def _get_all_info(request):
+    return [await q.info() for q in request.app["queues"].values()]
+
+
+def _get_queue(request, queue_name):
+    return request.app["queues"][queue_name]
+
+
 async def _get_job(request):
+    queue_name = request.match_info.get("queue")
     job_key = request.match_info.get("job")
-    job = await app["queue"].job(f"saq:job:{job_key}")
+
+    job = await _get_queue(request, queue_name).job(Job.id_from_key(job_key))
     if not job:
         raise ValueError(f"Job {job_key} not found")
     return job
-
-
-async def redis_queue(app_):
-    if "queue" not in app_:
-        app_["queue"] = Queue.from_url("redis://localhost")
-    yield
-    await app_["queue"].disconnect()
 
 
 @web.middleware
@@ -101,20 +109,28 @@ async def exceptions(request, handler):
     return await handler(request)
 
 
-app = web.Application(middlewares=[exceptions])
+async def shutdown(app):
+    for queue in app.get("queues", {}).values():
+        await queue.disconnect()
 
-app.add_routes(
-    [
-        web.static("/static", static, append_version=True),
-        web.get("/api/jobs/{job}", jobs),
-        web.post("/api/jobs/{job}/retry", retry),
-        web.post("/api/jobs/{job}/abort", abort),
-        web.get("/api/queues", queues),
-        web.get("/api/queues/{queue}", queues),
-        web.get("/", views),
-        web.get("/queues/{queue}", views),
-        web.get("/jobs/{job}", views),
-        web.get("/health", health),
-    ]
-)
-app.cleanup_ctx.append(redis_queue)
+
+def create_app(queues):
+    app = web.Application(middlewares=[exceptions])
+    app["queues"] = {q.name: q for q in queues}
+
+    app.add_routes(
+        [
+            web.static("/static", static, append_version=True),
+            web.get("/api/queues/{queue}/jobs/{job}", jobs),
+            web.post("/api/queues/{queue}/jobs/{job}/retry", retry),
+            web.post("/api/queues/{queue}/jobs/{job}/abort", abort),
+            web.get("/api/queues", queues_),
+            web.get("/api/queues/{queue}", queues_),
+            web.get("/", views),
+            web.get("/queues/{queue}", views),
+            web.get("/queues/{queue}/jobs/{job}", views),
+            web.get("/health", health),
+        ]
+    )
+    app.on_shutdown.append(shutdown)
+    return app

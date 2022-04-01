@@ -26,7 +26,14 @@ def main():
     parser.add_argument(
         "--web",
         action="store_true",
-        help="Start web app",
+        help="Start web app. "
+        "By default, this only monitors the current worker's queue. To monitor multiple queues, see '--web-settings'",
+    )
+    parser.add_argument(
+        "--additional-web-settings",
+        "-a",
+        action="append",
+        help="Additional worker settings to monitor in the web app",
     )
     parser.add_argument(
         "--port",
@@ -63,7 +70,12 @@ def main():
                 p = multiprocessing.Process(target=start, args=(settings,))
                 p.start()
 
-        start(settings, web=args.web, port=args.port)
+        start(
+            settings,
+            web=args.web,
+            additional_web_settings=args.additional_web_settings,
+            port=args.port,
+        )
 
 
 if __name__ == "__main__":

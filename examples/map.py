@@ -20,6 +20,7 @@ async def sum_of_squares(ctx, *, n):
 
 
 settings = {
+    "queue": queue,
     "functions": [square, sum_of_squares],
     "concurrency": 100,
 }
