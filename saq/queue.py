@@ -21,6 +21,8 @@ from saq.utils import (
 
 logger = logging.getLogger("saq")
 
+STATS_KEY = "saq:stats"
+
 
 class JobError(Exception):
     def __init__(self, job):
@@ -58,6 +60,8 @@ class Queue:
     ):
         self.redis = redis
         self.name = name
+        self.dump = dump or json.dumps
+        self.load = load or json.loads
         self.uuid = uuid1()
         self.started = now()
         self.complete = 0
@@ -68,14 +72,11 @@ class Queue:
         self._schedule_script = None
         self._enqueue_script = None
         self._cleanup_script = None
-        self._stats = "saq:stats"
         self._incomplete = self.namespace("incomplete")
         self._queued = self.namespace("queued")
         self._active = self.namespace("active")
         self._schedule = self.namespace("schedule")
         self._sweep = self.namespace("sweep")
-        self._dump = dump or json.dumps
-        self._load = load or json.loads
         self._before_enqueues = {}
         self._op_sem = asyncio.Semaphore(max_concurrent_ops)
 
@@ -88,18 +89,20 @@ class Queue:
     def namespace(self, key):
         return ":".join(["saq", self.name, key])
 
+    def _init_job(self, job_dict):
+        assert (
+            job_dict.pop("queue") == self.name
+        ), f"Job {job_dict} fetched by wrong queue: {self.name}"
+        return Job(**job_dict, queue=self)
+
     def serialize(self, job):
-        return self._dump(job.to_dict())
+        return self.dump(job.to_dict())
 
     def deserialize(self, job_bytes):
         if not job_bytes:
             return None
 
-        job_dict = self._load(job_bytes)
-        assert (
-            job_dict.pop("queue") == self.name
-        ), f"Job {job_dict} fetched by wrong queue: {self.name}"
-        return Job(**job_dict, queue=self)
+        return self._init_job(self.load(job_bytes))
 
     async def disconnect(self):
         await self.redis.close()
@@ -110,64 +113,6 @@ class Queue:
             info = await self.redis.info()
             self._version = tuple(int(i) for i in info["redis_version"].split("."))
         return self._version
-
-    async def info(self, queue=None, jobs=False, offset=0, limit=10):
-        # pylint: disable=too-many-locals
-        queues = {}
-        keys = []
-
-        for key in await self.redis.zrangebyscore(self._stats, now(), "inf"):
-            key = key.decode("utf-8")
-            _, name, _, worker = key.split(":")
-            queues[name] = {"workers": {}}
-            keys.append((name, worker))
-
-        worker_stats = await self.redis.mget(
-            f"saq:{name}:stats:{worker}" for name, worker in keys
-        )
-
-        for (name, worker), stats in zip(keys, worker_stats):
-            if stats:
-                stats = json.loads(stats.decode("UTF-8"))
-                queues[name]["workers"][worker] = stats
-
-        for name, queue_info in queues.items():
-            queue = Queue(self.redis, name=name)
-            queued = await queue.count("queued")
-            active = await queue.count("active")
-            incomplete = await queue.count("incomplete")
-
-            jobs = (
-                [
-                    queue.deserialize(job_bytes).to_dict()
-                    for job_bytes in await self.redis.mget(
-                        (
-                            await self.redis.lrange(
-                                queue.namespace("active"), offset, limit - 1
-                            )
-                        )
-                        + (
-                            await self.redis.lrange(
-                                queue.namespace("queued"), offset, limit - 1
-                            )
-                        )
-                    )
-                ]
-                if jobs
-                else []
-            )
-
-            queue_info.update(
-                {
-                    "name": name,
-                    "queued": queued,
-                    "active": active,
-                    "scheduled": incomplete - queued - active,
-                    "jobs": jobs,
-                }
-            )
-
-        return queues
 
     async def stats(self, ttl=60):
         current = now()
@@ -182,9 +127,9 @@ class Queue:
             key = self.namespace(f"stats:{self.uuid}")
             await (
                 pipe.setex(key, ttl, json.dumps(stats))
-                .zremrangebyscore(self._stats, 0, current)
-                .zadd(self._stats, {key: current + millis(ttl)})
-                .expire(self._stats, ttl)
+                .zremrangebyscore(STATS_KEY, 0, current)
+                .zadd(STATS_KEY, {key: current + millis(ttl)})
+                .expire(STATS_KEY, ttl)
                 .execute()
             )
         return stats

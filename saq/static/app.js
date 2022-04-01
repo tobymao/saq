@@ -116,7 +116,7 @@ const job_headers = () => [
 
 const job_columns = job => [
   h("td", job.function),
-  h("td", JSON.stringify(job.kwargs)),
+  h("td", job.kwargs),
   h("td", format_time(job.queued)),
   h("td", format_time(job.started)),
   h("td", format_time(job.completed)),
@@ -210,14 +210,14 @@ const job_view = function(data, job_key) {
       ])),
       h("tbody", h("tr", [
         ...job_columns(job),
-        h("td", link({props: {href: "/queue/" + job.queue}}, job.queue)),
+        h("td", link({props: {href: "/queues/" + job.queue}}, job.queue)),
         h("td", h("progress", {props: {value: job.progress || 0, max: 1.0}})),
         h("td", job.attempts),
       ])),
     ])),
     h("details", {props: {open: true}}, [
       h("summary", "Result"),
-      h("p", JSON.stringify(job.result)),
+      h("p", job.result),
     ]),
     h("details", {props: {open: true}}, [
       h("summary", "Error"),

@@ -6,10 +6,10 @@ import os
 
 from croniter import croniter
 
+from saq.monitor import Monitor
 from saq.job import Status
 from saq.queue import Queue
 from saq.utils import millis, now, seconds
-
 
 logger = logging.getLogger("saq")
 
@@ -267,22 +267,22 @@ def start(settings, web=False, port=8080):
             await worker.queue.disconnect()
 
         app.on_shutdown.append(shutdown)
-        app["queue"] = worker.queue
+        app["monitor"] = Monitor(queue=worker.queue)
         loop.create_task(worker.start())
         aiohttp.web.run_app(app, port=port, loop=loop)
     else:
         loop.run_until_complete(worker.start())
 
 
-async def async_check_health(queue: Queue) -> int:
-    info = await queue.info()
-    if not info.get(queue.name):
+async def async_check_health(queue_name, monitor) -> int:
+    info = await monitor.info()
+    if not info.get(queue_name):
         logger.warning("Health check failed")
         status = 1
     else:
-        logger.info(info[queue.name])
+        logger.info(info[queue_name])
         status = 0
-    await queue.disconnect()
+    await monitor.disconnect()
     return status
 
 
@@ -290,4 +290,5 @@ def check_health(settings: str) -> int:
     settings = import_settings(settings)
     loop = asyncio.new_event_loop()
     queue = settings.get("queue", Queue.from_url("redis://localhost"))
-    return loop.run_until_complete(async_check_health(queue))
+    monitor = Monitor(queue=queue)
+    return loop.run_until_complete(async_check_health(queue.name, monitor))

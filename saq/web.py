@@ -5,7 +5,8 @@ import pathlib
 import traceback
 
 from aiohttp import web
-from saq.queue import Queue
+
+from saq.monitor import Monitor, json_safe_job
 
 
 static = os.path.join(pathlib.Path(__file__).parent.resolve(), "static")
@@ -34,7 +35,7 @@ def render(**kwargs):
 
 async def queues(request):
     queue = request.match_info.get("queue")
-    info = await app["queue"].info(queue=queue, jobs=queue)
+    info = await app["monitor"].info(queue=queue, jobs=queue)
     response = {}
 
     if queue:
@@ -47,7 +48,7 @@ async def queues(request):
 
 async def jobs(request):
     job = await _get_job(request)
-    return web.json_response({"job": job.to_dict()})
+    return web.json_response({"job": json_safe_job(job)})
 
 
 async def retry(request):
@@ -67,25 +68,24 @@ async def views(_request):
 
 
 async def health(_request):
-    info = await app["queue"].info()
-    if info.get(app["queue"].name):
+    if await app["monitor"].info():
         return web.Response(text="OK")
     raise web.HTTPInternalServerError
 
 
 async def _get_job(request):
     job_key = request.match_info.get("job")
-    job = await app["queue"].job(f"saq:job:{job_key}")
+    job = await app["monitor"].job(job_key)
     if not job:
         raise ValueError(f"Job {job_key} not found")
     return job
 
 
-async def redis_queue(app_):
-    if "queue" not in app_:
-        app_["queue"] = Queue.from_url("redis://localhost")
+async def monitor_ctx(app_):
+    if "monitor" not in app_:
+        app_["monitor"] = Monitor.from_url("redis://localhost")
     yield
-    await app_["queue"].disconnect()
+    await app_["monitor"].disconnect()
 
 
 @web.middleware
@@ -117,4 +117,4 @@ app.add_routes(
         web.get("/health", health),
     ]
 )
-app.cleanup_ctx.append(redis_queue)
+app.cleanup_ctx.append(monitor_ctx)
