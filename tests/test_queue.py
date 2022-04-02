@@ -112,6 +112,26 @@ class TestQueue(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await self.queue.count("incomplete"), 1)
         self.assertEqual(await self.queue.count("active"), 0)
 
+    async def test_retry_delay(self):
+        # Let's first verify how things work without a retry delay
+        worker = Worker(self.queue, functions=functions, dequeue_timeout=0.01)
+        job = await self.queue.enqueue("error", retries=1)
+        await worker.process()
+        await job.refresh()
+        self.assertEqual(job.status, Status.QUEUED)
+        await worker.process()
+        await job.refresh()
+        self.assertEqual(job.status, Status.FAILED)
+
+        # Now with the delay
+        job = await self.queue.enqueue("error", retries=1, retry_delay=100.0)
+        await worker.process()
+        await job.refresh()
+        self.assertEqual(job.status, Status.QUEUED)
+        await worker.process()
+        await job.refresh()
+        self.assertEqual(job.status, Status.QUEUED)
+
     async def test_abort(self):
         job = await self.queue.enqueue("test", retries=2)
         self.assertEqual(await self.queue.count("queued"), 1)
