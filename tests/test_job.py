@@ -75,3 +75,11 @@ class TestJob(unittest.IsolatedAsyncioTestCase):
         asyncio.create_task(finish())
         await self.job.refresh(0.1)
         self.assertEqual(self.job.status, Status.COMPLETE)
+
+    async def test_retry_delay(self):
+        job = Job("f")
+        self.assertAlmostEqual(job.next_retry_delay(), 0)
+        job = Job("f", retry_delay=1.0)
+        self.assertAlmostEqual(job.next_retry_delay(), 1.0)
+        job = Job("f", retry_delay=1.0, retry_backoff=True, attempts=3)
+        self.assertTrue(0 <= job.next_retry_delay() < 4)

@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import time
 from contextlib import asynccontextmanager
 
 import aioredis
@@ -325,16 +326,18 @@ class Queue:
         job.started = 0
         job.progress = 0
         job.touched = now()
+        next_retry_delay = job.next_retry_delay()
 
         async with self.redis.pipeline(transaction=True) as pipe:
-            await (
-                pipe.lrem(self._active, 1, job_id)
-                .lrem(self._queued, 1, job_id)
-                .zadd(self._incomplete, {job_id: job.scheduled})
-                .rpush(self._queued, job_id)
-                .set(job_id, self.serialize(job))
-                .execute()
-            )
+            pipe = pipe.lrem(self._active, 1, job_id)
+            pipe = pipe.lrem(self._queued, 1, job_id)
+            if next_retry_delay:
+                scheduled = time.time() + next_retry_delay
+                pipe = pipe.zadd(self._incomplete, {job_id: scheduled})
+            else:
+                pipe = pipe.zadd(self._incomplete, {job_id: job.scheduled})
+                pipe = pipe.rpush(self._queued, job_id)
+            await pipe.set(job_id, self.serialize(job)).execute()
             self.retried += 1
             await self.notify(job)
             logger.info("Retrying %s", job)
