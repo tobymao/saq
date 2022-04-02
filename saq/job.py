@@ -177,7 +177,6 @@ class Job:
             or (self.heartbeat and seconds(current - self.touched) > self.heartbeat)
         )
 
-    @property
     def next_retry_delay(self):
         if self.retry_backoff:
             return exponential_backoff(
