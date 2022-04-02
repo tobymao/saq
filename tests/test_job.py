@@ -82,4 +82,4 @@ class TestJob(unittest.IsolatedAsyncioTestCase):
         job = Job("f", retry_delay=1.0)
         self.assertAlmostEqual(job.next_retry_delay(), 1.0)
         job = Job("f", retry_delay=1.0, retry_backoff=True, attempts=3)
-        self.assertAlmostEqual(job.next_retry_delay(), 4)
+        self.assertTrue(0 <= job.next_retry_delay() < 4)

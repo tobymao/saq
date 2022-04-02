@@ -115,7 +115,7 @@ class TestQueue(unittest.IsolatedAsyncioTestCase):
     async def test_retry_delay(self):
         # Let's first verify how things work without a retry delay
         worker = Worker(self.queue, functions=functions, dequeue_timeout=0.01)
-        job = await self.queue.enqueue("error", retries=1)
+        job = await self.queue.enqueue("error", retries=2)
         await worker.process()
         await job.refresh()
         self.assertEqual(job.status, Status.QUEUED)
@@ -124,7 +124,7 @@ class TestQueue(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(job.status, Status.FAILED)
 
         # Now with the delay
-        job = await self.queue.enqueue("error", retries=1, retry_delay=100.0)
+        job = await self.queue.enqueue("error", retries=2, retry_delay=100.0)
         await worker.process()
         await job.refresh()
         self.assertEqual(job.status, Status.QUEUED)

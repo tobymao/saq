@@ -99,7 +99,7 @@ class TestWorker(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(job.status, Status.COMPLETE)
         self.assertEqual(job.result, {"a": 1, "b": []})
 
-        job = await self.queue.enqueue("sleeper", timeout=0.05, retries=1)
+        job = await self.queue.enqueue("sleeper", timeout=0.05, retries=2)
         await self.worker.process()
         await self.worker.process()
         await job.refresh()
@@ -111,7 +111,7 @@ class TestWorker(unittest.IsolatedAsyncioTestCase):
         assert "TimeoutError" in job.error
 
     async def test_error(self):
-        job = await self.queue.enqueue("error", retries=1)
+        job = await self.queue.enqueue("error", retries=2)
         await self.worker.process()
         await job.refresh()
         self.assertEqual(job.attempts, 1)
@@ -175,7 +175,7 @@ class TestWorker(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(x["before"], 1)
         self.assertEqual(x["after"], 1)
 
-        await self.queue.enqueue("error", retries=0)
+        await self.queue.enqueue("error")
         await worker.process()
         self.assertEqual(x["before"], 2)
         self.assertEqual(x["after"], 2)

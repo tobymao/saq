@@ -63,11 +63,11 @@ class Job:
         retries: the maximum number of attempts to retry a job, defaults to 1
         ttl: the maximum time in seconds to store information about a job including results, defaults to 600
         retry_delay: seconds to delay before retrying the job
-        retry_backoff: if true, use exponential backoff for retry delays.
+        retry_backoff: If true, use exponential backoff for retry delays.
             The first retry will have whatever retry_delay is.
             The second retry will have retry_delay*2. The third retry will have retry_delay*4. And so on.
-        retry_backoff_max: if set, this caps the retry delays calculated by retry_backoff
-        retry_jitter: if true, this randomizes the retry delay calculate by retry backoff between 0 and the calculated retry delay
+            This always includes jitter, where the final retry delay is a random number between 0 and the calculated retry delay.
+            If retry_backoff is set to a number, that number is the maximum retry delay, in seconds.
         scheduled: epoch seconds for when the job should be scheduled, defaults to 0 (schedule right away)
         progress: job progress 0.0..1.0
     Framework Set Properties
@@ -90,9 +90,7 @@ class Job:
     retries: int = 1
     ttl: int = 600
     retry_delay: float = 0.0
-    retry_backoff: bool = False
-    retry_backoff_max: typing.Optional[float] = None
-    retry_jitter: bool = False
+    retry_backoff: typing.Union[bool, float] = False
     scheduled: int = 0
     progress: float = 0.0
     attempts: int = 0
@@ -179,11 +177,14 @@ class Job:
 
     def next_retry_delay(self):
         if self.retry_backoff:
+            max_delay = self.retry_delay
+            if max_delay is True:
+                max_delay = None
             return exponential_backoff(
                 attempts=self.attempts,
                 base_delay=self.retry_delay,
-                max_delay=self.retry_backoff_max,
-                jitter=self.retry_jitter,
+                max_delay=max_delay,
+                jitter=True,
             )
         return self.retry_delay
 

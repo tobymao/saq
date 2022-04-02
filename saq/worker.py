@@ -214,7 +214,7 @@ class Worker:
             logger.error(error)
 
             if job:
-                if job.attempts > job.retries:
+                if job.attempts >= job.retries:
                     await job.finish(Status.FAILED, error=error)
                 else:
                     await job.retry(error)
