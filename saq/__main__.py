@@ -27,7 +27,7 @@ def main():
         "--web",
         action="store_true",
         help="Start web app. "
-        "By default, this only monitors the current worker's queue. To monitor multiple queues, see '--web-settings'",
+        "By default, this only monitors the current worker's queue. To monitor multiple queues, see '--additional-web-settings'",
     )
     parser.add_argument(
         "--additional-web-settings",
