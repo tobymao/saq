@@ -116,7 +116,7 @@ const job_headers = () => [
 
 const job_columns = job => [
   h("td", job.function),
-  h("td", JSON.stringify(job.kwargs)),
+  h("td", job.kwargs),
   h("td", format_time(job.queued)),
   h("td", format_time(job.started)),
   h("td", format_time(job.completed)),
@@ -171,7 +171,7 @@ const queue_view = function(data, queue_name) {
       h("thead", h("tr", [h("th", "Key"), ...job_headers()])),
       h("tbody", queue.jobs.map(job =>
         h("tr", [
-          link({props: {href: "/jobs/" + job.key}}, h("td", job.key)),
+          link({props: {href: "/queues/" + queue_name + "/jobs/" + job.key}}, h("td", job.key)),
           ...job_columns(job),
         ])
       )),
@@ -179,18 +179,18 @@ const queue_view = function(data, queue_name) {
   ])
 }
 
-const job_view = function(data, job_key) {
+const job_view = function(data, queue_name, job_key) {
   const job = data.job
   const buttons = [button(
     "Retry",
-    event => post("/jobs/" + job_key + "/retry"),
+    event => post("/queues/" + queue_name + "/jobs/" + job_key + "/retry"),
     {style: {marginRight: "1rem"}},
   )]
 
   if (!job.completed) {
     buttons.push(button(
       "Abort",
-      event => post("/jobs/" + job_key + "/abort"),
+      event => post("/queues/" + queue_name + "/jobs/" + job_key + "/abort"),
       {style: {borderColor: "#d81b60", backgroundColor: "#d81b60"}},
     ))
   }
@@ -210,14 +210,14 @@ const job_view = function(data, job_key) {
       ])),
       h("tbody", h("tr", [
         ...job_columns(job),
-        h("td", link({props: {href: "/queue/" + job.queue}}, job.queue)),
+        h("td", link({props: {href: "/queues/" + job.queue}}, job.queue)),
         h("td", h("progress", {props: {value: job.progress || 0, max: 1.0}})),
         h("td", job.attempts),
       ])),
     ])),
     h("details", {props: {open: true}}, [
       h("summary", "Result"),
-      h("p", JSON.stringify(job.result)),
+      h("p", job.result),
     ]),
     h("details", {props: {open: true}}, [
       h("summary", "Error"),
@@ -236,7 +236,7 @@ const error_view = function(error) {
 let routes = {
   '/': {view: home_view, data: "/queues"},
   '/queues/:queue_id': {view: queue_view},
-  '/jobs/:job_id': {view: job_view}
+  '/queues/:queue_id/jobs/:job_id': {view: job_view}
 }
 
 routes = Object.keys(routes)
