@@ -19,17 +19,13 @@ async def recurse(ctx, *, n):
     await queue.apply("recurse", n=n - 1)
 
 
-async def before_process(ctx):
-    correlation_id = ctx["job"].meta.get("correlation_id")
-    ctx["reset_token"] = correlation_id_ctx.set(correlation_id)
-
-
-async def after_process(ctx):
-    correlation_id_ctx.reset(ctx["reset_token"])
-
-
 async def before_enqueue(job):
     job.meta["correlation_id"] = correlation_id_ctx.get(None) or uuid1()
+
+
+async def before_process(ctx):
+    correlation_id = ctx["job"].meta.get("correlation_id")
+    correlation_id_ctx.set(correlation_id)
 
 
 queue.register_before_enqueue(before_enqueue)
@@ -39,7 +35,6 @@ settings = {
     "functions": [recurse],
     "concurrency": 100,
     "before_process": before_process,
-    "after_process": after_process,
 }
 
 

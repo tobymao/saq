@@ -292,17 +292,13 @@ class TestWorker(unittest.IsolatedAsyncioTestCase):
     async def test_propagation(self):
         async def before_process(ctx):
             correlation_id = ctx["job"].meta.get("correlation_id")
-            ctx["reset_token"] = ctx_var.set(correlation_id)
+            ctx_var.set(correlation_id)
             ctx["queue"] = self.queue
-
-        async def after_process(ctx):
-            ctx_var.reset(ctx["reset_token"])
 
         async def before_enqueue(job):
             job.meta["correlation_id"] = ctx_var.get(None) or uuid1()
 
         self.worker.before_process = before_process
-        self.worker.after_process = after_process
         self.queue.register_before_enqueue(before_enqueue)
         asyncio.create_task(self.worker.start())
         correlation_ids = await self.queue.apply("recurse", n=2)

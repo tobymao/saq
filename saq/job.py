@@ -145,18 +145,11 @@ class Job:
     def to_dict(self):
         result = {}
         for field in dataclasses.fields(self):
-            value = getattr(self, field.name)
-
-            if field.name == "queue" and value:
+            key = field.name
+            value = getattr(self, key)
+            if key == "queue" and value:
                 value = value.name
-
-            default = field.default
-            if field.default_factory != dataclasses.MISSING:
-                default = field.default_factory()
-
-            if value != default:
-                result[field.name] = value
-
+            result[key] = value
         return result
 
     def duration(self, kind):
