@@ -279,9 +279,7 @@ def start(settings, web=False, extra_web_settings=None, port=8080):
         from saq.web import create_app
 
         extra_web_settings = extra_web_settings or []
-        web_settings = [settings] + [
-            import_settings(s) for s in extra_web_settings
-        ]
+        web_settings = [settings] + [import_settings(s) for s in extra_web_settings]
         queues = [s["queue"] for s in web_settings if s.get("queue")]
 
         async def shutdown(_app):
