@@ -70,6 +70,7 @@ class Job:
             If retry_backoff is set to a number, that number is the maximum retry delay, in seconds.
         scheduled: epoch seconds for when the job should be scheduled, defaults to 0 (schedule right away)
         progress: job progress 0.0..1.0
+        meta: arbitrary metadata to attach to the job
     Framework Set Properties
         attempts: number of attempts a job has had
         completed: job completion time epoch seconds
@@ -101,6 +102,7 @@ class Job:
     result: typing.Any = None
     error: typing.Optional[str] = None
     status: Status = Status.NEW
+    meta: dict = dataclasses.field(default_factory=dict)
 
     def __repr__(self):
         kwargs = ", ".join(
@@ -119,6 +121,7 @@ class Job:
                 "result": self.result,
                 "error": self.error,
                 "status": self.status,
+                "meta": self.meta,
             }.items()
             if v is not None
         )
@@ -140,11 +143,21 @@ class Job:
         return f"{ABORT_ID_PREFIX}{self.key}"
 
     def to_dict(self):
-        return {
-            k: v.name if k == "queue" else v
-            for k, v in self.__dict__.items()
-            if v != self.__dataclass_fields__[k].default  # pylint: disable=no-member
-        }
+        result = {}
+        for field in dataclasses.fields(self):
+            value = getattr(self, field.name)
+
+            if field.name == "queue" and value:
+                value = value.name
+
+            default = field.default
+            if field.default_factory != dataclasses.MISSING:
+                default = field.default_factory()
+
+            if value != default:
+                result[field.name] = value
+
+        return result
 
     def duration(self, kind):
         """

@@ -86,6 +86,10 @@ class Queue:
     def unregister_before_enqueue(self, callback):
         self._before_enqueues.pop(id(callback), None)
 
+    async def _before_enqueue(self, job):
+        for cb in self._before_enqueues.values():
+            await cb(job)
+
     def namespace(self, key):
         return ":".join(["saq", self.name, key])
 
@@ -433,8 +437,7 @@ class Queue:
         job.queued = now()
         job.status = Status.QUEUED
 
-        for cb in self._before_enqueues.values():
-            await cb(job)
+        await self._before_enqueue(job)
 
         async with self._op_sem:
             if not await self._enqueue_script(

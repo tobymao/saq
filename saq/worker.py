@@ -1,4 +1,5 @@
 import asyncio
+import contextvars
 import logging
 import signal
 import traceback
@@ -82,6 +83,14 @@ class Worker:
                 name = function.__qualname__
 
             self.functions[name] = function
+
+    async def _before_process(self, ctx):
+        if self.before_process:
+            await self.before_process(ctx)
+
+    async def _after_process(self, ctx):
+        if self.after_process:
+            await self.after_process(ctx)
 
     async def start(self):
         """Start processing jobs and upkeep tasks."""
@@ -184,6 +193,7 @@ class Worker:
     async def process(self):
         # pylint: disable=too-many-branches
         job = None
+        context = None
 
         try:
             job = await self.queue.dequeue(self.dequeue_timeout)
@@ -194,12 +204,10 @@ class Worker:
             job.started = now()
             job.status = Status.ACTIVE
             job.attempts += 1
-            logger.info("Processing %s", job)
             await job.update()
             context = {**self.context, "job": job}
-
-            if self.before_process:
-                await self.before_process(context)
+            await self._before_process(context)
+            logger.info("Processing %s", job)
 
             function = ensure_coroutine_function(self.functions[job.function])
             task = asyncio.create_task(function(context, **(job.kwargs or {})))
@@ -219,11 +227,10 @@ class Worker:
                 else:
                     await job.retry(error)
         finally:
-            if job:
-                self.job_task_contexts.pop(job)
+            if context:
+                self.job_task_contexts.pop(job, None)
 
-                if self.after_process and job.completed:
-                    await self.after_process(context)
+                await self._after_process(context)
 
     def _process(self, previous_task=None):
         if previous_task:
@@ -241,8 +248,9 @@ def ensure_coroutine_function(func):
 
     async def wrapped(*args, **kwargs):
         loop = asyncio.get_running_loop()
+        ctx = contextvars.copy_context()
         return await loop.run_in_executor(
-            executor=None, func=lambda: func(*args, **kwargs)
+            executor=None, func=lambda: ctx.run(func, *args, **kwargs)
         )
 
     return wrapped

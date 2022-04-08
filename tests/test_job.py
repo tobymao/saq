@@ -83,3 +83,11 @@ class TestJob(unittest.IsolatedAsyncioTestCase):
         self.assertAlmostEqual(job.next_retry_delay(), 1.0)
         job = Job("f", retry_delay=1.0, retry_backoff=True, attempts=3)
         self.assertTrue(0 <= job.next_retry_delay() < 4)
+
+    async def test_meta(self):
+        self.assertNotIn("meta", Job("f").to_dict())
+        job = Job("f", meta={"a": 1})
+        self.assertEqual(job.to_dict()["meta"], {"a": 1})
+        job = Job("f")
+        job.meta["a"] = 1
+        self.assertEqual(job.to_dict()["meta"], {"a": 1})
