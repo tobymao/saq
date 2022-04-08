@@ -1,14 +1,18 @@
 import asyncio
+import contextvars
 import logging
 import unittest
 from unittest import mock
 
 from saq.job import CronJob, Status
+from saq.utils import uuid1
 from saq.worker import Worker
 from tests.helpers import create_queue, cleanup_queue
 
 
 logging.getLogger().setLevel(logging.CRITICAL)
+
+ctx_var = contextvars.ContextVar("ctx_var")
 
 
 async def noop(_ctx):
@@ -28,11 +32,19 @@ async def error(_ctx):
     raise ValueError("oops")
 
 
-def sync_echo(_ctx, *, a):
-    return a
+def sync_echo_ctx(_ctx):
+    return ctx_var.get()
 
 
-functions = [noop, sleeper, error, sync_echo]
+async def recurse(ctx, *, n):
+    var = ctx_var.get()
+    result = [var]
+    if n > 0:
+        result += await ctx["queue"].apply("recurse", n=n - 1)
+    return result
+
+
+functions = [noop, sleeper, error, sync_echo_ctx, recurse]
 
 
 class TestWorker(unittest.IsolatedAsyncioTestCase):
@@ -270,5 +282,25 @@ class TestWorker(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await self.queue.count("active"), 0)
 
     async def test_sync_function(self):
+        async def before_process(*_, **__):
+            ctx_var.set("123")
+
+        self.worker.before_process = before_process
         asyncio.create_task(self.worker.start())
-        assert await self.queue.apply("sync_echo", a=1) == 1
+        self.assertEqual(await self.queue.apply("sync_echo_ctx"), "123")
+
+    async def test_propagation(self):
+        async def before_process(ctx):
+            correlation_id = ctx["job"].meta.get("correlation_id")
+            ctx_var.set(correlation_id)
+            ctx["queue"] = self.queue
+
+        async def before_enqueue(job):
+            job.meta["correlation_id"] = ctx_var.get(None) or uuid1()
+
+        self.worker.before_process = before_process
+        self.queue.register_before_enqueue(before_enqueue)
+        asyncio.create_task(self.worker.start())
+        correlation_ids = await self.queue.apply("recurse", n=2)
+        self.assertEqual(len(correlation_ids), 3)
+        self.assertTrue(all(cid == correlation_ids[0] for cid in correlation_ids[1:]))
