@@ -83,3 +83,12 @@ class TestJob(unittest.IsolatedAsyncioTestCase):
         self.assertAlmostEqual(job.next_retry_delay(), 1.0)
         job = Job("f", retry_delay=1.0, retry_backoff=True, attempts=3)
         self.assertTrue(0 <= job.next_retry_delay() < 4)
+
+    async def test_to_dict(self):
+        assert Job("f", key="a").to_dict() == {"function": "f", "key": "a"}
+        assert Job("f", key="a", meta={"x": 1}, queue=self.queue).to_dict() == {
+            "function": "f",
+            "key": "a",
+            "queue": self.queue.name,
+            "meta": {"x": 1},
+        }
