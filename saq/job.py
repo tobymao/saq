@@ -77,7 +77,7 @@ class Job:
         queued: job enqueued time epoch seconds
         started: job started time epoch seconds
         touched: job touched/updated time epoch seconds
-        results: dictionary containing the results, this is the return of the function provided, must be serializable, defaults to json
+        results: payload containing the results, this is the return of the function provided, must be serializable, defaults to json
         error: stack trace if an runtime error occurs
         status: Status Enum, defaulst to Status.New
     """
@@ -147,6 +147,10 @@ class Job:
         for field in dataclasses.fields(self):
             key = field.name
             value = getattr(self, key)
+            if value == field.default:
+                continue
+            if key == "meta" and not value:
+                continue
             if key == "queue" and value:
                 value = value.name
             result[key] = value
