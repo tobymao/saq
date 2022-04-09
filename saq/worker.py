@@ -265,7 +265,7 @@ def import_settings(settings):
     return getattr(module, name)
 
 
-def start(settings, web=False, additional_web_settings=None, port=8080):
+def start(settings, web=False, extra_web_settings=None, port=8080):
     settings = import_settings(settings)
 
     if "queue" not in settings:
@@ -278,10 +278,8 @@ def start(settings, web=False, additional_web_settings=None, port=8080):
         import aiohttp.web
         from saq.web import create_app
 
-        additional_web_settings = additional_web_settings or []
-        web_settings = [settings] + [
-            import_settings(s) for s in additional_web_settings
-        ]
+        extra_web_settings = extra_web_settings or []
+        web_settings = [settings] + [import_settings(s) for s in extra_web_settings]
         queues = [s["queue"] for s in web_settings if s.get("queue")]
 
         async def shutdown(_app):

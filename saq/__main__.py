@@ -27,11 +27,11 @@ def main():
         "--web",
         action="store_true",
         help="Start web app. "
-        "By default, this only monitors the current worker's queue. To monitor multiple queues, see '--additional-web-settings'",
+        "By default, this only monitors the current worker's queue. To monitor multiple queues, see '--extra-web-settings'",
     )
     parser.add_argument(
-        "--additional-web-settings",
-        "-a",
+        "--extra-web-settings",
+        "-e",
         action="append",
         help="Additional worker settings to monitor in the web app",
     )
@@ -73,7 +73,7 @@ def main():
         start(
             settings,
             web=args.web,
-            additional_web_settings=args.additional_web_settings,
+            extra_web_settings=args.extra_web_settings,
             port=args.port,
         )
 
