@@ -3,4 +3,4 @@ from saq.queue import Queue
 from saq.worker import Worker
 
 
-__version__ = "0.5.0"
+__version__ = "0.5.1"
