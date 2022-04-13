@@ -505,7 +505,7 @@ class Queue:
             }
             for kw in iter_kwargs
         ]
-        job_ids = [Job.id_from_key(key["key"]) for key in iter_kwargs]
+        job_ids = [Job.id_from_key(key["key"], queue_name=self.name) for key in iter_kwargs]
         pending_job_ids = set(job_ids)
 
         async def callback(job_id, status):

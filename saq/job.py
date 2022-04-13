@@ -132,11 +132,11 @@ class Job:
 
     @property
     def id(self):
-        return self.id_from_key(self.key)
+        return self.id_from_key(self.key, self.queue.name)
 
     @classmethod
-    def id_from_key(cls, job_key):
-        return f"{ID_PREFIX}{job_key}"
+    def id_from_key(cls, job_key, queue_name):
+        return f"{ID_PREFIX}{queue_name}:{job_key}"
 
     @property
     def abort_id(self):
