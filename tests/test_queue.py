@@ -48,7 +48,7 @@ class TestQueue(unittest.IsolatedAsyncioTestCase):
 
     async def test_enqueue_dup(self):
         job = await self.queue.enqueue("test", key="1")
-        self.assertEqual(job.id, "saq:job:1")
+        self.assertEqual(job.id, "saq:job:default:1")
         self.assertIsNone(await self.queue.enqueue("test", key="1"))
         self.assertIsNone(await self.queue.enqueue(job))
 
@@ -223,7 +223,7 @@ class TestQueue(unittest.IsolatedAsyncioTestCase):
         await self.queue.dequeue()
 
         # missing job
-        job4 = Job(function="")
+        job4 = Job(function="", queue=self.queue)
 
         # pylint: disable=protected-access
         await self.queue.redis.lpush(self.queue._active, job4.id)

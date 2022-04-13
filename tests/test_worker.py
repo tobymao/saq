@@ -237,7 +237,7 @@ class TestWorker(unittest.IsolatedAsyncioTestCase):
         await worker.schedule()
         self.assertEqual(await self.queue.count("queued"), 1)
         self.assertEqual(await self.queue.count("incomplete"), 1)
-        mock_logger.info.assert_any_call("Scheduled %s", [b"saq:job:cron:cron"])
+        mock_logger.info.assert_any_call("Scheduled %s", [b"saq:job:default:cron:cron"])
 
     @mock.patch("saq.worker.logger")
     async def test_abort(self, mock_logger):
