@@ -36,7 +36,7 @@ setup(
         "hiredis": ["aioredis[hiredis]>=2.0"],
         "web": ["aiohttp"],
         "dev": [
-            "black",
+            "black==22.3.0",
             "pylint",
         ],
     },
