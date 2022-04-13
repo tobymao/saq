@@ -6,8 +6,6 @@ import traceback
 
 from aiohttp import web
 
-from saq import Job
-
 
 static = os.path.join(pathlib.Path(__file__).parent.resolve(), "static")
 
