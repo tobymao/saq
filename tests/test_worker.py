@@ -155,7 +155,7 @@ class TestWorker(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(job.status, Status.ACTIVE)
 
         loop.run_until_complete(worker.stop())
-        job = loop.run_until_complete(queue.job(job.id))
+        job = loop.run_until_complete(queue.job(job.key))
         loop.run_until_complete(cleanup_queue(queue))
         assert job.queued != 0
         assert job.started == 0
@@ -237,7 +237,7 @@ class TestWorker(unittest.IsolatedAsyncioTestCase):
         await worker.schedule()
         self.assertEqual(await self.queue.count("queued"), 1)
         self.assertEqual(await self.queue.count("incomplete"), 1)
-        mock_logger.info.assert_any_call("Scheduled %s", [b"saq:job:cron:cron"])
+        mock_logger.info.assert_any_call("Scheduled %s", [b"saq:job:default:cron:cron"])
 
     @mock.patch("saq.worker.logger")
     async def test_abort(self, mock_logger):
@@ -246,12 +246,12 @@ class TestWorker(unittest.IsolatedAsyncioTestCase):
         asyncio.create_task(self.worker.process())
 
         # wait for the job to actually start
-        def callback(job_id, status):
-            self.assertEqual(job.id, job_id)
+        def callback(job_key, status):
+            self.assertEqual(job.key, job_key)
             self.assertEqual(status, Status.ACTIVE)
             return True
 
-        await self.queue.listen([job.id], callback)
+        await self.queue.listen([job.key], callback)
         self.assertEqual(await self.queue.count("queued"), 0)
         self.assertEqual(await self.queue.count("incomplete"), 1)
         self.assertEqual(await self.queue.count("active"), 1)

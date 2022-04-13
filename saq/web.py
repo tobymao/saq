@@ -6,8 +6,6 @@ import traceback
 
 from aiohttp import web
 
-from saq import Job
-
 
 static = os.path.join(pathlib.Path(__file__).parent.resolve(), "static")
 
@@ -90,7 +88,7 @@ async def _get_job(request):
     queue_name = request.match_info.get("queue")
     job_key = request.match_info.get("job")
 
-    job = await _get_queue(request, queue_name).job(Job.id_from_key(job_key))
+    job = await _get_queue(request, queue_name).job(job_key)
     if not job:
         raise ValueError(f"Job {job_key} not found")
     return job
