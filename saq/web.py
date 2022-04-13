@@ -90,9 +90,7 @@ async def _get_job(request):
     queue_name = request.match_info.get("queue")
     job_key = request.match_info.get("job")
 
-    job = await _get_queue(request, queue_name).job(
-        Job.id_from_key(job_key, queue_name)
-    )
+    job = await _get_queue(request, queue_name).job(job_key)
     if not job:
         raise ValueError(f"Job {job_key} not found")
     return job

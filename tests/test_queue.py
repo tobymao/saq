@@ -30,7 +30,7 @@ class TestQueue(unittest.IsolatedAsyncioTestCase):
 
     async def test_enqueue_job(self):
         job = Job("test")
-        self.assertEqual(await self.queue.enqueue(job), await self.queue.job(job.id))
+        self.assertEqual(await self.queue.enqueue(job), await self.queue.job(job.key))
         self.assertEqual(await self.queue.count("queued"), 1)
         await self.queue.enqueue(job)
         self.assertEqual(await self.queue.count("queued"), 1)
@@ -40,7 +40,7 @@ class TestQueue(unittest.IsolatedAsyncioTestCase):
     async def test_enqueue_job_str(self):
         job = await self.queue.enqueue("test")
         self.assertIsNotNone(job)
-        self.assertEqual(await self.queue.job(job.id), job)
+        self.assertEqual(await self.queue.job(job.key), job)
         job = await self.queue.enqueue("test", y=1, timeout=1)
         self.assertEqual(job.kwargs, {"y": 1})
         self.assertEqual(job.timeout, 1)
@@ -258,7 +258,7 @@ class TestQueue(unittest.IsolatedAsyncioTestCase):
             counter["x"] += 1
             return counter["x"] == 2
 
-        task = asyncio.create_task(self.queue.listen([job.id], listen, timeout=0.1))
+        task = asyncio.create_task(self.queue.listen([job.key], listen, timeout=0.1))
         await asyncio.sleep(0)
         await self.queue.update(job)
         await self.queue.update(job)

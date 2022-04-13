@@ -138,6 +138,10 @@ class Job:
     def id_from_key(cls, job_key, queue_name):
         return f"{ID_PREFIX}{queue_name}:{job_key}"
 
+    @classmethod
+    def key_from_id(cls, job_id):
+        return job_id.split(":")[-1]
+
     @property
     def abort_id(self):
         return f"{ABORT_ID_PREFIX}{self.key}"
@@ -239,7 +243,7 @@ class Job:
         until_complete: None or Numeric seconds. if None (default), don't wait,
             else wait seconds until the job is complete or the interval has been reached. 0 means wait forever
         """
-        job = await self.queue.job(self.id)
+        job = await self.queue.job(self.key)
 
         if not job:
             raise RuntimeError(f"{self} doesn't exist")
@@ -252,7 +256,7 @@ class Job:
                 if status in TERMINAL_STATUSES:
                     return True
 
-            await self.queue.listen([self.id], callback, until_complete)
+            await self.queue.listen([self.key], callback, until_complete)
             await self.refresh()
 
     def replace(self, job):

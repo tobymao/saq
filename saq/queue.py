@@ -260,16 +260,16 @@ class Queue:
                     logger.info("Sweeping job %s", job)
         return swept
 
-    async def listen(self, job_ids, callback, timeout=10):
+    async def listen(self, job_keys, callback, timeout=10):
         """
         Listen to updates on jobs.
 
-        job_ids: sequence of job ids
-        callback: callback function, if it returns truthy, break
+        job_keys: sequence of job keys
+        callback: callback function, if it returns truthy, break. Takes (job_id, status) as arguments
         timeout: if timeout is truthy, wait for timeout seconds
         """
         pubsub = self.redis.pubsub()
-
+        job_ids = [Job.id_from_key(job_key, self.name) for job_key in job_keys]
         await pubsub.subscribe(*job_ids)
 
         async def listen():
@@ -301,7 +301,8 @@ class Queue:
         await self.redis.set(job.id, self.serialize(job))
         await self.notify(job)
 
-    async def job(self, job_id):
+    async def job(self, job_key):
+        job_id = Job.id_from_key(job_key, self.name)
         async with self._op_sem:
             return self.deserialize(await self.redis.get(job_id))
 
@@ -384,7 +385,8 @@ class Queue:
                 "BLMOVE", self._queued, self._active, "RIGHT", "LEFT", timeout
             )
         if job_id is not None:
-            return await self.job(job_id)
+            job_key = Job.key_from_id(job_id.decode())
+            return await self.job(job_key)
 
         logger.debug("Dequeue timed out")
         return None
@@ -505,10 +507,12 @@ class Queue:
             }
             for kw in iter_kwargs
         ]
-        job_ids = [
-            Job.id_from_key(key["key"], queue_name=self.name) for key in iter_kwargs
-        ]
-        pending_job_ids = set(job_ids)
+        job_keys = [key["key"] for key in iter_kwargs]
+        pending_job_keys = set(job_keys)
+        pending_job_ids = set(
+            Job.id_from_key(job_key, queue_name=self.name)
+            for job_key in pending_job_keys
+        )
 
         async def callback(job_id, status):
             if status in TERMINAL_STATUSES:
@@ -523,7 +527,7 @@ class Queue:
         # Start listening before we enqueue the jobs.
         # This ensures we don't miss any updates.
         task = asyncio.create_task(
-            self.listen(pending_job_ids, callback, timeout=timeout)
+            self.listen(pending_job_keys, callback, timeout=timeout)
         )
 
         try:
@@ -536,7 +540,7 @@ class Queue:
 
         await asyncio.wait_for(task, timeout=timeout)
 
-        jobs = await asyncio.gather(*[self.job(job_id) for job_id in job_ids])
+        jobs = await asyncio.gather(*[self.job(job_key) for job_key in job_keys])
 
         results = []
         for job in jobs:
