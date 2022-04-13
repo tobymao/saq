@@ -4,7 +4,6 @@ import typing
 
 from saq.utils import now, seconds, uuid1, exponential_backoff
 
-ID_PREFIX = "saq:job:"
 ABORT_ID_PREFIX = "saq:abort:"
 
 
@@ -132,11 +131,7 @@ class Job:
 
     @property
     def id(self):
-        return self.id_from_key(self.key, self.queue.name)
-
-    @classmethod
-    def id_from_key(cls, job_key, queue_name):
-        return f"{ID_PREFIX}{queue_name}:{job_key}"
+        return self.queue.job_id(self.key)
 
     @classmethod
     def key_from_id(cls, job_id):

@@ -252,8 +252,8 @@ class TestQueue(unittest.IsolatedAsyncioTestCase):
         job = await self.queue.enqueue("test")
         counter = {"x": 0}
 
-        def listen(job_id, status):
-            self.assertEqual(job.id, job_id)
+        def listen(job_key, status):
+            self.assertEqual(job.key, job_key)
             self.assertEqual(status, Status.QUEUED)
             counter["x"] += 1
             return counter["x"] == 2

@@ -22,6 +22,8 @@ from saq.utils import (
 
 logger = logging.getLogger("saq")
 
+ID_PREFIX = "saq:job:"
+
 
 class JobError(Exception):
     def __init__(self, job):
@@ -85,6 +87,9 @@ class Queue:
 
     def unregister_before_enqueue(self, callback):
         self._before_enqueues.pop(id(callback), None)
+
+    def job_id(self, job_key):
+        return f"{ID_PREFIX}{self.name}:{job_key}"
 
     async def _before_enqueue(self, job):
         for cb in self._before_enqueues.values():
@@ -265,22 +270,23 @@ class Queue:
         Listen to updates on jobs.
 
         job_keys: sequence of job keys
-        callback: callback function, if it returns truthy, break. Takes (job_id, status) as arguments
+        callback: callback function, if it returns truthy, break
         timeout: if timeout is truthy, wait for timeout seconds
         """
         pubsub = self.redis.pubsub()
-        job_ids = [Job.id_from_key(job_key, self.name) for job_key in job_keys]
+        job_ids = [self.job_id(job_key) for job_key in job_keys]
         await pubsub.subscribe(*job_ids)
 
         async def listen():
             async for message in pubsub.listen():
                 if message["type"] == "message":
                     job_id = message["channel"].decode("utf-8")
+                    job_key = Job.key_from_id(job_id)
                     status = Status[message["data"].decode("utf-8").upper()]
                     if asyncio.iscoroutinefunction(callback):
-                        stop = await callback(job_id, status)
+                        stop = await callback(job_key, status)
                     else:
-                        stop = callback(job_id, status)
+                        stop = callback(job_key, status)
 
                     if stop:
                         break
@@ -302,7 +308,10 @@ class Queue:
         await self.notify(job)
 
     async def job(self, job_key):
-        job_id = Job.id_from_key(job_key, self.name)
+        job_id = self.job_id(job_key)
+        return await self._get_job_by_id(job_id)
+
+    async def _get_job_by_id(self, job_id):
         async with self._op_sem:
             return self.deserialize(await self.redis.get(job_id))
 
@@ -385,8 +394,7 @@ class Queue:
                 "BLMOVE", self._queued, self._active, "RIGHT", "LEFT", timeout
             )
         if job_id is not None:
-            job_key = Job.key_from_id(job_id.decode())
-            return await self.job(job_key)
+            return await self._get_job_by_id(job_id)
 
         logger.debug("Dequeue timed out")
         return None
@@ -509,19 +517,15 @@ class Queue:
         ]
         job_keys = [key["key"] for key in iter_kwargs]
         pending_job_keys = set(job_keys)
-        pending_job_ids = set(
-            Job.id_from_key(job_key, queue_name=self.name)
-            for job_key in pending_job_keys
-        )
 
-        async def callback(job_id, status):
+        async def callback(job_key, status):
             if status in TERMINAL_STATUSES:
-                pending_job_ids.discard(job_id)
+                pending_job_keys.discard(job_key)
 
             if status in UNSUCCESSFUL_TERMINAL_STATUSES and not return_exceptions:
                 return True
 
-            if not pending_job_ids:
+            if not pending_job_keys:
                 return True
 
         # Start listening before we enqueue the jobs.

@@ -246,8 +246,8 @@ class TestWorker(unittest.IsolatedAsyncioTestCase):
         asyncio.create_task(self.worker.process())
 
         # wait for the job to actually start
-        def callback(job_id, status):
-            self.assertEqual(job.id, job_id)
+        def callback(job_key, status):
+            self.assertEqual(job.key, job_key)
             self.assertEqual(status, Status.ACTIVE)
             return True
 
