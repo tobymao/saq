@@ -15,6 +15,12 @@ from saq.utils import millis, now, seconds
 logger = logging.getLogger("saq")
 
 
+def get_and_log_exc():
+    error = traceback.format_exc()
+    logger.error(error)
+    return error
+
+
 class Worker:
     """
     Worker is used to process and monitor jobs.
@@ -150,7 +156,10 @@ class Worker:
 
         async def poll(func, sleep, arg=None):
             while not self.event.is_set():
-                await func(arg or sleep)
+                try:
+                    await func(arg or sleep)
+                except Exception:
+                    get_and_log_exc()
                 await asyncio.sleep(sleep)
 
         return [
@@ -218,8 +227,7 @@ class Worker:
             if job and not self.job_task_contexts.get(job, {}).get("aborted"):
                 await job.retry("cancelled")
         except Exception:
-            error = traceback.format_exc()
-            logger.error(error)
+            error = get_and_log_exc()
 
             if job:
                 if job.attempts >= job.retries:
