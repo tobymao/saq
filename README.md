@@ -107,6 +107,9 @@ job = await queue.enqueue("test", a=1)
 await job.refresh(1)
 print(job.results)
 
+# run a job and return the result
+print(await queue.apply("test", a=2))
+
 # schedule a job in 10 seconds
 await queue.enqueue("test", a=1, scheduled=time.time() + 10)
 ```
