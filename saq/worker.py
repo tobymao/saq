@@ -160,6 +160,9 @@ class Worker:
                     await func(arg or sleep)
                 except Exception:
                     get_and_log_exc()
+                except asyncio.CancelledError:
+                    get_and_log_exc()
+                    raise
                 await asyncio.sleep(sleep)
 
         return [
