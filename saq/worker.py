@@ -158,11 +158,11 @@ class Worker:
             while not self.event.is_set():
                 try:
                     await func(arg or sleep)
-                except Exception:
+                except (Exception, asyncio.CancelledError):
+                    if self.event.is_set():
+                        return
                     get_and_log_exc()
-                except asyncio.CancelledError:
-                    get_and_log_exc()
-                    raise
+
                 await asyncio.sleep(sleep)
 
         return [
@@ -241,7 +241,10 @@ class Worker:
             if context:
                 self.job_task_contexts.pop(job, None)
 
-                await self._after_process(context)
+                try:
+                    await self._after_process(context)
+                except (Exception, asyncio.CancelledError):
+                    get_and_log_exc()
 
     def _process(self, previous_task=None):
         if previous_task:
