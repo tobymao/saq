@@ -29,11 +29,11 @@ setup(
         saq=saq.__main__:main
     """,
     install_requires=[
-        "aioredis>=2.0",
+        "redis>=4.2.0",
         "croniter>=0.3.18",
     ],
     extras_require={
-        "hiredis": ["aioredis[hiredis]>=2.0"],
+        "hiredis": ["redis[hiredis]>=4.2.0"],
         "web": ["aiohttp"],
         "dev": [
             "black==22.3.0",

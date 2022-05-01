@@ -4,7 +4,8 @@ import logging
 import time
 from contextlib import asynccontextmanager
 
-import aioredis
+from redis import asyncio as aioredis
+
 from saq.job import (
     Job,
     Status,
