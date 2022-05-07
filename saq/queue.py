@@ -532,7 +532,7 @@ class Queue:
         # Start listening before we enqueue the jobs.
         # This ensures we don't miss any updates.
         task = asyncio.create_task(
-            self.listen(pending_job_keys, callback, timeout=timeout)
+            self.listen(pending_job_keys, callback, timeout=None)
         )
 
         try:
