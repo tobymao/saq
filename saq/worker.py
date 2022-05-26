@@ -281,7 +281,7 @@ def import_settings(settings):
 
 
 def start(settings, web=False, extra_web_settings=None, port=8080):
-    sys.path.insert(0, os.getcwd()) # fix: https://github.com/tobymao/saq/issues/26
+    sys.path.insert(0, os.getcwd())  # fix: https://github.com/tobymao/saq/issues/26
     settings = import_settings(settings)
 
     if "queue" not in settings:
