@@ -45,20 +45,28 @@ def main():
         action="store_true",
         help="Perform a health check",
     )
+    parser.add_argument(
+        "--quiet",
+        "-q",
+        action="store_true",
+        help="Disable automatic logging configuration",
+    )
 
     args = parser.parse_args()
 
-    level = args.verbose
+    if not args.quiet:
+        level = args.verbose
 
-    if level == 0:
-        level = logging.ERROR
-    elif level == 1:
-        level = logging.INFO
-    else:
-        level = logging.DEBUG
+        if level == 0:
+            level = logging.ERROR
+        elif level == 1:
+            level = logging.INFO
+        else:
+            level = logging.DEBUG
+
+        logging.basicConfig(level=level)
 
     settings = args.settings
-    logging.basicConfig(level=level)
 
     if args.check:
         sys.exit(check_health(settings))
