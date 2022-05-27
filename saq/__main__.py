@@ -1,10 +1,9 @@
 import argparse
-import logging.config
+import logging
 import multiprocessing
 import sys
 
 from saq.worker import check_health, start
-from saq.log import generate_logger_config
 
 
 def main():
@@ -49,7 +48,16 @@ def main():
 
     args = parser.parse_args()
 
-    logging.config.dictConfig(generate_logger_config(args.verbose))
+    level = args.verbose
+
+    if level == 0:
+        level = logging.ERROR
+    elif level == 1:
+        level = logging.INFO
+    else:
+        level = logging.DEBUG
+
+    logging.basicConfig(level=level)
 
     settings = args.settings
 
