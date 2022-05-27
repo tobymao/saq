@@ -99,6 +99,30 @@ class TestQueue(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await self.queue.count("incomplete"), 0)
         self.assertEqual(await self.queue.count("active"), 0)
 
+    async def test_finish_ttl_positive(self):
+        job = await self.queue.enqueue("test", ttl=5)
+        await self.queue.dequeue()
+        await self.queue.finish(job, Status.COMPLETE)
+        ttl = await self.queue.redis.ttl(job.id)
+
+        self.assertLessEqual(ttl, 5)
+
+    async def test_finish_ttl_neutral(self):
+        job = await self.queue.enqueue("test", ttl=0)
+        await self.queue.dequeue()
+        await self.queue.finish(job, Status.COMPLETE)
+        ttl = await self.queue.redis.ttl(job.id)
+
+        self.assertEqual(ttl, -1)
+
+    async def test_finish_ttl_negative(self):
+        job = await self.queue.enqueue("test", ttl=-1)
+        await self.queue.dequeue()
+        await self.queue.finish(job, Status.COMPLETE)
+        ttl = await self.queue.redis.ttl(job.id)
+
+        self.assertEqual(ttl, -2)
+
     async def test_retry(self):
         job = await self.queue.enqueue("test", retries=2)
         await self.queue.dequeue()
