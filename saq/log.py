@@ -12,16 +12,23 @@ def generate_logger_config(verbosity):
     return {
         "version": 1,
         "disable_existing_loggers": False,
+        "formatters": {
+            "saq_formatter": {
+                "format": "%(levelname)s:%(name)s:%(message)s",
+                "datefmt": "%Y-%m-%dT%H:%M:%S",
+            },
+        },
         "handlers": {
-            "standard": {
+            "saq_handler": {
                 "level": log_level,
                 "class": "logging.StreamHandler",
+                "formatter": "saq_formatter",
             },
         },
         "loggers": {
             "saq": {
-                "handlers": ["standard"],
                 "level": log_level,
+                "handlers": ["saq_handler"],
             },
         },
     }
