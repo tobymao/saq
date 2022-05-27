@@ -370,9 +370,9 @@ class Queue:
         async with self.redis.pipeline(transaction=True) as pipe:
             pipe = pipe.lrem(self._active, 1, job_id).zrem(self._incomplete, job_id)
 
-            if job.ttl:
+            if job.ttl > 0:
                 pipe = pipe.setex(job_id, job.ttl, self.serialize(job))
-            else:
+            elif job.ttl == 0:
                 pipe = pipe.set(job_id, self.serialize(job))
 
             await pipe.execute()

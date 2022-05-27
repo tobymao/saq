@@ -60,7 +60,7 @@ class Job:
         heartbeat: the maximum amount of time a job can survive without a heartebat in seconds, defaults to 0 (disabled)
             a heartbeat can be triggered manually within a job by calling await job.update()
         retries: the maximum number of attempts to retry a job, defaults to 1
-        ttl: the maximum time in seconds to store information about a job including results, defaults to 600
+        ttl: the maximum time in seconds to store information about a job including results, defaults to 600 (0 means indefinitely, -1 means disabled)
         retry_delay: seconds to delay before retrying the job
         retry_backoff: If true, use exponential backoff for retry delays.
             The first retry will have whatever retry_delay is.
