@@ -15,7 +15,6 @@ def generate_logger_config(verbosity):
         "formatters": {
             "saq_formatter": {
                 "format": "%(levelname)s:%(name)s:%(message)s",
-                "datefmt": "%Y-%m-%dT%H:%M:%S",
             },
         },
         "handlers": {
