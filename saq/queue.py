@@ -374,6 +374,8 @@ class Queue:
                 pipe = pipe.setex(job_id, job.ttl, self.serialize(job))
             elif job.ttl == 0:
                 pipe = pipe.set(job_id, self.serialize(job))
+            else:
+                pipe.delete(job_id)
 
             await pipe.execute()
 
