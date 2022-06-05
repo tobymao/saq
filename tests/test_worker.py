@@ -24,6 +24,11 @@ async def sleeper(ctx):
     return {"a": 1, "b": []}
 
 
+async def long_sleeper(ctx):
+    await asyncio.sleep(ctx.get("sleep", 15))
+    return {"a": 1, "b": []}
+
+
 async def cron(_ctx):
     return 1
 
@@ -44,7 +49,7 @@ async def recurse(ctx, *, n):
     return result
 
 
-functions = [noop, sleeper, error, sync_echo_ctx, recurse]
+functions = [noop, sleeper, error, sync_echo_ctx, recurse, long_sleeper]
 
 
 class TestWorker(unittest.IsolatedAsyncioTestCase):
@@ -121,6 +126,40 @@ class TestWorker(unittest.IsolatedAsyncioTestCase):
         assert job.completed != 0
         self.assertEqual(job.status, Status.FAILED)
         assert "TimeoutError" in job.error
+
+    async def test_long_sleeper(self):
+        # test a job that runs longer than the default timeout
+        job = await self.queue.enqueue("long_sleeper")
+        await self.worker.process()
+        await job.refresh()
+        assert job.timeout == 10
+        assert job.queue != 0
+        assert job.started != 0
+        assert job.completed != 0
+        self.assertEqual(job.status, Status.FAILED)
+        assert "TimeoutError" in job.error
+
+        # test with timeout disabled
+        job = await self.queue.enqueue("long_sleeper", timeout=None)
+        await self.worker.process()
+        await job.refresh()
+        assert job.timeout is None
+        assert job.queue != 0
+        assert job.started != 0
+        assert job.completed != 0
+        self.assertEqual(job.status, Status.COMPLETE)
+        self.assertEqual(job.result, {"a": 1, "b": []})
+
+        # test with timeout set higher than default
+        job = await self.queue.enqueue("long_sleeper", timeout=20)
+        await self.worker.process()
+        await job.refresh()
+        assert job.timeout == 20
+        assert job.queue != 0
+        assert job.started != 0
+        assert job.completed != 0
+        self.assertEqual(job.status, Status.COMPLETE)
+        self.assertEqual(job.result, {"a": 1, "b": []})
 
     async def test_error(self):
         job = await self.queue.enqueue("error", retries=2)
