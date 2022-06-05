@@ -270,7 +270,7 @@ class Job:
             setattr(self, field, getattr(job, field))
 
 
-class PeriodicHeartbeat(object):
+class PeriodicHeartbeat:
     """Class to manage agent Heartbeats while Job is running"""
 
     def __init__(self, job: Job) -> None:
@@ -294,22 +294,24 @@ class PeriodicHeartbeat(object):
         """
         if self.heartbeat_enabled:
             logger.info(
-                f"starting heartbeat service for {self.job.id}. Ticking every {self.time_between_ticks} second(s)",
+                "starting heartbeat service for %s. Ticking every %s second(s)",
+                self.job.id,
+                self.time_between_ticks,
             )
         self._heartbeat_task = asyncio.create_task(self._periodically_publish())
-        executed_func = await func
+        executed_func: typing.Optional[typing.Any] = None
         try:
+            executed_func = await func
             self._heartbeat_task.cancel()
             await self._heartbeat_task
         except asyncio.CancelledError:
             pass
-        finally:
-            return executed_func
+        return executed_func
 
     async def stop(self):
         """Stop heartbeat service."""
         if self.heartbeat_enabled:
-            logger.info(f"stopping heartbeat service for {self.job.id}")
+            logger.info("stopping heartbeat service for %s", self.job.id)
         if self._running:
             self._running = False
 
@@ -317,7 +319,9 @@ class PeriodicHeartbeat(object):
         """Periodically publish heartbeat"""
         while self._running and self.heartbeat_enabled:
             logger.info(
-                f"ticking heartbeat for {self.job.id}, and sleeping for {self.time_between_ticks} second(s)",
+                "ticking heartbeat for %s, and sleeping for %s second(s)",
+                self.job.id,
+                self.time_between_ticks,
             )
             await self.job.update()
             await asyncio.sleep(self.time_between_ticks)
@@ -326,14 +330,15 @@ class PeriodicHeartbeat(object):
 # decorator to perform a heartbeat in the background while a function is running
 def monitored_job(func):
     @wraps(func)
-    async def with_heartbeat(*args, **kwargs) -> typing.Dict[str, typing.Any]:
+    async def with_heartbeat(*args, **kwargs) -> typing.Any:
         context: typing.Dict[str, typing.Any] = args[0]
         job: Job = context["job"]
         heartbeat = PeriodicHeartbeat(job)
+        result: typing.Optional[typing.Any] = None
         try:
             result = await heartbeat.start(func(*args, **kwargs))
         finally:
             await heartbeat.stop()
-            return result
+        return result
 
     return with_heartbeat

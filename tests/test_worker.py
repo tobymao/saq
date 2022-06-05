@@ -4,14 +4,13 @@ import logging
 import unittest
 from unittest import mock
 
-from saq.job import CronJob, Status
+from saq.job import CronJob, Status, monitored_job
 from saq.utils import uuid1
 from saq.worker import Worker
 from tests.helpers import create_queue, cleanup_queue
 
 
 logging.getLogger().setLevel(logging.CRITICAL)
-
 ctx_var = contextvars.ContextVar("ctx_var")
 
 
@@ -21,6 +20,12 @@ async def noop(_ctx):
 
 async def sleeper(ctx):
     await asyncio.sleep(ctx.get("sleep", 0.1))
+    return {"a": 1, "b": []}
+
+
+@monitored_job
+async def monitored_sleeper(ctx):
+    await asyncio.sleep(ctx.get("sleep", 10))
     return {"a": 1, "b": []}
 
 
@@ -44,13 +49,20 @@ async def recurse(ctx, *, n):
     return result
 
 
-functions = [noop, sleeper, error, sync_echo_ctx, recurse]
+functions = [
+    noop,
+    sleeper,
+    error,
+    sync_echo_ctx,
+    recurse,
+    monitored_sleeper,
+]
 
 
 class TestWorker(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         self.queue = create_queue()
-        self.worker = Worker(self.queue, functions=functions)
+        self.worker = Worker(self.queue, functions=functions, timers={"sweep": 1})
 
     async def asyncTearDown(self):
         await cleanup_queue(self.queue)
@@ -121,6 +133,47 @@ class TestWorker(unittest.IsolatedAsyncioTestCase):
         assert job.completed != 0
         self.assertEqual(job.status, Status.FAILED)
         assert "TimeoutError" in job.error
+
+    async def test_heartbeat(self):
+        job = await self.queue.enqueue("monitored_sleeper", heartbeat=2, timeout=None)
+        self.worker.context["sleep"] = 4
+        task = asyncio.create_task(self.worker.process())
+        # wait for the job to actually start
+        def callback(job_key, status):
+            self.assertEqual(job.key, job_key)
+            self.assertEqual(status, Status.ACTIVE)
+            return True
+
+        await self.queue.listen([job.key], callback)
+        await asyncio.sleep(2)
+        swept = await self.queue.sweep()
+        self.assertNotIn(
+            set(swept),
+            {job.id.encode()},
+        )
+        await task
+        await job.refresh()
+        self.assertEqual(job.status, Status.COMPLETE)
+
+    async def test_missed_heartbeat(self):
+        job = await self.queue.enqueue("sleeper", heartbeat=2, timeout=None)
+        self.worker.context["sleep"] = 60
+        asyncio.create_task(self.worker.process())
+        # wait for the job to actually start
+        def callback(job_key, status):
+            self.assertEqual(job.key, job_key)
+            self.assertEqual(status, Status.ACTIVE)
+            return True
+
+        await self.queue.listen([job.key], callback)
+        await asyncio.sleep(2)
+        swept = await self.queue.sweep()
+        self.assertEqual(
+            set(swept),
+            {job.id.encode()},
+        )
+        await job.refresh()
+        self.assertEqual(job.status, Status.ABORTED)
 
     async def test_error(self):
         job = await self.queue.enqueue("error", retries=2)
