@@ -1,4 +1,4 @@
-from saq.job import CronJob, Job, Status
+from saq.job import CronJob, Job, Status, monitored_job
 from saq.queue import Queue
 from saq.worker import Worker
 

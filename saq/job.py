@@ -1,8 +1,16 @@
+import asyncio
 import dataclasses
 import enum
+from functools import wraps
+import logging
 import typing
 
 from saq.utils import now, seconds, uuid1, exponential_backoff
+
+if typing.TYPE_CHECKING:
+    from saq.queue import Queue
+
+logger = logging.getLogger("saq")
 
 ABORT_ID_PREFIX = "saq:abort:"
 
@@ -179,8 +187,10 @@ class Job:
     def stuck(self):
         """Checks if an active job is passed it's timeout or heartbeat."""
         current = now()
+        # if timeout == None, the if statement will fail for
+        # TypeError: '>' not supported between instances of 'float' and 'NoneType'
         return (self.status == Status.ACTIVE) and (
-            seconds(current - self.started) > self.timeout
+            (self.timeout and seconds(current - self.started) > self.timeout)
             or (self.heartbeat and seconds(current - self.touched) > self.heartbeat)
         )
 
@@ -258,3 +268,72 @@ class Job:
         """Replace current attributes with job attributes."""
         for field in job.__dataclass_fields__:
             setattr(self, field, getattr(job, field))
+
+
+class PeriodicHeartbeat(object):
+    """Class to manage agent Heartbeats while Job is running"""
+
+    def __init__(self, job: Job) -> None:
+        self._running: bool = True
+        self._heartbeat_task: typing.Optional[asyncio.Task] = None
+        self.job = job
+        self.heartbeat_enabled: bool = job.heartbeat and job.heartbeat > 0
+        self.time_between_ticks = (
+            max(round(job.heartbeat / 2), 1) if self.heartbeat_enabled > 0 else 0
+        )
+
+    async def start(self, func: typing.Awaitable):
+        """start
+
+        Executes function with a periodic heartbeat.
+        Args:
+            func (typing.Awaitable): _description_
+
+        Returns:
+            _type_: _description_
+        """
+        if self.heartbeat_enabled:
+            logger.info(
+                f"starting heartbeat service for {self.job.id}. Ticking every {self.time_between_ticks} second(s)",
+            )
+        self._heartbeat_task = asyncio.create_task(self._periodically_publish())
+        executed_func = await func
+        try:
+            self._heartbeat_task.cancel()
+            await self._heartbeat_task
+        except asyncio.CancelledError:
+            pass
+        finally:
+            return executed_func
+
+    async def stop(self):
+        """Stop heartbeat service."""
+        if self.heartbeat_enabled:
+            logger.info(f"stopping heartbeat service for {self.job.id}")
+        if self._running:
+            self._running = False
+
+    async def _periodically_publish(self):
+        """Periodically publish heartbeat"""
+        while self._running and self.heartbeat_enabled:
+            logger.info(
+                f"ticking heartbeat for {self.job.id}, and sleeping for {self.time_between_ticks} second(s)",
+            )
+            await self.job.update()
+            await asyncio.sleep(self.time_between_ticks)
+
+
+# decorator to perform a heartbeat in the background while a function is running
+def monitored_job(func):
+    @wraps(func)
+    async def with_heartbeat(*args, **kwargs) -> typing.Dict[str, typing.Any]:
+        context: typing.Dict[str, typing.Any] = args[0]
+        job: Job = context["job"]
+        heartbeat = PeriodicHeartbeat(job)
+        try:
+            result = await heartbeat.start(func(*args, **kwargs))
+        finally:
+            await heartbeat.stop()
+            return result
+
+    return with_heartbeat
