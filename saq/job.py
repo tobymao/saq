@@ -187,8 +187,6 @@ class Job:
     def stuck(self):
         """Checks if an active job is passed it's timeout or heartbeat."""
         current = now()
-        # if timeout == None, the if statement will fail for
-        # TypeError: '>' not supported between instances of 'float' and 'NoneType'
         return (self.status == Status.ACTIVE) and (
             (self.timeout and seconds(current - self.started) > self.timeout)
             or (self.heartbeat and seconds(current - self.touched) > self.heartbeat)
