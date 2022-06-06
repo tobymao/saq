@@ -10,7 +10,7 @@ logger.setLevel(logging.DEBUG)
 
 @monitored_job
 async def monitored_sleeper(ctx):
-    print("executing monitored sleeper job.")
+    logger.info("executing monitored sleeper job.")
 
     await asyncio.sleep(30)
     return {"a": 6}
@@ -18,19 +18,19 @@ async def monitored_sleeper(ctx):
 
 async def sleeper(ctx):
     await asyncio.sleep(30)
-    print("executing regular sleeper job.  I should fail due to missed heartbeat")
+    logger.info("executing regular sleeper job.  I should fail due to missed heartbeat")
 
     return {"a": 6}
 
 
 @monitored_job
 async def monitored_cron_job(ctx):
-    print("excuting cron job")
+    logger.info("excuting cron job")
     await asyncio.sleep(6)
 
 
 async def cron_job(ctx):
-    print("excuting regular cron job.  I should fail due to missed heartbeat")
+    logger.info("excuting regular cron job.  I should fail due to missed heartbeat")
     await asyncio.sleep(6)
 
 
@@ -51,12 +51,11 @@ async def enqueue(func, **kwargs):
         func,
         heartbeat=3,
     )
-    print(result)
+    logger.info(result)
 
 
 if __name__ == "__main__":
     now = time.time()
     asyncio.run(enqueue("monitored_sleeper"))
     asyncio.run(enqueue("sleeper"))
-
-    print(time.time() - now)
+    logger.info(time.time() - now)
