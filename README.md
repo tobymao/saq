@@ -119,7 +119,7 @@ await queue.enqueue("test", a=1, scheduled=time.time() + 10)
 Start the worker
 
 ```
-saq examples.simple.settings --web
+python -m saq examples.simple.settings --web
 ```
 
 Navigate to the [web ui](http://localhost:8080])
