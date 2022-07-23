@@ -31,7 +31,7 @@ class Worker:
     startup: async function to call on startup
     shutdown: async function to call on shutdown
     before_process: async function to call before a job processes
-    before_process: async function to call after a job processes
+    after_process: async function to call after a job processes
     timers: dict with various timer overrides in seconds
         schedule: how often we poll to schedule jobs
         stats: how often to update stats
