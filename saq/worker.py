@@ -15,12 +15,6 @@ from saq.utils import millis, now, seconds
 logger = logging.getLogger("saq")
 
 
-def get_and_log_exc():
-    error = traceback.format_exc()
-    logger.error(error)
-    return error
-
-
 class Worker:
     """
     Worker is used to process and monitor jobs.
@@ -161,7 +155,7 @@ class Worker:
                 except (Exception, asyncio.CancelledError):
                     if self.event.is_set():
                         return
-                    get_and_log_exc()
+                    logger.exception("Upkeep task failed unexpectedly")
 
                 await asyncio.sleep(sleep)
 
@@ -230,9 +224,11 @@ class Worker:
             if job and not self.job_task_contexts.get(job, {}).get("aborted"):
                 await job.retry("cancelled")
         except Exception:
-            error = get_and_log_exc()
+            logger.exception("Error processing job %s", job)
 
             if job:
+                error = traceback.format_exc()
+
                 if job.attempts >= job.retries:
                     await job.finish(Status.FAILED, error=error)
                 else:
@@ -244,7 +240,7 @@ class Worker:
                 try:
                     await self._after_process(context)
                 except (Exception, asyncio.CancelledError):
-                    get_and_log_exc()
+                    logger.exception("Failed to run after process hook")
 
     def _process(self, previous_task=None):
         if previous_task:
