@@ -113,7 +113,16 @@ async def shutdown(app):
 
 
 def create_app(queues):
-    app = web.Application(middlewares=[exceptions])
+    middlewares = [exceptions]
+    password = os.environ.get("AUTH_PASSWORD")
+
+    if password:
+        from aiohttp_basicauth import BasicAuthMiddleware
+
+        user = os.environ.get("AUTH_USER", "admin")
+        middlewares.append(BasicAuthMiddleware(username=user, password=password))
+
+    app = web.Application(middlewares=middlewares)
     app["queues"] = {q.name: q for q in queues}
 
     app.add_routes(

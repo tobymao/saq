@@ -47,6 +47,10 @@ options:
                         monitor in the web app
   --port PORT           Web app port, defaults to 8080
   --check               Perform a health check
+
+environment variables:
+  AUTH_USER     basic auth user, defaults to admin
+  AUTH_PASSWORD basic auth password, if not specified, no auth will be used
 ```
 
 ## Example

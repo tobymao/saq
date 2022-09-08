@@ -34,7 +34,7 @@ setup(
     ],
     extras_require={
         "hiredis": ["redis[hiredis]>=4.2.0"],
-        "web": ["aiohttp"],
+        "web": ["aiohttp", "aiohttp_basicauth"],
         "dev": [
             "black==22.3.0",
             "pylint",
