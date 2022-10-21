@@ -5,7 +5,7 @@ import json
 import logging
 import time
 from contextlib import asynccontextmanager
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, TypeVar
 
 from redis import asyncio as aioredis
 
@@ -24,9 +24,18 @@ from saq.utils import (
 )
 
 if TYPE_CHECKING:
-    from typing import Any, Callable, Dict, List, Optional, Set, Tuple, Union
-
+    from collections.abc import Sequence
+    from typing import Any, Callable, Dict, List, Optional, Set, Type, Union
     from redis.asyncio.client import Redis
+    from redis.commands.core import AsyncScript
+    from .types import (
+        BeforeEnqueueType,
+        DumpType,
+        LoadType,
+        QueueInfo,
+        QueueStats,
+        VersionTuple,
+    )
 
 logger = logging.getLogger("saq")
 
@@ -39,6 +48,9 @@ class JobError(Exception):
             f"Job {job.id} {job.status}\n\nThe above job failed with the following error:\n\n{job.error}"
         )
         self.job = job
+
+
+QueueT = TypeVar("QueueT", bound="Queue")
 
 
 class Queue:
@@ -55,7 +67,7 @@ class Queue:
     """
 
     @classmethod
-    def from_url(cls, url: str, **kwargs) -> "Queue":
+    def from_url(cls: Type[QueueT], url: str, **kwargs) -> QueueT:
         """Create a queue with a redis url a name."""
         return cls(aioredis.from_url(url), **kwargs)
 
@@ -63,8 +75,8 @@ class Queue:
         self,
         redis: Redis,
         name: str = "default",
-        dump: None = None,
-        load: None = None,
+        dump: Optional[DumpType] = None,
+        load: Optional[LoadType] = None,
         max_concurrent_ops: int = 20,
     ) -> None:
         self.redis = redis
@@ -75,10 +87,10 @@ class Queue:
         self.failed = 0
         self.retried = 0
         self.aborted = 0
-        self._version = None
-        self._schedule_script = None
-        self._enqueue_script = None
-        self._cleanup_script = None
+        self._version: Optional[VersionTuple] = None
+        self._schedule_script: Optional[AsyncScript] = None
+        self._enqueue_script: Optional[AsyncScript] = None
+        self._cleanup_script: Optional[AsyncScript] = None
         self._incomplete = self.namespace("incomplete")
         self._queued = self.namespace("queued")
         self._active = self.namespace("active")
@@ -87,13 +99,13 @@ class Queue:
         self._stats = self.namespace("stats")
         self._dump = dump or json.dumps
         self._load = load or json.loads
-        self._before_enqueues = {}
+        self._before_enqueues: Dict[int, BeforeEnqueueType] = {}
         self._op_sem = asyncio.Semaphore(max_concurrent_ops)
 
-    def register_before_enqueue(self, callback: Callable) -> None:
+    def register_before_enqueue(self, callback: BeforeEnqueueType) -> None:
         self._before_enqueues[id(callback)] = callback
 
-    def unregister_before_enqueue(self, callback: Callable) -> None:
+    def unregister_before_enqueue(self, callback: BeforeEnqueueType) -> None:
         self._before_enqueues.pop(id(callback), None)
 
     def job_id(self, job_key: str) -> str:
@@ -123,23 +135,15 @@ class Queue:
         await self.redis.close()
         await self.redis.connection_pool.disconnect()
 
-    async def version(self) -> Tuple[int, int, int]:
-        if not self._version:
+    async def version(self) -> VersionTuple:
+        if self._version is None:
             info = await self.redis.info()
             self._version = tuple(int(i) for i in info["redis_version"].split("."))
         return self._version
 
     async def info(
         self, jobs: bool = False, offset: int = 0, limit: int = 10
-    ) -> Dict[
-        str,
-        Union[
-            Dict[str, Dict[str, int]],
-            str,
-            int,
-            List[Dict[str, Union[str, Dict[str, int], int]]],
-        ],
-    ]:
+    ) -> QueueInfo:
         # pylint: disable=too-many-locals
         worker_uuids = []
 
@@ -163,8 +167,8 @@ class Queue:
         incomplete = await self.count("incomplete")
 
         if jobs:
-            job_info = [
-                self.deserialize(job_bytes).to_dict()
+            deserialized_jobs = (
+                self.deserialize(job_bytes)
                 for job_bytes in await self.redis.mget(
                     (
                         await self.redis.lrange(
@@ -177,7 +181,8 @@ class Queue:
                         )
                     )
                 )
-            ]
+            )
+            job_info = [job.to_dict() for job in deserialized_jobs if job is not None]
         else:
             job_info = []
 
@@ -190,9 +195,9 @@ class Queue:
             "jobs": job_info,
         }
 
-    async def stats(self, ttl: int = 60) -> Dict[str, int]:
+    async def stats(self, ttl: int = 60) -> QueueStats:
         current = now()
-        stats = {
+        stats: QueueStats = {
             "complete": self.complete,
             "failed": self.failed,
             "retried": self.retried,
@@ -219,7 +224,7 @@ class Queue:
             return await self.redis.zcard(self._incomplete)
         raise ValueError("Can't count unknown type {kind}")
 
-    async def schedule(self, lock: int = 1) -> Optional[List[bytes]]:
+    async def schedule(self, lock: int = 1) -> Any:
         if not self._schedule_script:
             self._schedule_script = self.redis.register_script(
                 """
@@ -247,7 +252,7 @@ class Queue:
             args=[lock, seconds(now())],
         )
 
-    async def sweep(self, lock: int = 60) -> List[Union[bytes, Any]]:
+    async def sweep(self, lock: int = 60) -> List[Any]:
         if not self._cleanup_script:
             self._cleanup_script = self.redis.register_script(
                 """
@@ -300,8 +305,9 @@ class Queue:
         job_ids = [self.job_id(job_key) for job_key in job_keys]
         await pubsub.subscribe(*job_ids)
 
-        async def listen():
-            async for message in pubsub.listen():
+        async def listen() -> None:
+            # https://github.com/python/typeshed/issues/8960
+            async for message in pubsub.listen():  # type:ignore[attr-defined,misc]
                 if message["type"] == "message":
                     job_id = message["channel"].decode("utf-8")
                     job_key = Job.key_from_id(job_id)
@@ -413,7 +419,7 @@ class Queue:
             await self.notify(job)
             logger.info("Finished %s", job)
 
-    async def dequeue(self, timeout: Union[int, float] = 0) -> Optional[Job]:
+    async def dequeue(self, timeout: int = 0) -> Optional[Job]:
         if await self.version() < (6, 2, 0):
             job_id = await self.redis.brpoplpush(self._queued, self._active, timeout)
         else:
@@ -426,7 +432,9 @@ class Queue:
         logger.debug("Dequeue timed out")
         return None
 
-    async def enqueue(self, job_or_func: Union[str, Job], **kwargs) -> Optional[Job]:
+    async def enqueue(
+        self, job_or_func: Union[str, Job], **kwargs: Any
+    ) -> Optional[Job]:
         """
         Enqueue a job by instance or string.
 
@@ -435,15 +443,13 @@ class Queue:
 
         If the job has already been enqueued, this returns None.
         """
-        job_kwargs = {}
+        job_kwargs: Dict[str, Any] = {}
 
         for k, v in kwargs.items():
             if k in Job.__dataclass_fields__:  # pylint: disable=no-member
                 job_kwargs[k] = v
             else:
-                if "kwargs" not in job_kwargs:
-                    job_kwargs["kwargs"] = {}
-                job_kwargs["kwargs"][k] = v
+                job_kwargs.setdefault("kwargs", {})[k] = v
 
         if isinstance(job_or_func, str):
             job = Job(function=job_or_func, **job_kwargs)
@@ -487,9 +493,7 @@ class Queue:
         logger.info("Enqueuing %s", job)
         return job
 
-    async def apply(
-        self, job_or_func: str, timeout: None = None, **kwargs
-    ) -> Union[str, List[str], int]:
+    async def apply(self, job_or_func: str, timeout: None = None, **kwargs) -> Any:
         """
         Enqueue a job and wait for its result.
 
@@ -510,20 +514,12 @@ class Queue:
 
     async def map(
         self,
-        job_or_func: str,
-        iter_kwargs: List[
-            Union[
-                Any,
-                Dict[str, int],
-                Dict[str, Union[str, int]],
-                Dict[str, Optional[Union[str, int]]],
-                Dict[str, Optional[str]],
-            ]
-        ],
+        job_or_func: Union[str, Job],
+        iter_kwargs: Sequence[Dict[str, Any]],
         timeout: Optional[int] = None,
         return_exceptions: bool = False,
-        **kwargs,
-    ) -> List[Union[Any, int, List[str], JobError, str]]:
+        **kwargs: Any,
+    ) -> List[Any]:
         """
         Enqueue multiple jobs and collect all of their results.
 
@@ -551,7 +547,7 @@ class Queue:
         iter_kwargs = [
             {
                 "timeout": timeout,
-                "key": kwargs.get("key") or get_default_job_key(),
+                "key": kwargs.get("key", "") or get_default_job_key(),
                 **kwargs,
                 **kw,
             }
@@ -586,10 +582,13 @@ class Queue:
 
         await asyncio.wait_for(task, timeout=timeout)
 
+        jobs: List[Union[Job, None]]
         jobs = await asyncio.gather(*[self.job(job_key) for job_key in job_keys])
 
-        results = []
+        results: List[Any] = []
         for job in jobs:
+            if job is None:
+                continue
             if job.status in UNSUCCESSFUL_TERMINAL_STATUSES:
                 exc = JobError(job)
                 if not return_exceptions:

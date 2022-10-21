@@ -181,10 +181,10 @@ class Job:
         return a - b if a and b else None
 
     @property
-    def stuck(self) -> typing.Union[bool, int]:
-        """Checks if an active job is passed it's timeout or heartbeat."""
+    def stuck(self) -> bool:
+        """Checks if an active job is passed its timeout or heartbeat."""
         current = now()
-        return (self.status == Status.ACTIVE) and (
+        return (self.status == Status.ACTIVE) and bool(
             seconds(current - self.started) > self.timeout
             or (self.heartbeat and seconds(current - self.touched) > self.heartbeat)
         )
@@ -236,9 +236,7 @@ class Job:
             setattr(self, k, v)
         await self.queue.update(self)
 
-    async def refresh(
-        self, until_complete: typing.Optional[typing.Union[int, float]] = None
-    ) -> None:
+    async def refresh(self, until_complete: typing.Optional[float] = None) -> None:
         """
         Refresh the current job with the latest data from the db.
 

@@ -14,20 +14,20 @@ def uuid1() -> str:
     return str(uuid.uuid1())
 
 
-def millis(s: Union[int, float]) -> Union[int, float]:
+def millis(s: float) -> float:
     return s * 1000
 
 
-def seconds(ms: int) -> float:
+def seconds(ms: float) -> float:
     return ms / 1000
 
 
 def exponential_backoff(
     attempts: int,
-    base_delay: Union[int, float],
-    max_delay: Optional[Union[int, float]] = None,
+    base_delay: float,
+    max_delay: Optional[float] = None,
     jitter: bool = True,
-) -> Union[int, float]:
+) -> float:
     """
     Get the next delay for retries in exponential backoff.
 
