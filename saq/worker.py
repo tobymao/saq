@@ -6,7 +6,7 @@ import logging
 import signal
 import traceback
 import os
-from typing import TYPE_CHECKING
+import typing as t
 
 from croniter import croniter
 
@@ -14,9 +14,8 @@ from saq.job import Status
 from saq.queue import Queue
 from saq.utils import millis, now, seconds
 
-if TYPE_CHECKING:
+if t.TYPE_CHECKING:
     from _asyncio import Task
-    from typing import Callable, Dict, List, Optional, Union
     from saq.job import Job
 
 
@@ -46,7 +45,7 @@ class Worker:
     def __init__(
         self,
         queue: Queue,
-        functions: List[Callable],
+        functions: t.List[t.Callable],
         *,
         concurrency=10,
         cron_jobs=None,
@@ -92,12 +91,14 @@ class Worker:
 
             self.functions[name] = function
 
-    async def _before_process(self, ctx: Dict[str, Union[Worker, int, Job]]) -> None:
+    async def _before_process(
+        self, ctx: t.Dict[str, t.Union[Worker, int, Job]]
+    ) -> None:
         if self.before_process:
             await self.before_process(ctx)
 
     async def _after_process(
-        self, ctx: Dict[str, Union[Worker, Job, Queue, int]]
+        self, ctx: t.Dict[str, t.Union[Worker, Job, Queue, int]]
     ) -> None:
         if self.after_process:
             await self.after_process(ctx)
@@ -155,7 +156,7 @@ class Worker:
         if scheduled:
             logger.info("Scheduled %s", scheduled)
 
-    async def upkeep(self) -> List[Task]:
+    async def upkeep(self) -> t.List[Task]:
         """Start various upkeep tasks async."""
 
         async def poll(func, sleep, arg=None):
@@ -178,7 +179,7 @@ class Worker:
             ),
         ]
 
-    async def abort(self, abort_threshold: Union[int, float]) -> None:
+    async def abort(self, abort_threshold: t.Union[int, float]) -> None:
         jobs = [
             job
             for job in self.job_task_contexts
@@ -252,7 +253,7 @@ class Worker:
                 except (Exception, asyncio.CancelledError):
                     logger.exception("Failed to run after process hook")
 
-    def _process(self, previous_task: Optional[Task] = None) -> None:
+    def _process(self, previous_task: t.Optional[Task] = None) -> None:
         if previous_task:
             self.tasks.discard(previous_task)
 
@@ -262,7 +263,7 @@ class Worker:
             new_task.add_done_callback(self._process)
 
 
-def ensure_coroutine_function(func: Callable) -> Callable:
+def ensure_coroutine_function(func: t.Callable) -> t.Callable:
     if asyncio.iscoroutinefunction(func):
         return func
 

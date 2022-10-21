@@ -4,7 +4,7 @@ import asyncio
 import contextvars
 import logging
 import unittest
-from typing import TYPE_CHECKING
+import typing as t
 from unittest import mock
 
 from saq.job import CronJob, Job, Status
@@ -12,8 +12,7 @@ from saq.utils import uuid1
 from saq.worker import Worker
 from tests.helpers import cleanup_queue, create_queue
 
-if TYPE_CHECKING:
-    from typing import Dict, List, Union
+if t.TYPE_CHECKING:
     from unittest.mock import MagicMock
 
     from saq.queue import Queue
@@ -24,11 +23,11 @@ logging.getLogger().setLevel(logging.CRITICAL)
 ctx_var = contextvars.ContextVar("ctx_var")
 
 
-async def noop(_ctx: Dict[str, Union[Worker, Job]]) -> int:
+async def noop(_ctx: t.Dict[str, t.Union[Worker, Job]]) -> int:
     return 1
 
 
-async def sleeper(ctx: Dict[str, Union[Worker, int, Job]]) -> Dict[str, int]:
+async def sleeper(ctx: t.Dict[str, t.Union[Worker, int, Job]]) -> t.Dict[str, int]:
     await asyncio.sleep(ctx.get("sleep", 0.1))
     return {"a": 1, "b": []}
 
@@ -37,7 +36,7 @@ async def cron(_ctx):
     return 1
 
 
-async def error(_ctx: Dict[str, Union[Worker, Job]]):
+async def error(_ctx: t.Dict[str, t.Union[Worker, Job]]):
     raise ValueError("oops")
 
 
@@ -45,7 +44,7 @@ def sync_echo_ctx(_ctx):
     return ctx_var.get()
 
 
-async def recurse(ctx: Dict[str, Union[Worker, Job, Queue]], *, n) -> List[str]:
+async def recurse(ctx: t.Dict[str, t.Union[Worker, Job, Queue]], *, n) -> t.List[str]:
     var = ctx_var.get()
     result = [var]
     if n > 0:

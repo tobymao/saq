@@ -1,19 +1,17 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, TypedDict
+import typing as t
 
-if TYPE_CHECKING:
-    from typing import Any, Awaitable, Callable, Dict, Tuple, Union
-    from typing_extensions import TypeAlias
+if t.TYPE_CHECKING:
     from .job import Job
 
-BeforeEnqueueType: TypeAlias = "Callable[[Job], Awaitable[Any]]"
-DumpType: TypeAlias = "Callable[[Dict], str]"
-LoadType: TypeAlias = "Callable[[Union[bytes, str]], Any]"
-VersionTuple: TypeAlias = "Tuple[int, ...]"
+BeforeEnqueueType = t.Callable[[Job], t.Awaitable[t.Any]]
+DumpType = t.Callable[[t.Dict], str]
+LoadType = t.Callable[[t.Union[bytes, str]], t.Any]
+VersionTuple = t.Tuple[int, ...]
 
 
-class QueueInfo(TypedDict):
+class QueueInfo(t.TypedDict):
     workers: dict
     name: str
     queued: int
@@ -22,7 +20,7 @@ class QueueInfo(TypedDict):
     jobs: list[dict]
 
 
-class QueueStats(TypedDict):
+class QueueStats(t.TypedDict):
     complete: int
     failed: int
     retried: int

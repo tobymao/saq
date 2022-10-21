@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
+import typing as t
 from aiohttp.test_utils import AioHTTPTestCase
 
 from saq.job import Status
@@ -9,7 +9,7 @@ from saq.worker import Worker
 from saq.web import create_app
 from tests.helpers import create_queue, cleanup_queue
 
-if TYPE_CHECKING:
+if t.TYPE_CHECKING:
     from aiohttp.web_app import Application
 
 logging.getLogger().setLevel(logging.CRITICAL)

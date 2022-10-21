@@ -5,12 +5,11 @@ import logging
 import os
 import pathlib
 import traceback
-from typing import TYPE_CHECKING
+import typing as t
 
 from aiohttp import web
 
-if TYPE_CHECKING:
-    from typing import Callable, Dict, List, Union
+if t.TYPE_CHECKING:
     from aiohttp.web_app import Application
     from aiohttp.web_request import Request
     from aiohttp.web_response import Response
@@ -87,7 +86,7 @@ async def health(request):
     raise web.HTTPInternalServerError
 
 
-async def _get_all_info(request: Request) -> List[Dict[str, Union[str, int]]]:
+async def _get_all_info(request: Request) -> t.List[t.Dict[str, t.Union[str, int]]]:
     return [await q.info() for q in request.app["queues"].values()]
 
 
@@ -106,7 +105,7 @@ async def _get_job(request: Request) -> Job:
 
 
 @web.middleware
-async def exceptions(request: Request, handler: Callable) -> Response:
+async def exceptions(request: Request, handler: t.Callable) -> Response:
     if request.path.startswith("/api"):
         try:
             resp = await handler(request)
@@ -123,7 +122,7 @@ async def shutdown(app):
         await queue.disconnect()
 
 
-def create_app(queues: List[Queue]) -> Application:
+def create_app(queues: t.List[Queue]) -> Application:
     middlewares = [exceptions]
     password = os.environ.get("AUTH_PASSWORD")
 

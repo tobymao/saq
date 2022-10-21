@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import time
 import unittest
-from typing import TYPE_CHECKING
+import typing as t
 from unittest import mock
 
 from saq.job import Job, Status
@@ -12,17 +12,16 @@ from saq.utils import uuid1
 from saq.worker import Worker
 from tests.helpers import create_queue, cleanup_queue
 
-if TYPE_CHECKING:
+if t.TYPE_CHECKING:
 
-    from typing import Dict, Union
     from unittest.mock import MagicMock
 
 
-async def echo(_ctx: Dict[str, Union[Worker, Job]], *, a) -> int:
+async def echo(_ctx: t.Dict[str, t.Union[Worker, Job]], *, a) -> int:
     return a
 
 
-async def error(_ctx: Dict[str, Union[Worker, Job]]):
+async def error(_ctx: t.Dict[str, t.Union[Worker, Job]]):
     raise ValueError("oops")
 
 

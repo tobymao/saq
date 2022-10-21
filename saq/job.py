@@ -2,13 +2,13 @@ from __future__ import annotations
 
 import dataclasses
 import enum
-import typing
+import typing as t
 
 from saq.utils import now, seconds, uuid1, exponential_backoff
 
 ABORT_ID_PREFIX = "saq:abort:"
 
-if typing.TYPE_CHECKING:
+if t.TYPE_CHECKING:
     from saq.queue import Queue
 
 
@@ -42,13 +42,13 @@ class CronJob:
     Remaining kwargs are pass through to Job
     """
 
-    function: typing.Callable
+    function: t.Callable
     cron: str
     unique: bool = True
-    timeout: typing.Optional[int] = None
-    heartbeat: typing.Optional[int] = None
-    retries: typing.Optional[int] = None
-    ttl: typing.Optional[int] = None
+    timeout: t.Optional[int] = None
+    heartbeat: t.Optional[int] = None
+    retries: t.Optional[int] = None
+    ttl: t.Optional[int] = None
 
 
 @dataclasses.dataclass
@@ -87,15 +87,15 @@ class Job:
     """
 
     function: str
-    kwargs: typing.Optional[dict] = None
-    queue: typing.Optional["Queue"] = None
+    kwargs: t.Optional[dict] = None
+    queue: t.Optional["Queue"] = None
     key: str = dataclasses.field(default_factory=get_default_job_key)
     timeout: int = 10
     heartbeat: int = 0
     retries: int = 1
     ttl: int = 600
     retry_delay: float = 0.0
-    retry_backoff: typing.Union[bool, float] = False
+    retry_backoff: t.Union[bool, float] = False
     scheduled: int = 0
     progress: float = 0.0
     attempts: int = 0
@@ -103,8 +103,8 @@ class Job:
     queued: int = 0
     started: int = 0
     touched: int = 0
-    result: typing.Any = None
-    error: typing.Optional[str] = None
+    result: t.Any = None
+    error: t.Optional[str] = None
     status: Status = Status.NEW
     meta: dict = dataclasses.field(default_factory=dict)
 
@@ -146,7 +146,7 @@ class Job:
     def abort_id(self) -> str:
         return f"{ABORT_ID_PREFIX}{self.key}"
 
-    def to_dict(self) -> typing.Dict[str, typing.Any]:
+    def to_dict(self) -> t.Dict[str, t.Any]:
         result = {}
         for field in dataclasses.fields(self):
             key = field.name
@@ -160,7 +160,7 @@ class Job:
             result[key] = value
         return result
 
-    def duration(self, kind: str) -> typing.Optional[int]:
+    def duration(self, kind: str) -> t.Optional[int]:
         """
         Returns the duration of the job given kind.
 
@@ -177,7 +177,7 @@ class Job:
             return self._duration(now(), self.started)
         raise ValueError(f"Unknown duration type: {kind}")
 
-    def _duration(self, a: int, b: int) -> typing.Optional[int]:
+    def _duration(self, a: int, b: int) -> t.Optional[int]:
         return a - b if a and b else None
 
     @property
@@ -202,7 +202,7 @@ class Job:
             )
         return self.retry_delay
 
-    async def enqueue(self, queue: typing.Optional[Queue] = None) -> None:
+    async def enqueue(self, queue: t.Optional[Queue] = None) -> None:
         """
         Enqueues the job to it's queue or a provided one.
 
@@ -222,7 +222,7 @@ class Job:
         """Finishes the job with a Job.Status, result, and or error."""
         await self.queue.finish(self, status, result=result, error=error)
 
-    async def retry(self, error: typing.Optional[str]) -> None:
+    async def retry(self, error: t.Optional[str]) -> None:
         """Retries the job by removing it from active and requeueing it."""
         await self.queue.retry(self, error)
 
@@ -236,7 +236,7 @@ class Job:
             setattr(self, k, v)
         await self.queue.update(self)
 
-    async def refresh(self, until_complete: typing.Optional[float] = None) -> None:
+    async def refresh(self, until_complete: t.Optional[float] = None) -> None:
         """
         Refresh the current job with the latest data from the db.
 
