@@ -3,7 +3,7 @@ from __future__ import annotations
 import time
 import uuid
 from random import random
-from typing import Optional, Union
+from typing import Optional
 
 
 def now() -> int:
