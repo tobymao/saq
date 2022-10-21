@@ -27,6 +27,7 @@ class TestWorker(AioHTTPTestCase):
     async def asyncTearDown(self):
         await cleanup_queue(self.queue1)
         await cleanup_queue(self.queue2)
+        await super().asyncTearDown()
 
     async def test_queues(self):
         async with self.client.get("/api/queues") as resp:
