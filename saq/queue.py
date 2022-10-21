@@ -27,7 +27,7 @@ if t.TYPE_CHECKING:
     from collections.abc import Sequence
     from redis.asyncio.client import Redis
     from redis.commands.core import AsyncScript
-    from .types import (
+    from saq.types import (
         BeforeEnqueueType,
         DumpType,
         LoadType,

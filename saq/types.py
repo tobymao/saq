@@ -3,7 +3,7 @@ from __future__ import annotations
 import typing as t
 
 if t.TYPE_CHECKING:
-    from .job import Job
+    from saq.job import Job
 
 BeforeEnqueueType = t.Callable[[Job], t.Awaitable[t.Any]]
 DumpType = t.Callable[[t.Dict], str]
