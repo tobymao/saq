@@ -190,10 +190,8 @@ class Job:
         )
 
     def next_retry_delay(self) -> float:
-        if self.retry_backoff:
-            max_delay = self.retry_delay
-            if max_delay is True:
-                max_delay = None
+        if self.retry_backoff is not False:
+            max_delay = None if self.retry_backoff is True else self.retry_backoff
             return exponential_backoff(
                 attempts=self.attempts,
                 base_delay=self.retry_delay,

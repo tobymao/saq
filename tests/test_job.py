@@ -1,8 +1,15 @@
+from __future__ import annotations
+
 import asyncio
 import unittest
+import typing as t
+from unittest import mock
 
 from saq.job import Job, Status
 from tests.helpers import create_queue, cleanup_queue
+
+if t.TYPE_CHECKING:
+    from unittest.mock import MagicMock
 
 
 class TestJob(unittest.IsolatedAsyncioTestCase):
@@ -83,6 +90,22 @@ class TestJob(unittest.IsolatedAsyncioTestCase):
         self.assertAlmostEqual(job.next_retry_delay(), 1.0)
         job = Job("f", retry_delay=1.0, retry_backoff=True, attempts=3)
         self.assertTrue(0 <= job.next_retry_delay() < 4)
+
+    @mock.patch("saq.job.exponential_backoff")
+    async def test_next_retry_delay_with_max_delay(self, eb_mock: MagicMock) -> None:
+        job = Job("f", retry_delay=1.0, retry_backoff=10, attempts=3)
+        job.next_retry_delay()
+        eb_mock.assert_called_once_with(
+            attempts=3, base_delay=1.0, max_delay=10, jitter=True
+        )
+
+    @mock.patch("saq.job.exponential_backoff")
+    async def test_next_retry_delay_no_maximum(self, eb_mock: MagicMock) -> None:
+        job = Job("f", retry_delay=1.0, retry_backoff=True, attempts=3)
+        job.next_retry_delay()
+        eb_mock.assert_called_once_with(
+            attempts=3, base_delay=1.0, max_delay=None, jitter=True
+        )
 
     async def test_to_dict(self) -> None:
         assert Job("f", key="a").to_dict() == {"function": "f", "key": "a"}
