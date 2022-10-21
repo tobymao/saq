@@ -1,6 +1,9 @@
+from __future__ import annotations
+
 import asyncio
 import time
 import unittest
+from typing import TYPE_CHECKING
 from unittest import mock
 
 from saq.job import Job, Status
@@ -9,12 +12,17 @@ from saq.utils import uuid1
 from saq.worker import Worker
 from tests.helpers import create_queue, cleanup_queue
 
+if TYPE_CHECKING:
 
-async def echo(_ctx, *, a):
+    from typing import Dict, Union
+    from unittest.mock import MagicMock
+
+
+async def echo(_ctx: Dict[str, Union[Worker, Job]], *, a) -> int:
     return a
 
 
-async def error(_ctx):
+async def error(_ctx: Dict[str, Union[Worker, Job]]):
     raise ValueError("oops")
 
 
@@ -22,13 +30,13 @@ functions = [echo, error]
 
 
 class TestQueue(unittest.IsolatedAsyncioTestCase):
-    def setUp(self):
+    def setUp(self) -> None:
         self.queue = create_queue()
 
-    async def asyncTearDown(self):
+    async def asyncTearDown(self) -> None:
         await cleanup_queue(self.queue)
 
-    async def test_enqueue_job(self):
+    async def test_enqueue_job(self) -> None:
         job = Job("test")
         self.assertEqual(await self.queue.enqueue(job), await self.queue.job(job.key))
         self.assertEqual(await self.queue.count("queued"), 1)
@@ -37,7 +45,7 @@ class TestQueue(unittest.IsolatedAsyncioTestCase):
         await self.queue.enqueue(Job("test"))
         self.assertEqual(await self.queue.count("queued"), 2)
 
-    async def test_enqueue_job_str(self):
+    async def test_enqueue_job_str(self) -> None:
         job = await self.queue.enqueue("test")
         self.assertIsNotNone(job)
         self.assertEqual(await self.queue.job(job.key), job)
@@ -46,13 +54,13 @@ class TestQueue(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(job.timeout, 1)
         self.assertEqual(job.heartbeat, 0)
 
-    async def test_enqueue_dup(self):
+    async def test_enqueue_dup(self) -> None:
         job = await self.queue.enqueue("test", key="1")
         self.assertEqual(job.id, "saq:job:default:1")
         self.assertIsNone(await self.queue.enqueue("test", key="1"))
         self.assertIsNone(await self.queue.enqueue(job))
 
-    async def test_enqueue_scheduled(self):
+    async def test_enqueue_scheduled(self) -> None:
         scheduled = time.time() + 10
         job = await self.queue.enqueue("test", scheduled=scheduled)
         self.assertEqual(await self.queue.count("queued"), 0)
@@ -62,7 +70,7 @@ class TestQueue(unittest.IsolatedAsyncioTestCase):
             scheduled,
         )
 
-    async def test_dequeue(self):
+    async def test_dequeue(self) -> None:
         job = await self.queue.enqueue("test")
         self.assertEqual(await self.queue.count("queued"), 1)
         self.assertEqual(await self.queue.count("incomplete"), 1)
@@ -79,14 +87,14 @@ class TestQueue(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await self.queue.count("queued"), 0)
         await task
 
-    async def test_dequeue_timeout(self):
+    async def test_dequeue_timeout(self) -> None:
         dequeued = await self.queue.dequeue(timeout=0.1)
         self.assertEqual(None, dequeued)
         self.assertEqual(await self.queue.count("queued"), 0)
         self.assertEqual(await self.queue.count("incomplete"), 0)
         self.assertEqual(await self.queue.count("active"), 0)
 
-    async def test_finish(self):
+    async def test_finish(self) -> None:
         job = await self.queue.enqueue("test")
         await self.queue.dequeue()
         self.assertEqual(await self.queue.count("queued"), 0)
@@ -99,7 +107,7 @@ class TestQueue(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await self.queue.count("incomplete"), 0)
         self.assertEqual(await self.queue.count("active"), 0)
 
-    async def test_finish_ttl_positive(self):
+    async def test_finish_ttl_positive(self) -> None:
         job = await self.queue.enqueue("test", ttl=5)
         await self.queue.dequeue()
         await self.queue.finish(job, Status.COMPLETE)
@@ -107,7 +115,7 @@ class TestQueue(unittest.IsolatedAsyncioTestCase):
 
         self.assertLessEqual(ttl, 5)
 
-    async def test_finish_ttl_neutral(self):
+    async def test_finish_ttl_neutral(self) -> None:
         job = await self.queue.enqueue("test", ttl=0)
         await self.queue.dequeue()
         await self.queue.finish(job, Status.COMPLETE)
@@ -115,7 +123,7 @@ class TestQueue(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(ttl, -1)
 
-    async def test_finish_ttl_negative(self):
+    async def test_finish_ttl_negative(self) -> None:
         job = await self.queue.enqueue("test", ttl=-1)
         await self.queue.dequeue()
         await self.queue.finish(job, Status.COMPLETE)
@@ -123,7 +131,7 @@ class TestQueue(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(ttl, -2)
 
-    async def test_retry(self):
+    async def test_retry(self) -> None:
         job = await self.queue.enqueue("test", retries=2)
         await self.queue.dequeue()
         self.assertEqual(await self.queue.count("queued"), 0)
@@ -136,7 +144,7 @@ class TestQueue(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await self.queue.count("incomplete"), 1)
         self.assertEqual(await self.queue.count("active"), 0)
 
-    async def test_retry_delay(self):
+    async def test_retry_delay(self) -> None:
         # Let's first verify how things work without a retry delay
         worker = Worker(self.queue, functions=functions, dequeue_timeout=0.01)
         job = await self.queue.enqueue("error", retries=2)
@@ -156,7 +164,7 @@ class TestQueue(unittest.IsolatedAsyncioTestCase):
         await job.refresh()
         self.assertEqual(job.status, Status.QUEUED)
 
-    async def test_abort(self):
+    async def test_abort(self) -> None:
         job = await self.queue.enqueue("test", retries=2)
         self.assertEqual(await self.queue.count("queued"), 1)
         self.assertEqual(await self.queue.count("incomplete"), 1)
@@ -175,7 +183,7 @@ class TestQueue(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await self.queue.count("active"), 0)
         self.assertEqual(await self.queue.redis.get(job.abort_id), b"test")
 
-    async def test_stats(self):
+    async def test_stats(self) -> None:
         for _ in range(10):
             await self.queue.enqueue("test")
             job = await self.queue.dequeue()
@@ -190,7 +198,7 @@ class TestQueue(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(stats["aborted"], 10)
         self.assertGreater(stats["uptime"], 0)
 
-    async def test_info(self):
+    async def test_info(self) -> None:
         queue2 = create_queue(name=self.queue.name)
         self.addAsyncCleanup(cleanup_queue, queue2)
         worker = Worker(self.queue, functions=functions)
@@ -214,7 +222,7 @@ class TestQueue(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(info["jobs"]), 1)
 
     @mock.patch("saq.utils.time")
-    async def test_schedule(self, mock_time):
+    async def test_schedule(self, mock_time: MagicMock) -> None:
         mock_time.time.return_value = 2
         self.assertEqual(await self.queue.count("queued"), 0)
         self.assertEqual(await self.queue.count("incomplete"), 0)
@@ -232,7 +240,7 @@ class TestQueue(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await self.queue.count("incomplete"), 4)
 
     @mock.patch("saq.utils.time")
-    async def test_sweep(self, mock_time):
+    async def test_sweep(self, mock_time: MagicMock) -> None:
         mock_time.time.return_value = 1
         job1 = await self.queue.enqueue("test", heartbeat=1)
         job2 = await self.queue.enqueue("test", timeout=1)
@@ -272,7 +280,7 @@ class TestQueue(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(job3.status, Status.ABORTED)
         self.assertEqual(await self.queue.count("active"), 2)
 
-    async def test_update(self):
+    async def test_update(self) -> None:
         job = await self.queue.enqueue("test")
         counter = {"x": 0}
 
@@ -289,7 +297,7 @@ class TestQueue(unittest.IsolatedAsyncioTestCase):
         await task
         self.assertEqual(counter["x"], 2)
 
-    async def test_apply(self):
+    async def test_apply(self) -> None:
         worker = Worker(self.queue, functions=functions)
         task = asyncio.create_task(worker.start())
 
@@ -299,7 +307,7 @@ class TestQueue(unittest.IsolatedAsyncioTestCase):
 
         task.cancel()
 
-    async def test_map(self):
+    async def test_map(self) -> None:
         worker = Worker(self.queue, functions=functions)
         task = asyncio.create_task(worker.start())
 
@@ -321,7 +329,7 @@ class TestQueue(unittest.IsolatedAsyncioTestCase):
 
         task.cancel()
 
-    async def test_batch(self):
+    async def test_batch(self) -> None:
         job = None
         try:
             async with self.queue.batch():
@@ -332,7 +340,7 @@ class TestQueue(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(job.status, Status.ABORTED)
 
-    async def test_before_enqueue(self):
+    async def test_before_enqueue(self) -> None:
         called_with_job = None
 
         async def callback(job):

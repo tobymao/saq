@@ -1,30 +1,33 @@
+from __future__ import annotations
+
 import time
 import uuid
 from random import random
+from typing import Optional, Union
 
 
-def now():
+def now() -> int:
     return int(time.time() * 1000)
 
 
-def uuid1():
+def uuid1() -> str:
     return str(uuid.uuid1())
 
 
-def millis(s):
+def millis(s: Union[int, float]) -> Union[int, float]:
     return s * 1000
 
 
-def seconds(ms):
+def seconds(ms: int) -> float:
     return ms / 1000
 
 
 def exponential_backoff(
-    attempts,
-    base_delay,
-    max_delay=None,
-    jitter=True,
-):
+    attempts: int,
+    base_delay: Union[int, float],
+    max_delay: Optional[Union[int, float]] = None,
+    jitter: bool = True,
+) -> Union[int, float]:
     """
     Get the next delay for retries in exponential backoff.
 

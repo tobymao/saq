@@ -1,8 +1,11 @@
+from __future__ import annotations
+
 import asyncio
 import json
 import logging
 import time
 from contextlib import asynccontextmanager
+from typing import TYPE_CHECKING
 
 from redis import asyncio as aioredis
 
@@ -20,6 +23,10 @@ from saq.utils import (
     uuid1,
 )
 
+if TYPE_CHECKING:
+    from typing import Any, Callable, Dict, List, Optional, Set, Tuple, Union
+
+    from redis.asyncio.client import Redis
 
 logger = logging.getLogger("saq")
 
@@ -27,7 +34,7 @@ ID_PREFIX = "saq:job:"
 
 
 class JobError(Exception):
-    def __init__(self, job):
+    def __init__(self, job: Job) -> None:
         super().__init__(
             f"Job {job.id} {job.status}\n\nThe above job failed with the following error:\n\n{job.error}"
         )
@@ -48,18 +55,18 @@ class Queue:
     """
 
     @classmethod
-    def from_url(cls, url, **kwargs):
+    def from_url(cls, url: str, **kwargs) -> "Queue":
         """Create a queue with a redis url a name."""
         return cls(aioredis.from_url(url), **kwargs)
 
     def __init__(  # pylint: disable=too-many-arguments
         self,
-        redis,
-        name="default",
-        dump=None,
-        load=None,
-        max_concurrent_ops=20,
-    ):
+        redis: Redis,
+        name: str = "default",
+        dump: None = None,
+        load: None = None,
+        max_concurrent_ops: int = 20,
+    ) -> None:
         self.redis = redis
         self.name = name
         self.uuid = uuid1()
@@ -83,26 +90,26 @@ class Queue:
         self._before_enqueues = {}
         self._op_sem = asyncio.Semaphore(max_concurrent_ops)
 
-    def register_before_enqueue(self, callback):
+    def register_before_enqueue(self, callback: Callable) -> None:
         self._before_enqueues[id(callback)] = callback
 
-    def unregister_before_enqueue(self, callback):
+    def unregister_before_enqueue(self, callback: Callable) -> None:
         self._before_enqueues.pop(id(callback), None)
 
-    def job_id(self, job_key):
+    def job_id(self, job_key: str) -> str:
         return f"{ID_PREFIX}{self.name}:{job_key}"
 
-    async def _before_enqueue(self, job):
+    async def _before_enqueue(self, job: Job) -> None:
         for cb in self._before_enqueues.values():
             await cb(job)
 
-    def namespace(self, key):
+    def namespace(self, key: str) -> str:
         return ":".join(["saq", self.name, key])
 
-    def serialize(self, job):
+    def serialize(self, job: Job) -> str:
         return self._dump(job.to_dict())
 
-    def deserialize(self, job_bytes):
+    def deserialize(self, job_bytes: Optional[bytes]) -> Optional[Job]:
         if not job_bytes:
             return None
 
@@ -112,17 +119,27 @@ class Queue:
         ), f"Job {job_dict} fetched by wrong queue: {self.name}"
         return Job(**job_dict, queue=self)
 
-    async def disconnect(self):
+    async def disconnect(self) -> None:
         await self.redis.close()
         await self.redis.connection_pool.disconnect()
 
-    async def version(self):
+    async def version(self) -> Tuple[int, int, int]:
         if not self._version:
             info = await self.redis.info()
             self._version = tuple(int(i) for i in info["redis_version"].split("."))
         return self._version
 
-    async def info(self, jobs=False, offset=0, limit=10):
+    async def info(
+        self, jobs: bool = False, offset: int = 0, limit: int = 10
+    ) -> Dict[
+        str,
+        Union[
+            Dict[str, Dict[str, int]],
+            str,
+            int,
+            List[Dict[str, Union[str, Dict[str, int], int]]],
+        ],
+    ]:
         # pylint: disable=too-many-locals
         worker_uuids = []
 
@@ -173,7 +190,7 @@ class Queue:
             "jobs": job_info,
         }
 
-    async def stats(self, ttl=60):
+    async def stats(self, ttl: int = 60) -> Dict[str, int]:
         current = now()
         stats = {
             "complete": self.complete,
@@ -193,7 +210,7 @@ class Queue:
             )
         return stats
 
-    async def count(self, kind):
+    async def count(self, kind: str) -> int:
         if kind == "queued":
             return await self.redis.llen(self._queued)
         if kind == "active":
@@ -202,7 +219,7 @@ class Queue:
             return await self.redis.zcard(self._incomplete)
         raise ValueError("Can't count unknown type {kind}")
 
-    async def schedule(self, lock=1):
+    async def schedule(self, lock: int = 1) -> Optional[List[bytes]]:
         if not self._schedule_script:
             self._schedule_script = self.redis.register_script(
                 """
@@ -230,7 +247,7 @@ class Queue:
             args=[lock, seconds(now())],
         )
 
-    async def sweep(self, lock=60):
+    async def sweep(self, lock: int = 60) -> List[Union[bytes, Any]]:
         if not self._cleanup_script:
             self._cleanup_script = self.redis.register_script(
                 """
@@ -266,7 +283,12 @@ class Queue:
                     logger.info("Sweeping job %s", job)
         return swept
 
-    async def listen(self, job_keys, callback, timeout=10):
+    async def listen(
+        self,
+        job_keys: Union[Set[str], List[str]],
+        callback: Callable,
+        timeout: Optional[Union[int, float]] = 10,
+    ) -> None:
         """
         Listen to updates on jobs.
 
@@ -300,23 +322,23 @@ class Queue:
         finally:
             await pubsub.unsubscribe(*job_ids)
 
-    async def notify(self, job):
+    async def notify(self, job: Job) -> None:
         await self.redis.publish(job.id, job.status)
 
-    async def update(self, job):
+    async def update(self, job: Job) -> None:
         job.touched = now()
         await self.redis.set(job.id, self.serialize(job))
         await self.notify(job)
 
-    async def job(self, job_key):
+    async def job(self, job_key: str) -> Optional[Job]:
         job_id = self.job_id(job_key)
         return await self._get_job_by_id(job_id)
 
-    async def _get_job_by_id(self, job_id):
+    async def _get_job_by_id(self, job_id: Union[bytes, str]) -> Optional[Job]:
         async with self._op_sem:
             return self.deserialize(await self.redis.get(job_id))
 
-    async def abort(self, job, error, ttl=5):
+    async def abort(self, job: Job, error: str, ttl: int = 5) -> None:
         async with self._op_sem:
             async with self.redis.pipeline(transaction=True) as pipe:
                 dequeued, *_ = await (
@@ -333,7 +355,7 @@ class Queue:
             else:
                 await self.redis.lrem(self._active, 0, job.id)
 
-    async def retry(self, job, error):
+    async def retry(self, job: Job, error: Optional[str]) -> None:
         job_id = job.id
         job.status = Status.QUEUED
         job.error = error
@@ -357,7 +379,9 @@ class Queue:
             await self.notify(job)
             logger.info("Retrying %s", job)
 
-    async def finish(self, job, status, *, result=None, error=None):
+    async def finish(
+        self, job: Job, status: Status, *, result=None, error=None
+    ) -> None:
         job_id = job.id
         job.status = status
         job.result = result
@@ -389,7 +413,7 @@ class Queue:
             await self.notify(job)
             logger.info("Finished %s", job)
 
-    async def dequeue(self, timeout=0):
+    async def dequeue(self, timeout: Union[int, float] = 0) -> Optional[Job]:
         if await self.version() < (6, 2, 0):
             job_id = await self.redis.brpoplpush(self._queued, self._active, timeout)
         else:
@@ -402,7 +426,7 @@ class Queue:
         logger.debug("Dequeue timed out")
         return None
 
-    async def enqueue(self, job_or_func, **kwargs):
+    async def enqueue(self, job_or_func: Union[str, Job], **kwargs) -> Optional[Job]:
         """
         Enqueue a job by instance or string.
 
@@ -463,7 +487,9 @@ class Queue:
         logger.info("Enqueuing %s", job)
         return job
 
-    async def apply(self, job_or_func, timeout=None, **kwargs):
+    async def apply(
+        self, job_or_func: str, timeout: None = None, **kwargs
+    ) -> Union[str, List[str], int]:
         """
         Enqueue a job and wait for its result.
 
@@ -483,8 +509,21 @@ class Queue:
         return results[0]
 
     async def map(
-        self, job_or_func, iter_kwargs, timeout=None, return_exceptions=False, **kwargs
-    ):
+        self,
+        job_or_func: str,
+        iter_kwargs: List[
+            Union[
+                Any,
+                Dict[str, int],
+                Dict[str, Union[str, int]],
+                Dict[str, Optional[Union[str, int]]],
+                Dict[str, Optional[str]],
+            ]
+        ],
+        timeout: Optional[int] = None,
+        return_exceptions: bool = False,
+        **kwargs,
+    ) -> List[Union[Any, int, List[str], JobError, str]]:
         """
         Enqueue multiple jobs and collect all of their results.
 

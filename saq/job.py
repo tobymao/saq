@@ -1,13 +1,18 @@
+from __future__ import annotations
+
 import dataclasses
 import enum
 import typing
 
-from saq.utils import now, seconds, uuid1, exponential_backoff
+from saq.utils import exponential_backoff, now, seconds, uuid1
 
 ABORT_ID_PREFIX = "saq:abort:"
 
+if typing.TYPE_CHECKING:
+    from saq.queue import Queue
 
-def get_default_job_key():
+
+def get_default_job_key() -> str:
     return uuid1()
 
 
@@ -103,7 +108,7 @@ class Job:
     status: Status = Status.NEW
     meta: dict = dataclasses.field(default_factory=dict)
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         kwargs = ", ".join(
             f"{k}={v}"
             for k, v in {
@@ -126,22 +131,22 @@ class Job:
         )
         return f"Job<{kwargs}>"
 
-    def __hash__(self):
+    def __hash__(self) -> int:
         return hash(self.key)
 
     @property
-    def id(self):
+    def id(self) -> str:
         return self.queue.job_id(self.key)
 
     @classmethod
-    def key_from_id(cls, job_id):
+    def key_from_id(cls, job_id: str) -> str:
         return job_id.split(":")[-1]
 
     @property
-    def abort_id(self):
+    def abort_id(self) -> str:
         return f"{ABORT_ID_PREFIX}{self.key}"
 
-    def to_dict(self):
+    def to_dict(self) -> typing.Dict[str, typing.Any]:
         result = {}
         for field in dataclasses.fields(self):
             key = field.name
@@ -155,7 +160,7 @@ class Job:
             result[key] = value
         return result
 
-    def duration(self, kind):
+    def duration(self, kind: str) -> typing.Optional[int]:
         """
         Returns the duration of the job given kind.
 
@@ -172,11 +177,11 @@ class Job:
             return self._duration(now(), self.started)
         raise ValueError(f"Unknown duration type: {kind}")
 
-    def _duration(self, a, b):
+    def _duration(self, a: int, b: int) -> typing.Optional[int]:
         return a - b if a and b else None
 
     @property
-    def stuck(self):
+    def stuck(self) -> typing.Union[bool, int]:
         """Checks if an active job is passed it's timeout or heartbeat."""
         current = now()
         return (self.status == Status.ACTIVE) and (
@@ -184,7 +189,7 @@ class Job:
             or (self.heartbeat and seconds(current - self.touched) > self.heartbeat)
         )
 
-    def next_retry_delay(self):
+    def next_retry_delay(self) -> float:
         if self.retry_backoff:
             max_delay = self.retry_delay
             if max_delay is True:
@@ -197,7 +202,7 @@ class Job:
             )
         return self.retry_delay
 
-    async def enqueue(self, queue=None):
+    async def enqueue(self, queue: typing.Optional[Queue] = None) -> None:
         """
         Enqueues the job to it's queue or a provided one.
 
@@ -209,19 +214,19 @@ class Job:
         if not await queue.enqueue(self):
             await self.refresh()
 
-    async def abort(self, error, ttl=5):
+    async def abort(self, error: str, ttl: int = 5) -> None:
         """Tries to abort the job."""
         await self.queue.abort(self, error, ttl=ttl)
 
-    async def finish(self, status, *, result=None, error=None):
+    async def finish(self, status: Status, *, result=None, error=None) -> None:
         """Finishes the job with a Job.Status, result, and or error."""
         await self.queue.finish(self, status, result=result, error=error)
 
-    async def retry(self, error):
+    async def retry(self, error: typing.Optional[str]) -> None:
         """Retries the job by removing it from active and requeueing it."""
         await self.queue.retry(self, error)
 
-    async def update(self, **kwargs):
+    async def update(self, **kwargs) -> None:
         """
         Updates the stored job in redis.
 
@@ -231,7 +236,9 @@ class Job:
             setattr(self, k, v)
         await self.queue.update(self)
 
-    async def refresh(self, until_complete=None):
+    async def refresh(
+        self, until_complete: typing.Optional[typing.Union[int, float]] = None
+    ) -> None:
         """
         Refresh the current job with the latest data from the db.
 
@@ -254,7 +261,7 @@ class Job:
             await self.queue.listen([self.key], callback, until_complete)
             await self.refresh()
 
-    def replace(self, job):
+    def replace(self, job: "Job") -> None:
         """Replace current attributes with job attributes."""
         for field in job.__dataclass_fields__:
             setattr(self, field, getattr(job, field))

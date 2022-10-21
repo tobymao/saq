@@ -1,15 +1,23 @@
+from __future__ import annotations
+
 import asyncio
 import contextvars
 import logging
 import signal
 import traceback
 import os
+from typing import TYPE_CHECKING
 
 from croniter import croniter
 
 from saq.job import Status
 from saq.queue import Queue
 from saq.utils import millis, now, seconds
+
+if TYPE_CHECKING:
+    from _asyncio import Task
+    from typing import Callable, Dict, List, Optional, Union
+    from saq.job import Job
 
 
 logger = logging.getLogger("saq")
@@ -37,8 +45,8 @@ class Worker:
 
     def __init__(
         self,
-        queue,
-        functions,
+        queue: Queue,
+        functions: List[Callable],
         *,
         concurrency=10,
         cron_jobs=None,
@@ -48,7 +56,7 @@ class Worker:
         after_process=None,
         timers=None,
         dequeue_timeout=0,
-    ):
+    ) -> None:
         self.queue = queue
         self.concurrency = concurrency
         self.startup = startup
@@ -84,15 +92,17 @@ class Worker:
 
             self.functions[name] = function
 
-    async def _before_process(self, ctx):
+    async def _before_process(self, ctx: Dict[str, Union[Worker, int, Job]]) -> None:
         if self.before_process:
             await self.before_process(ctx)
 
-    async def _after_process(self, ctx):
+    async def _after_process(
+        self, ctx: Dict[str, Union[Worker, Job, Queue, int]]
+    ) -> None:
         if self.after_process:
             await self.after_process(ctx)
 
-    async def start(self):
+    async def start(self) -> None:
         """Start processing jobs and upkeep tasks."""
         try:
             self.event = asyncio.Event()
@@ -118,7 +128,7 @@ class Worker:
 
             await self.stop()
 
-    async def stop(self):
+    async def stop(self) -> None:
         """Stop the worker and cleanup."""
         self.event.set()
         all_tasks = list(self.tasks)
@@ -127,7 +137,7 @@ class Worker:
             task.cancel()
         await asyncio.gather(*all_tasks, return_exceptions=True)
 
-    async def schedule(self, lock=1):
+    async def schedule(self, lock: int = 1) -> None:
         for cron_job in self.cron_jobs:
             kwargs = cron_job.__dict__.copy()
             function = kwargs.pop("function").__qualname__
@@ -145,7 +155,7 @@ class Worker:
         if scheduled:
             logger.info("Scheduled %s", scheduled)
 
-    async def upkeep(self):
+    async def upkeep(self) -> List[Task]:
         """Start various upkeep tasks async."""
 
         async def poll(func, sleep, arg=None):
@@ -168,7 +178,7 @@ class Worker:
             ),
         ]
 
-    async def abort(self, abort_threshold):
+    async def abort(self, abort_threshold: Union[int, float]) -> None:
         jobs = [
             job
             for job in self.job_task_contexts
@@ -196,7 +206,7 @@ class Worker:
             await self.queue.redis.delete(job.abort_id)
             logger.info("Aborting %s", job.id)
 
-    async def process(self):
+    async def process(self) -> None:
         # pylint: disable=too-many-branches
         job = None
         context = None
@@ -242,7 +252,7 @@ class Worker:
                 except (Exception, asyncio.CancelledError):
                     logger.exception("Failed to run after process hook")
 
-    def _process(self, previous_task=None):
+    def _process(self, previous_task: Optional[Task] = None) -> None:
         if previous_task:
             self.tasks.discard(previous_task)
 
@@ -252,7 +262,7 @@ class Worker:
             new_task.add_done_callback(self._process)
 
 
-def ensure_coroutine_function(func):
+def ensure_coroutine_function(func: Callable) -> Callable:
     if asyncio.iscoroutinefunction(func):
         return func
 
@@ -286,6 +296,7 @@ def start(settings, web=False, extra_web_settings=None, port=8080):
 
     if web:
         import aiohttp.web
+
         from saq.web import create_app
 
         extra_web_settings = extra_web_settings or []

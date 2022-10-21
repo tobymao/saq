@@ -1,11 +1,22 @@
+from __future__ import annotations
+
 import html
 import logging
 import os
 import pathlib
 import traceback
+from typing import TYPE_CHECKING
 
 from aiohttp import web
 
+if TYPE_CHECKING:
+    from typing import Callable, Dict, List, Union
+    from aiohttp.web_app import Application
+    from aiohttp.web_request import Request
+    from aiohttp.web_response import Response
+
+    from saq.job import Job
+    from saq.queue import Queue
 
 static = os.path.join(pathlib.Path(__file__).parent.resolve(), "static")
 
@@ -31,7 +42,7 @@ def render(**kwargs):
     return body.format(**{k: html.escape(v) for k, v in kwargs.items()})
 
 
-async def queues_(request):
+async def queues_(request: Request) -> Response:
     queue_name = request.match_info.get("queue")
 
     response = {}
@@ -44,7 +55,7 @@ async def queues_(request):
     return web.json_response(response)
 
 
-async def jobs(request):
+async def jobs(request: Request) -> Response:
     job = await _get_job(request)
     job_dict = job.to_dict()
     if "kwargs" in job_dict:
@@ -54,13 +65,13 @@ async def jobs(request):
     return web.json_response({"job": job_dict})
 
 
-async def retry(request):
+async def retry(request: Request) -> Response:
     job = await _get_job(request)
     await job.retry("retried from ui")
     return web.json_response({})
 
 
-async def abort(request):
+async def abort(request: Request) -> Response:
     job = await _get_job(request)
     await job.abort("aborted from ui")
     return web.json_response({})
@@ -76,15 +87,15 @@ async def health(request):
     raise web.HTTPInternalServerError
 
 
-async def _get_all_info(request):
+async def _get_all_info(request: Request) -> List[Dict[str, Union[str, int]]]:
     return [await q.info() for q in request.app["queues"].values()]
 
 
-def _get_queue(request, queue_name):
+def _get_queue(request: Request, queue_name: str) -> Queue:
     return request.app["queues"][queue_name]
 
 
-async def _get_job(request):
+async def _get_job(request: Request) -> Job:
     queue_name = request.match_info.get("queue")
     job_key = request.match_info.get("job")
 
@@ -95,7 +106,7 @@ async def _get_job(request):
 
 
 @web.middleware
-async def exceptions(request, handler):
+async def exceptions(request: Request, handler: Callable) -> Response:
     if request.path.startswith("/api"):
         try:
             resp = await handler(request)
@@ -112,7 +123,7 @@ async def shutdown(app):
         await queue.disconnect()
 
 
-def create_app(queues):
+def create_app(queues: List[Queue]) -> Application:
     middlewares = [exceptions]
     password = os.environ.get("AUTH_PASSWORD")
 
