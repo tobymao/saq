@@ -88,7 +88,7 @@ class Job:
 
     function: str
     kwargs: t.Optional[dict] = None
-    queue: t.Optional["Queue"] = None
+    queue: t.Optional[Queue] = None
     key: str = dataclasses.field(default_factory=get_default_job_key)
     timeout: int = 10
     heartbeat: int = 0
@@ -259,7 +259,7 @@ class Job:
             await self.queue.listen([self.key], callback, until_complete)
             await self.refresh()
 
-    def replace(self, job: "Job") -> None:
+    def replace(self, job: Job) -> None:
         """Replace current attributes with job attributes."""
         for field in job.__dataclass_fields__:
             setattr(self, field, getattr(job, field))
