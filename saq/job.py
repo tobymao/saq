@@ -114,7 +114,7 @@ class Job:
             for k, v in {
                 "function": self.function,
                 "kwargs": self.kwargs,
-                "queue": self.queue.name,
+                "queue": self.get_queue().name,
                 "id": self.id,
                 "scheduled": self.scheduled,
                 "progress": self.progress,
@@ -136,7 +136,7 @@ class Job:
 
     @property
     def id(self) -> str:
-        return self.queue.job_id(self.key)
+        return self.get_queue().job_id(self.key)
 
     @classmethod
     def key_from_id(cls, job_id: str) -> str:
@@ -207,22 +207,21 @@ class Job:
         A job that already has a queue cannot be re-enqueued. Job uniqueness is determined by its id.
         If a job has already been queued, it will update it's properties to match what is stored in the db.
         """
-        queue = queue or self.queue
-        assert queue, "Queue unspecified"
+        queue = queue or self.get_queue()
         if not await queue.enqueue(self):
             await self.refresh()
 
     async def abort(self, error: str, ttl: int = 5) -> None:
         """Tries to abort the job."""
-        await self.queue.abort(self, error, ttl=ttl)
+        await self.get_queue().abort(self, error, ttl=ttl)
 
     async def finish(self, status: Status, *, result=None, error=None) -> None:
         """Finishes the job with a Job.Status, result, and or error."""
-        await self.queue.finish(self, status, result=result, error=error)
+        await self.get_queue().finish(self, status, result=result, error=error)
 
     async def retry(self, error: t.Optional[str]) -> None:
         """Retries the job by removing it from active and requeueing it."""
-        await self.queue.retry(self, error)
+        await self.get_queue().retry(self, error)
 
     async def update(self, **kwargs) -> None:
         """
@@ -232,7 +231,7 @@ class Job:
         """
         for k, v in kwargs.items():
             setattr(self, k, v)
-        await self.queue.update(self)
+        await self.get_queue().update(self)
 
     async def refresh(self, until_complete: t.Optional[float] = None) -> None:
         """
@@ -241,7 +240,7 @@ class Job:
         until_complete: None or Numeric seconds. if None (default), don't wait,
             else wait seconds until the job is complete or the interval has been reached. 0 means wait forever
         """
-        job = await self.queue.job(self.key)
+        job = await self.get_queue().job(self.key)
 
         if not job:
             raise RuntimeError(f"{self} doesn't exist")
@@ -254,10 +253,17 @@ class Job:
                 if status in TERMINAL_STATUSES:
                     return True
 
-            await self.queue.listen([self.key], callback, until_complete)
+            await self.get_queue().listen([self.key], callback, until_complete)
             await self.refresh()
 
     def replace(self, job: Job) -> None:
         """Replace current attributes with job attributes."""
         for field in job.__dataclass_fields__:
             setattr(self, field, getattr(job, field))
+
+    def get_queue(self) -> Queue:
+        if self.queue is None:
+            raise TypeError(
+                "`Job` must be associated with a `Queue` before this operation can proceed"
+            )
+        return self.queue

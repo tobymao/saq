@@ -49,6 +49,7 @@ class TestWorker(AioHTTPTestCase):
 
     async def test_jobs(self) -> None:
         job = await self.queue1.enqueue("echo", a=1)
+        assert job is not None
         url = f"/api/queues/{self.queue1.name}/jobs/{job.key}"
         await self.worker.process()
         await job.refresh()
