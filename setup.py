@@ -31,6 +31,7 @@ setup(
     install_requires=[
         "redis>=4.2.0",
         "croniter>=0.3.18",
+        "typing-extensions>=4.4.0; python_version<'3.8'",
     ],
     extras_require={
         "hiredis": ["redis[hiredis]>=4.2.0"],
