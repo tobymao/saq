@@ -15,8 +15,12 @@ from saq.queue import Queue
 from saq.utils import millis, now, seconds
 
 if t.TYPE_CHECKING:
-    from _asyncio import Task
-    from saq.job import Job
+    from collections.abc import Callable, Collection, Coroutine
+
+    from aiohttp.web_app import Application
+    from asyncio import Task
+    from saq.job import CronJob, Job
+    from saq.types import Context, Function, ReceivesContext, TimersDict
 
 
 logger = logging.getLogger("saq")
@@ -45,16 +49,16 @@ class Worker:
     def __init__(
         self,
         queue: Queue,
-        functions: t.List[t.Callable],
+        functions: Collection[Function | tuple[str, Function]],
         *,
-        concurrency=10,
-        cron_jobs=None,
-        startup=None,
-        shutdown=None,
-        before_process=None,
-        after_process=None,
-        timers=None,
-        dequeue_timeout=0,
+        concurrency: int = 10,
+        cron_jobs: Collection[CronJob] | None = None,
+        startup: ReceivesContext | None = None,
+        shutdown: ReceivesContext | None = None,
+        before_process: ReceivesContext | None = None,
+        after_process: ReceivesContext | None = None,
+        timers: TimersDict | None = None,
+        dequeue_timeout: float = 0,
     ) -> None:
         self.queue = queue
         self.concurrency = concurrency
@@ -62,20 +66,21 @@ class Worker:
         self.shutdown = shutdown
         self.before_process = before_process
         self.after_process = after_process
-        self.timers = {
+        self.timers: TimersDict = {
             "schedule": 1,
             "stats": 10,
             "sweep": 60,
             "abort": 1,
-            **(timers or {}),
         }
+        if timers is not None:
+            self.timers.update(timers)
         self.event = asyncio.Event()
         functions = set(functions)
         self.functions = {}
         self.cron_jobs = cron_jobs or []
-        self.context = {"worker": self}
-        self.tasks = set()
-        self.job_task_contexts = {}
+        self.context: Context = {"worker": self}
+        self.tasks: set[Task] = set()
+        self.job_task_contexts: dict[Job, dict] = {}
         self.dequeue_timeout = dequeue_timeout
 
         for job in self.cron_jobs:
@@ -91,15 +96,11 @@ class Worker:
 
             self.functions[name] = function
 
-    async def _before_process(
-        self, ctx: t.Dict[str, t.Union[Worker, int, Job]]
-    ) -> None:
+    async def _before_process(self, ctx: Context) -> None:
         if self.before_process:
             await self.before_process(ctx)
 
-    async def _after_process(
-        self, ctx: t.Dict[str, t.Union[Worker, Job, Queue, int]]
-    ) -> None:
+    async def _after_process(self, ctx: Context) -> None:
         if self.after_process:
             await self.after_process(ctx)
 
@@ -156,10 +157,12 @@ class Worker:
         if scheduled:
             logger.info("Scheduled %s", scheduled)
 
-    async def upkeep(self) -> t.List[Task]:
+    async def upkeep(self) -> list[Task]:
         """Start various upkeep tasks async."""
 
-        async def poll(func, sleep, arg=None):
+        async def poll(
+            func: Callable[[int], Coroutine], sleep: int, arg: int | None = None
+        ) -> None:
             while not self.event.is_set():
                 try:
                     await func(arg or sleep)
@@ -179,11 +182,14 @@ class Worker:
             ),
         ]
 
-    async def abort(self, abort_threshold: t.Union[int, float]) -> None:
+    async def abort(self, abort_threshold: float) -> None:
+        def get_duration(job: Job) -> float:
+            return job.duration("running") or 0
+
         jobs = [
             job
             for job in self.job_task_contexts
-            if job.duration("running") >= millis(abort_threshold)
+            if get_duration(job) >= millis(abort_threshold)
         ]
 
         if not jobs:
@@ -209,20 +215,20 @@ class Worker:
 
     async def process(self) -> None:
         # pylint: disable=too-many-branches
-        job = None
-        context = None
+        context: Context | None = None
+        job: Job | None = None
 
         try:
             job = await self.queue.dequeue(self.dequeue_timeout)
 
-            if not job:
+            if job is None:
                 return
 
             job.started = now()
             job.status = Status.ACTIVE
             job.attempts += 1
             await job.update()
-            context = {**self.context, "job": job}
+            context = {"worker": self, "job": job}
             await self._before_process(context)
             logger.info("Processing %s", job)
 
@@ -246,14 +252,15 @@ class Worker:
                     await job.retry(error)
         finally:
             if context:
-                self.job_task_contexts.pop(job, None)
+                if job is not None:
+                    self.job_task_contexts.pop(job, None)
 
                 try:
                     await self._after_process(context)
                 except (Exception, asyncio.CancelledError):
                     logger.exception("Failed to run after process hook")
 
-    def _process(self, previous_task: t.Optional[Task] = None) -> None:
+    def _process(self, previous_task: Task | None = None) -> None:
         if previous_task:
             self.tasks.discard(previous_task)
 
@@ -263,11 +270,11 @@ class Worker:
             new_task.add_done_callback(self._process)
 
 
-def ensure_coroutine_function(func: t.Callable) -> t.Callable:
+def ensure_coroutine_function(func: Callable) -> Callable[..., Coroutine]:
     if asyncio.iscoroutinefunction(func):
         return func
 
-    async def wrapped(*args, **kwargs):
+    async def wrapped(*args: t.Any, **kwargs: t.Any) -> t.Any:
         loop = asyncio.get_running_loop()
         ctx = contextvars.copy_context()
         return await loop.run_in_executor(
@@ -277,7 +284,7 @@ def ensure_coroutine_function(func: t.Callable) -> t.Callable:
     return wrapped
 
 
-def import_settings(settings):
+def import_settings(settings: str) -> dict[str, t.Any]:
     import importlib
 
     # given a.b.c, parses out a.b as the module path and c as the variable
@@ -286,14 +293,19 @@ def import_settings(settings):
     return getattr(module, name)
 
 
-def start(settings, web=False, extra_web_settings=None, port=8080):
-    settings = import_settings(settings)
+def start(
+    settings: str,
+    web: bool = False,
+    extra_web_settings: list[str] | None = None,
+    port: int = 8080,
+) -> None:
+    settings_obj = import_settings(settings)
 
     if "queue" not in settings:
-        settings["queue"] = Queue.from_url("redis://localhost")
+        settings_obj["queue"] = Queue.from_url("redis://localhost")
 
     loop = asyncio.new_event_loop()
-    worker = Worker(**settings)
+    worker = Worker(**settings_obj)
 
     if web:
         import aiohttp.web
@@ -301,10 +313,10 @@ def start(settings, web=False, extra_web_settings=None, port=8080):
         from saq.web import create_app
 
         extra_web_settings = extra_web_settings or []
-        web_settings = [settings] + [import_settings(s) for s in extra_web_settings]
+        web_settings = [settings_obj] + [import_settings(s) for s in extra_web_settings]
         queues = [s["queue"] for s in web_settings if s.get("queue")]
 
-        async def shutdown(_app):
+        async def shutdown(_app: Application) -> None:
             await worker.stop()
 
         app = create_app(queues)
@@ -318,18 +330,18 @@ def start(settings, web=False, extra_web_settings=None, port=8080):
 
 async def async_check_health(queue: Queue) -> int:
     info = await queue.info()
-    if not info.get(queue.name):
+    if not info.get("name") == queue.name:
         logger.warning("Health check failed")
         status = 1
     else:
-        logger.info(info[queue.name])
+        logger.info(info["name"])
         status = 0
     await queue.disconnect()
     return status
 
 
 def check_health(settings: str) -> int:
-    settings = import_settings(settings)
+    settings_dict = import_settings(settings)
     loop = asyncio.new_event_loop()
-    queue = settings.get("queue", Queue.from_url("redis://localhost"))
+    queue = settings_dict.get("queue", Queue.from_url("redis://localhost"))
     return loop.run_until_complete(async_check_health(queue))

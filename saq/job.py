@@ -10,6 +10,7 @@ ABORT_ID_PREFIX = "saq:abort:"
 
 if t.TYPE_CHECKING:
     from saq.queue import Queue
+    from saq.types import DurationKind, Function
 
 
 def get_default_job_key() -> str:
@@ -42,13 +43,13 @@ class CronJob:
     Remaining kwargs are pass through to Job
     """
 
-    function: t.Callable
+    function: Function
     cron: str
     unique: bool = True
-    timeout: t.Optional[int] = None
-    heartbeat: t.Optional[int] = None
-    retries: t.Optional[int] = None
-    ttl: t.Optional[int] = None
+    timeout: int | None = None
+    heartbeat: int | None = None
+    retries: int | None = None
+    ttl: int | None = None
 
 
 @dataclasses.dataclass
@@ -62,7 +63,7 @@ class Job:
         queue: the saq.Queue object associated with the job
         key: unique identifier of a job, defaults to uuid1, can be passed in to avoid duplicate jobs
         timeout: the maximum amount of time a job can run for in seconds, defaults to 10 (0 means disabled)
-        heartbeat: the maximum amount of time a job can survive without a heartebat in seconds, defaults to 0 (disabled)
+        heartbeat: the maximum amount of time a job can survive without a heartbeat in seconds, defaults to 0 (disabled)
             a heartbeat can be triggered manually within a job by calling await job.update()
         retries: the maximum number of attempts to retry a job, defaults to 1
         ttl: the maximum time in seconds to store information about a job including results, defaults to 600 (0 means indefinitely, -1 means disabled)
@@ -82,20 +83,20 @@ class Job:
         started: job started time epoch seconds
         touched: job touched/updated time epoch seconds
         results: payload containing the results, this is the return of the function provided, must be serializable, defaults to json
-        error: stack trace if an runtime error occurs
-        status: Status Enum, defaulst to Status.New
+        error: stack trace if a runtime error occurs
+        status: Status Enum, default to Status.New
     """
 
     function: str
-    kwargs: t.Optional[dict] = None
-    queue: t.Optional[Queue] = None
+    kwargs: dict | None = None
+    queue: Queue | None = None
     key: str = dataclasses.field(default_factory=get_default_job_key)
     timeout: int = 10
     heartbeat: int = 0
     retries: int = 1
     ttl: int = 600
     retry_delay: float = 0.0
-    retry_backoff: t.Union[bool, float] = False
+    retry_backoff: bool | float = False
     scheduled: int = 0
     progress: float = 0.0
     attempts: int = 0
@@ -104,7 +105,7 @@ class Job:
     started: int = 0
     touched: int = 0
     result: t.Any = None
-    error: t.Optional[str] = None
+    error: str | None = None
     status: Status = Status.NEW
     meta: dict = dataclasses.field(default_factory=dict)
 
@@ -146,7 +147,7 @@ class Job:
     def abort_id(self) -> str:
         return f"{ABORT_ID_PREFIX}{self.key}"
 
-    def to_dict(self) -> t.Dict[str, t.Any]:
+    def to_dict(self) -> dict[str, t.Any]:
         result = {}
         for field in dataclasses.fields(self):
             key = field.name
@@ -160,7 +161,7 @@ class Job:
             result[key] = value
         return result
 
-    def duration(self, kind: str) -> t.Optional[int]:
+    def duration(self, kind: DurationKind) -> int | None:
         """
         Returns the duration of the job given kind.
 
@@ -177,7 +178,7 @@ class Job:
             return self._duration(now(), self.started)
         raise ValueError(f"Unknown duration type: {kind}")
 
-    def _duration(self, a: int, b: int) -> t.Optional[int]:
+    def _duration(self, a: int, b: int) -> int | None:
         return a - b if a and b else None
 
     @property
@@ -200,12 +201,12 @@ class Job:
             )
         return self.retry_delay
 
-    async def enqueue(self, queue: t.Optional[Queue] = None) -> None:
+    async def enqueue(self, queue: Queue | None = None) -> None:
         """
         Enqueues the job to it's queue or a provided one.
 
         A job that already has a queue cannot be re-enqueued. Job uniqueness is determined by its id.
-        If a job has already been queued, it will update it's properties to match what is stored in the db.
+        If a job has already been queued, it will update its properties to match what is stored in the db.
         """
         queue = queue or self.get_queue()
         if not await queue.enqueue(self):
@@ -215,15 +216,17 @@ class Job:
         """Tries to abort the job."""
         await self.get_queue().abort(self, error, ttl=ttl)
 
-    async def finish(self, status: Status, *, result=None, error=None) -> None:
+    async def finish(
+        self, status: Status, *, result: t.Any = None, error: str | None = None
+    ) -> None:
         """Finishes the job with a Job.Status, result, and or error."""
         await self.get_queue().finish(self, status, result=result, error=error)
 
-    async def retry(self, error: t.Optional[str]) -> None:
-        """Retries the job by removing it from active and requeueing it."""
+    async def retry(self, error: str | None) -> None:
+        """Retries the job by removing it from active and enqueueing it again."""
         await self.get_queue().retry(self, error)
 
-    async def update(self, **kwargs) -> None:
+    async def update(self, **kwargs: t.Any) -> None:
         """
         Updates the stored job in redis.
 
@@ -233,7 +236,7 @@ class Job:
             setattr(self, k, v)
         await self.get_queue().update(self)
 
-    async def refresh(self, until_complete: t.Optional[float] = None) -> None:
+    async def refresh(self, until_complete: float | None = None) -> None:
         """
         Refresh the current job with the latest data from the db.
 
@@ -249,17 +252,16 @@ class Job:
 
         if until_complete is not None and not self.completed:
 
-            async def callback(_id, status):
-                if status in TERMINAL_STATUSES:
-                    return True
+            async def callback(_id: str, status: Status) -> bool:
+                return status in TERMINAL_STATUSES
 
             await self.get_queue().listen([self.key], callback, until_complete)
             await self.refresh()
 
     def replace(self, job: Job) -> None:
         """Replace current attributes with job attributes."""
-        for field in job.__dataclass_fields__:
-            setattr(self, field, getattr(job, field))
+        for field in dataclasses.fields(job):
+            setattr(self, field.name, getattr(job, field.name))
 
     def get_queue(self) -> Queue:
         if self.queue is None:

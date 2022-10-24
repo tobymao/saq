@@ -15,36 +15,36 @@ from tests.helpers import cleanup_queue, create_queue
 if t.TYPE_CHECKING:
     from unittest.mock import MagicMock
 
-    from saq.queue import Queue
+    from saq.types import Context, Function
 
 
 logging.getLogger().setLevel(logging.CRITICAL)
 
-ctx_var = contextvars.ContextVar("ctx_var")
+ctx_var = contextvars.ContextVar[str]("ctx_var")
 
 
-async def noop(_ctx: t.Dict[str, t.Union[Worker, Job]]) -> int:
+async def noop(_ctx: Context) -> int:
     return 1
 
 
-async def sleeper(ctx: t.Dict[str, t.Union[Worker, int, Job]]) -> t.Dict[str, int]:
-    await asyncio.sleep(ctx.get("sleep", 0.1))
+async def sleeper(_ctx: Context, sleep: float = 0.1) -> dict[str, t.Any]:
+    await asyncio.sleep(sleep)
     return {"a": 1, "b": []}
 
 
-async def cron(_ctx):
+async def cron(_ctx: Context) -> int:
     return 1
 
 
-async def error(_ctx: t.Dict[str, t.Union[Worker, Job]]):
+async def error(_ctx: Context) -> t.NoReturn:
     raise ValueError("oops")
 
 
-def sync_echo_ctx(_ctx):
+def sync_echo_ctx(_ctx: Context) -> str:
     return ctx_var.get()
 
 
-async def recurse(ctx: t.Dict[str, t.Union[Worker, Job, Queue]], *, n) -> t.List[str]:
+async def recurse(ctx: Context, *, n: int) -> list[str]:
     var = ctx_var.get()
     result = [var]
     if n > 0:
@@ -52,7 +52,7 @@ async def recurse(ctx: t.Dict[str, t.Union[Worker, Job, Queue]], *, n) -> t.List
     return result
 
 
-functions = [noop, sleeper, error, sync_echo_ctx, recurse]
+functions: list[Function] = [noop, sleeper, error, sync_echo_ctx, recurse]
 
 
 class TestWorker(unittest.IsolatedAsyncioTestCase):
@@ -183,11 +183,11 @@ class TestWorker(unittest.IsolatedAsyncioTestCase):
     async def test_hooks(self) -> None:
         x = {"before": 0, "after": 0}
 
-        async def before_process(ctx):
+        async def before_process(ctx: Context) -> None:
             self.assertIsNotNone(ctx["job"])
             x["before"] += 1
 
-        async def after_process(ctx):
+        async def after_process(ctx: Context) -> None:
             self.assertIsNotNone(ctx["job"])
             x["after"] += 1
 
@@ -261,7 +261,7 @@ class TestWorker(unittest.IsolatedAsyncioTestCase):
         asyncio.create_task(self.worker.process())
 
         # wait for the job to actually start
-        def callback(job_key, status):
+        def callback(job_key: str, status: Status) -> bool:
             self.assertEqual(job.key, job_key)
             self.assertEqual(status, Status.ACTIVE)
             return True
@@ -297,7 +297,7 @@ class TestWorker(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await self.queue.count("active"), 0)
 
     async def test_sync_function(self) -> None:
-        async def before_process(*_, **__):
+        async def before_process(*_: t.Any, **__: t.Any) -> None:
             ctx_var.set("123")
 
         self.worker.before_process = before_process
@@ -305,12 +305,12 @@ class TestWorker(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await self.queue.apply("sync_echo_ctx"), "123")
 
     async def test_propagation(self) -> None:
-        async def before_process(ctx):
+        async def before_process(ctx: Context) -> None:
             correlation_id = ctx["job"].meta.get("correlation_id")
             ctx_var.set(correlation_id)
             ctx["queue"] = self.queue
 
-        async def before_enqueue(job):
+        async def before_enqueue(job: Job) -> None:
             job.meta["correlation_id"] = ctx_var.get(None) or uuid1()
 
         self.worker.before_process = before_process

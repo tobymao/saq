@@ -25,7 +25,7 @@ class TestJob(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(Job("").duration("start"))
         self.assertIsNone(Job("").duration("total"))
         with self.assertRaises(ValueError):
-            Job("").duration("x")
+            Job("").duration("x")  # type:ignore[arg-type]
 
         self.assertEqual(Job("", completed=2, started=1).duration("process"), 1)
         self.assertEqual(Job("", started=2, queued=1).duration("start"), 1)
@@ -74,7 +74,7 @@ class TestJob(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(asyncio.TimeoutError):
             await asyncio.wait_for(self.job.refresh(0), 0.1)
 
-        async def finish():
+        async def finish() -> None:
             await asyncio.sleep(0.01)
             await self.job.finish(Status.COMPLETE)
 

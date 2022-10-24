@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import time
 import uuid
-import typing as t
 from random import random
 
 
@@ -25,7 +24,7 @@ def seconds(ms: float) -> float:
 def exponential_backoff(
     attempts: int,
     base_delay: float,
-    max_delay: t.Optional[float] = None,
+    max_delay: float | None = None,
     jitter: bool = True,
 ) -> float:
     """

@@ -6,7 +6,7 @@ import sys
 from saq.worker import check_health, start
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(description="Start Simple Async Queue Worker")
     parser.add_argument(
         "settings",

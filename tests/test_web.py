@@ -12,14 +12,16 @@ from tests.helpers import create_queue, cleanup_queue
 if t.TYPE_CHECKING:
     from aiohttp.web_app import Application
 
+    from saq.types import Context, Function
+
 logging.getLogger().setLevel(logging.CRITICAL)
 
 
-async def echo(_ctx, *, a):
+async def echo(_ctx: Context, *, a: t.Any) -> t.Any:
     return a
 
 
-functions = [echo]
+functions: list[Function] = [echo]
 
 
 class TestWorker(AioHTTPTestCase):

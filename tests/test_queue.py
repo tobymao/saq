@@ -17,16 +17,18 @@ if t.TYPE_CHECKING:
 
     from unittest.mock import MagicMock
 
+    from saq.types import Context, CountKind, Function
 
-async def echo(_ctx: t.Dict[str, t.Union[Worker, Job]], *, a) -> int:
+
+async def echo(_ctx: Context, *, a: int) -> int:
     return a
 
 
-async def error(_ctx: t.Dict[str, t.Union[Worker, Job]]):
+async def error(_ctx: Context) -> None:
     raise ValueError("oops")
 
 
-functions: t.List[t.Callable[..., t.Any]] = [echo, error]
+functions: list[Function] = [echo, error]
 
 
 class TestQueue(unittest.IsolatedAsyncioTestCase):
@@ -36,7 +38,7 @@ class TestQueue(unittest.IsolatedAsyncioTestCase):
     async def asyncTearDown(self) -> None:
         await cleanup_queue(self.queue)
 
-    async def enqueue(self, job: t.Union[Job, str], **kwargs: t.Any) -> Job:
+    async def enqueue(self, job: Job | str, **kwargs: t.Any) -> Job:
         enqueued = await self.queue.enqueue(job, **kwargs)
         assert enqueued is not None
         return enqueued
@@ -46,10 +48,10 @@ class TestQueue(unittest.IsolatedAsyncioTestCase):
         assert dequeued is not None
         return dequeued
 
-    async def count(self, kind: str) -> int:
+    async def count(self, kind: CountKind) -> int:
         return await self.queue.count(kind)
 
-    async def finish(self, job: Job, status: Status, **kwargs) -> None:
+    async def finish(self, job: Job, status: Status, **kwargs: t.Any) -> None:
         await self.queue.finish(job, status, **kwargs)
 
     async def test_enqueue_job(self) -> None:
@@ -300,7 +302,7 @@ class TestQueue(unittest.IsolatedAsyncioTestCase):
         job = await self.enqueue("test")
         counter = {"x": 0}
 
-        def listen(job_key, status):
+        def listen(job_key: str, status: Status) -> bool:
             self.assertEqual(job.key, job_key)
             self.assertEqual(status, Status.QUEUED)
             counter["x"] += 1
@@ -356,7 +358,7 @@ class TestQueue(unittest.IsolatedAsyncioTestCase):
     async def test_before_enqueue(self) -> None:
         called_with_job = None
 
-        async def callback(job):
+        async def callback(job: Job) -> None:
             nonlocal called_with_job
             called_with_job = job
 

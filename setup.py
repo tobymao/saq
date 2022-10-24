@@ -37,10 +37,12 @@ setup(
         "hiredis": ["redis[hiredis]>=4.2.0"],
         "web": ["aiohttp", "aiohttp_basicauth"],
         "dev": [
-            "black==22.10.0",
+            "black",
             "mypy",
             "pylint",
+            "types-croniter",
             "types-redis",
+            "types-setuptools",
         ],
     },
     classifiers=[

@@ -1,7 +1,9 @@
+import typing as t
+
 from saq.queue import Queue
 
 
-def create_queue(**kwargs) -> Queue:
+def create_queue(**kwargs: t.Any) -> Queue:
     return Queue.from_url("redis://localhost:6379", **kwargs)
 
 
