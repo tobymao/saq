@@ -3,15 +3,15 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import time
-import unittest
 import typing as t
+import unittest
 from unittest import mock
 
 from saq.job import Job, Status
 from saq.queue import JobError
 from saq.utils import uuid1
 from saq.worker import Worker
-from tests.helpers import create_queue, cleanup_queue
+from tests.helpers import cleanup_queue, create_queue
 
 if t.TYPE_CHECKING:
 

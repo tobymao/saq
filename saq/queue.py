@@ -10,23 +10,20 @@ from contextlib import asynccontextmanager
 from redis import asyncio as aioredis
 
 from saq.job import (
-    Job,
-    Status,
     TERMINAL_STATUSES,
     UNSUCCESSFUL_TERMINAL_STATUSES,
+    Job,
+    Status,
     get_default_job_key,
 )
-from saq.utils import (
-    millis,
-    now,
-    seconds,
-    uuid1,
-)
+from saq.utils import millis, now, seconds, uuid1
 
 if t.TYPE_CHECKING:
     from collections.abc import AsyncIterator, Sequence
+
     from redis.asyncio.client import Redis
     from redis.commands.core import AsyncScript
+
     from saq.types import (
         BeforeEnqueueType,
         CountKind,

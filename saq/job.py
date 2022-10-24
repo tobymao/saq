@@ -4,7 +4,7 @@ import dataclasses
 import enum
 import typing as t
 
-from saq.utils import now, seconds, uuid1, exponential_backoff
+from saq.utils import exponential_backoff, now, seconds, uuid1
 
 ABORT_ID_PREFIX = "saq:abort:"
 

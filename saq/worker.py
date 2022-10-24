@@ -3,9 +3,9 @@ from __future__ import annotations
 import asyncio
 import contextvars
 import logging
+import os
 import signal
 import traceback
-import os
 import typing as t
 
 from croniter import croniter
@@ -15,10 +15,11 @@ from saq.queue import Queue
 from saq.utils import millis, now, seconds
 
 if t.TYPE_CHECKING:
+    from asyncio import Task
     from collections.abc import Callable, Collection, Coroutine
 
     from aiohttp.web_app import Application
-    from asyncio import Task
+
     from saq.job import CronJob, Job
     from saq.types import Context, Function, ReceivesContext, TimersDict
 

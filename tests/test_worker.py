@@ -3,8 +3,8 @@ from __future__ import annotations
 import asyncio
 import contextvars
 import logging
-import unittest
 import typing as t
+import unittest
 from unittest import mock
 
 from saq.job import CronJob, Job, Status

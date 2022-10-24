@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import logging
 import typing as t
+
 from aiohttp.test_utils import AioHTTPTestCase
 
 from saq.job import Status
-from saq.worker import Worker
 from saq.web import create_app
-from tests.helpers import create_queue, cleanup_queue
+from saq.worker import Worker
+from tests.helpers import cleanup_queue, create_queue
 
 if t.TYPE_CHECKING:
     from aiohttp.web_app import Application

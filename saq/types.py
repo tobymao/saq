@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import typing as t
+
 from saq.compat import Literal, TypedDict
 
 if t.TYPE_CHECKING:
