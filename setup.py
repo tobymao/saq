@@ -31,7 +31,6 @@ setup(
     install_requires=[
         "redis>=4.2.0",
         "croniter>=0.3.18",
-        "typing-extensions>=4.4.0; python_version<'3.8'",
     ],
     extras_require={
         "hiredis": ["redis[hiredis]>=4.2.0"],
@@ -59,10 +58,10 @@ setup(
         "Programming Language :: Python",
         "Programming Language :: Python :: 3",
         "Programming Language :: Python :: 3 :: Only",
-        "Programming Language :: Python :: 3.7",
         "Programming Language :: Python :: 3.8",
         "Programming Language :: Python :: 3.9",
         "Programming Language :: Python :: 3.10",
+        "Programming Language :: Python :: 3.11",
         "Topic :: Internet",
         "Topic :: Software Development :: Libraries :: Python Modules",
         "Topic :: System :: Distributed Computing",
