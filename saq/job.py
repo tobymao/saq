@@ -88,7 +88,7 @@ class Job:
     """
 
     function: str
-    kwargs: dict | None = None
+    kwargs: dict[str, t.Any] | None = None
     queue: Queue | None = None
     key: str = dataclasses.field(default_factory=get_default_job_key)
     timeout: int = 10
@@ -107,7 +107,7 @@ class Job:
     result: t.Any = None
     error: str | None = None
     status: Status = Status.NEW
-    meta: dict = dataclasses.field(default_factory=dict)
+    meta: dict[t.Any, t.Any] = dataclasses.field(default_factory=dict)
 
     def __repr__(self) -> str:
         kwargs = ", ".join(

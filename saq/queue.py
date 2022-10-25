@@ -35,7 +35,7 @@ if t.TYPE_CHECKING:
         VersionTuple,
     )
 
-logger = logging.getLogger("saq")
+logger: logging.Logger = logging.getLogger("saq")
 
 ID_PREFIX = "saq:job:"
 
@@ -71,7 +71,7 @@ class Queue:
 
     def __init__(  # pylint: disable=too-many-arguments
         self,
-        redis: Redis,
+        redis: Redis[bytes],
         name: str = "default",
         dump: DumpType | None = None,
         load: LoadType | None = None,
@@ -79,8 +79,8 @@ class Queue:
     ) -> None:
         self.redis = redis
         self.name = name
-        self.uuid = uuid1()
-        self.started = now()
+        self.uuid: str = uuid1()
+        self.started: int = now()
         self.complete = 0
         self.failed = 0
         self.retried = 0
@@ -146,8 +146,8 @@ class Queue:
         worker_uuids = []
 
         for key in await self.redis.zrangebyscore(self._stats, now(), "inf"):
-            key = key.decode("utf-8")
-            *_, worker_uuid = key.split(":")
+            key_str = key.decode("utf-8")
+            *_, worker_uuid = key_str.split(":")
             worker_uuids.append(worker_uuid)
 
         worker_stats = await self.redis.mget(
@@ -157,8 +157,8 @@ class Queue:
         worker_info = {}
         for worker_uuid, stats in zip(worker_uuids, worker_stats):
             if stats:
-                stats = json.loads(stats.decode("UTF-8"))
-                worker_info[worker_uuid] = stats
+                stats_obj = json.loads(stats.decode("UTF-8"))
+                worker_info[worker_uuid] = stats_obj
 
         queued = await self.count("queued")
         active = await self.count("active")

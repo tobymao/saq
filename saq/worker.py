@@ -21,10 +21,10 @@ if t.TYPE_CHECKING:
     from aiohttp.web_app import Application
 
     from saq.job import CronJob, Job
-    from saq.types import Context, Function, ReceivesContext, TimersDict
+    from saq.types import Context, Function, JobTaskContext, ReceivesContext, TimersDict
 
 
-logger = logging.getLogger("saq")
+logger: logging.Logger = logging.getLogger("saq")
 
 
 class Worker:
@@ -41,7 +41,7 @@ class Worker:
     timers: dict with various timer overrides in seconds
         schedule: how often we poll to schedule jobs
         stats: how often to update stats
-        sweep: how often to cleanup stuck jobs
+        sweep: how often to clean up stuck jobs
         abort: how often to check if a job is aborted
     """
 
@@ -75,13 +75,13 @@ class Worker:
         }
         if timers is not None:
             self.timers.update(timers)
-        self.event = asyncio.Event()
+        self.event: asyncio.Event = asyncio.Event()
         functions = set(functions)
-        self.functions = {}
-        self.cron_jobs = cron_jobs or []
+        self.functions: dict[str, Function] = {}
+        self.cron_jobs: Collection[CronJob] = cron_jobs or []
         self.context: Context = {"worker": self}
-        self.tasks: set[Task] = set()
-        self.job_task_contexts: dict[Job, dict] = {}
+        self.tasks: set[Task[t.Any]] = set()
+        self.job_task_contexts: dict[Job, JobTaskContext] = {}
         self.dequeue_timeout = dequeue_timeout
 
         for job in self.cron_jobs:
@@ -158,7 +158,7 @@ class Worker:
         if scheduled:
             logger.info("Scheduled %s", scheduled)
 
-    async def upkeep(self) -> list[Task]:
+    async def upkeep(self) -> list[Task[None]]:
         """Start various upkeep tasks async."""
 
         async def poll(
@@ -202,7 +202,7 @@ class Worker:
             if not abort:
                 continue
 
-            task_data = self.job_task_contexts.get(job, {})
+            task_data: JobTaskContext = self.job_task_contexts.get(job, {})
             task = task_data.get("task")
 
             if task and not task.done():
