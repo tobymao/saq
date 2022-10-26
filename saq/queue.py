@@ -35,7 +35,7 @@ if t.TYPE_CHECKING:
         VersionTuple,
     )
 
-logger: logging.Logger = logging.getLogger("saq")
+logger = logging.getLogger("saq")
 
 ID_PREFIX = "saq:job:"
 

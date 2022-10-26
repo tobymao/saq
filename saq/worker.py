@@ -24,7 +24,7 @@ if t.TYPE_CHECKING:
     from saq.types import Context, Function, JobTaskContext, ReceivesContext, TimersDict
 
 
-logger: logging.Logger = logging.getLogger("saq")
+logger = logging.getLogger("saq")
 
 
 class Worker:
@@ -75,7 +75,7 @@ class Worker:
         }
         if timers is not None:
             self.timers.update(timers)
-        self.event: asyncio.Event = asyncio.Event()
+        self.event = asyncio.Event()
         functions = set(functions)
         self.functions: dict[str, Function] = {}
         self.cron_jobs: Collection[CronJob] = cron_jobs or []

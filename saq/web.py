@@ -20,7 +20,7 @@ if t.TYPE_CHECKING:
     from saq.queue import Queue
     from saq.types import QueueInfo
 
-static: pathlib.Path = pathlib.Path(__file__).parent.resolve() / "static"
+static = pathlib.Path(__file__).parent.resolve() / "static"
 
 body = """
 <!DOCTYPE html>
