@@ -41,8 +41,13 @@ class QueueStats(t.TypedDict):
     uptime: int
 
 
-class TimersDict(t.TypedDict, total=False):
+class TimersDict(t.TypedDict):
     schedule: int
     stats: int
     sweep: int
     abort: int
+
+
+class PartialTimersDict(TimersDict, total=False):
+    # For argument to `Worker`, all keys are not required
+    pass

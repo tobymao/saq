@@ -21,7 +21,14 @@ if t.TYPE_CHECKING:
     from aiohttp.web_app import Application
 
     from saq.job import CronJob, Job
-    from saq.types import Context, Function, JobTaskContext, ReceivesContext, TimersDict
+    from saq.types import (
+        Context,
+        Function,
+        JobTaskContext,
+        PartialTimersDict,
+        ReceivesContext,
+        TimersDict,
+    )
 
 
 logger = logging.getLogger("saq")
@@ -58,7 +65,7 @@ class Worker:
         shutdown: ReceivesContext | None = None,
         before_process: ReceivesContext | None = None,
         after_process: ReceivesContext | None = None,
-        timers: TimersDict | None = None,
+        timers: PartialTimersDict | None = None,
         dequeue_timeout: float = 0,
     ) -> None:
         self.queue = queue
@@ -74,7 +81,8 @@ class Worker:
             "abort": 1,
         }
         if timers is not None:
-            self.timers.update(timers)
+            # https://github.com/python/mypy/issues/6462
+            self.timers.update(timers)  # type:ignore[typeddict-item]
         self.event = asyncio.Event()
         functions = set(functions)
         self.functions: dict[str, Function] = {}
