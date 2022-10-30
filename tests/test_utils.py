@@ -4,7 +4,7 @@ from saq.utils import exponential_backoff
 
 
 class TestUtils(unittest.IsolatedAsyncioTestCase):
-    async def test_exponential_backoff(self):
+    async def test_exponential_backoff(self) -> None:
         self.assertAlmostEqual(
             exponential_backoff(attempts=1, base_delay=0, max_delay=0, jitter=False), 0
         )

@@ -1,42 +1,50 @@
+from __future__ import annotations
+
 import asyncio
 import contextvars
 import logging
+import typing as t
 import unittest
 from unittest import mock
 
-from saq.job import CronJob, Status
+from saq.job import CronJob, Job, Status
 from saq.utils import uuid1
 from saq.worker import Worker
-from tests.helpers import create_queue, cleanup_queue
+from tests.helpers import cleanup_queue, create_queue
+
+if t.TYPE_CHECKING:
+    from unittest.mock import MagicMock
+
+    from saq.types import Context, Function
 
 
 logging.getLogger().setLevel(logging.CRITICAL)
 
-ctx_var = contextvars.ContextVar("ctx_var")
+ctx_var = contextvars.ContextVar[str]("ctx_var")
 
 
-async def noop(_ctx):
+async def noop(_ctx: Context) -> int:
     return 1
 
 
-async def sleeper(ctx):
-    await asyncio.sleep(ctx.get("sleep", 0.1))
+async def sleeper(_ctx: Context, sleep: float = 0.1) -> dict[str, t.Any]:
+    await asyncio.sleep(sleep)
     return {"a": 1, "b": []}
 
 
-async def cron(_ctx):
+async def cron(_ctx: Context) -> int:
     return 1
 
 
-async def error(_ctx):
+async def error(_ctx: Context) -> t.NoReturn:
     raise ValueError("oops")
 
 
-def sync_echo_ctx(_ctx):
+def sync_echo_ctx(_ctx: Context) -> str:
     return ctx_var.get()
 
 
-async def recurse(ctx, *, n):
+async def recurse(ctx: Context, *, n: int) -> list[str]:
     var = ctx_var.get()
     result = [var]
     if n > 0:
@@ -44,28 +52,33 @@ async def recurse(ctx, *, n):
     return result
 
 
-functions = [noop, sleeper, error, sync_echo_ctx, recurse]
+functions: list[Function] = [noop, sleeper, error, sync_echo_ctx, recurse]
 
 
 class TestWorker(unittest.IsolatedAsyncioTestCase):
-    def setUp(self):
+    def setUp(self) -> None:
         self.queue = create_queue()
         self.worker = Worker(self.queue, functions=functions)
 
-    async def asyncTearDown(self):
+    async def asyncTearDown(self) -> None:
         await cleanup_queue(self.queue)
 
-    async def test_start(self):
+    async def enqueue(self, function: str, **kwargs: t.Any) -> Job:
+        job = await self.queue.enqueue(function, **kwargs)
+        assert job is not None
+        return job
+
+    async def test_start(self) -> None:
         task = asyncio.create_task(self.worker.start())
-        job = await self.queue.enqueue("noop")
+        job = await self.enqueue("noop")
         await job.refresh(1)
         self.assertEqual(job.result, 1)
-        job = await self.queue.enqueue("error")
+        job = await self.enqueue("error")
         await asyncio.sleep(0.05)
         await job.refresh()
         self.assertEqual(job.status, Status.FAILED)
-        assert "oops" in job.error
-        job = await self.queue.enqueue("sleeper")
+        assert job.error is not None and "oops" in job.error
+        job = await self.enqueue("sleeper")
         self.assertEqual(job.status, Status.QUEUED)
         await asyncio.sleep(0.05)
         await job.refresh()
@@ -76,10 +89,10 @@ class TestWorker(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(job.status, Status.QUEUED)
 
         asyncio.create_task(self.worker.start())
-        job = await self.queue.enqueue("noop")
+        job = await self.enqueue("noop")
         await job.refresh(1)
         self.assertEqual(job.result, 1)
-        job = await self.queue.enqueue("sleeper")
+        job = await self.enqueue("sleeper")
         self.assertEqual(job.status, Status.QUEUED)
         await asyncio.sleep(0.05)
         await job.refresh()
@@ -88,8 +101,8 @@ class TestWorker(unittest.IsolatedAsyncioTestCase):
         await job.refresh()
         self.assertEqual(job.status, Status.QUEUED)
 
-    async def test_noop(self):
-        job = await self.queue.enqueue("noop")
+    async def test_noop(self) -> None:
+        job = await self.enqueue("noop")
         assert job.queue != 0
         assert job.started == 0
         assert job.completed == 0
@@ -101,8 +114,8 @@ class TestWorker(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(job.status, Status.COMPLETE)
         self.assertEqual(job.result, 1)
 
-    async def test_sleeper(self):
-        job = await self.queue.enqueue("sleeper")
+    async def test_sleeper(self) -> None:
+        job = await self.enqueue("sleeper")
         await self.worker.process()
         await job.refresh()
         assert job.queue != 0
@@ -111,7 +124,7 @@ class TestWorker(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(job.status, Status.COMPLETE)
         self.assertEqual(job.result, {"a": 1, "b": []})
 
-        job = await self.queue.enqueue("sleeper", timeout=0.05, retries=2)
+        job = await self.enqueue("sleeper", timeout=0.05, retries=2)
         await self.worker.process()
         await self.worker.process()
         await job.refresh()
@@ -120,10 +133,10 @@ class TestWorker(unittest.IsolatedAsyncioTestCase):
         assert job.started != 0
         assert job.completed != 0
         self.assertEqual(job.status, Status.FAILED)
-        assert "TimeoutError" in job.error
+        assert job.error is not None and "TimeoutError" in job.error
 
-    async def test_error(self):
-        job = await self.queue.enqueue("error", retries=2)
+    async def test_error(self) -> None:
+        job = await self.enqueue("error", retries=2)
         await self.worker.process()
         await job.refresh()
         self.assertEqual(job.attempts, 1)
@@ -140,13 +153,14 @@ class TestWorker(unittest.IsolatedAsyncioTestCase):
         assert job.completed != 0
         self.assertEqual(job.attempts, 2)
         self.assertEqual(job.status, Status.FAILED)
-        assert 'ValueError("oops")' in job.error
+        assert job.error is not None and 'ValueError("oops")' in job.error
 
-    def test_stop(self):
+    def test_stop(self) -> None:
         loop = asyncio.new_event_loop()
         queue = create_queue()
         worker = Worker(queue, functions=functions)
         job = loop.run_until_complete(queue.enqueue("sleeper"))
+        assert job is not None
         self.assertEqual(job.status, Status.QUEUED)
         worker.tasks.add(loop.create_task(worker.process()))
 
@@ -156,6 +170,7 @@ class TestWorker(unittest.IsolatedAsyncioTestCase):
 
         loop.run_until_complete(worker.stop())
         job = loop.run_until_complete(queue.job(job.key))
+        assert job is not None
         loop.run_until_complete(cleanup_queue(queue))
         assert job.queued != 0
         assert job.started == 0
@@ -165,14 +180,14 @@ class TestWorker(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(job.error, "cancelled")
         loop.close()
 
-    async def test_hooks(self):
+    async def test_hooks(self) -> None:
         x = {"before": 0, "after": 0}
 
-        async def before_process(ctx):
+        async def before_process(ctx: Context) -> None:
             self.assertIsNotNone(ctx["job"])
             x["before"] += 1
 
-        async def after_process(ctx):
+        async def after_process(ctx: Context) -> None:
             self.assertIsNotNone(ctx["job"])
             x["after"] += 1
 
@@ -199,9 +214,9 @@ class TestWorker(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(x["after"], 2)
 
     @mock.patch("saq.utils.time")
-    async def test_schedule(self, mock_time):
+    async def test_schedule(self, mock_time: MagicMock) -> None:
         mock_time.time.return_value = 1
-        job = await self.queue.enqueue("noop", scheduled=2)
+        job = await self.enqueue("noop", scheduled=2)
         self.assertEqual(await self.queue.count("queued"), 0)
         mock_time.time.return_value = 3
         await self.queue.schedule()
@@ -211,7 +226,7 @@ class TestWorker(unittest.IsolatedAsyncioTestCase):
 
     @mock.patch("saq.worker.logger")
     @mock.patch("saq.utils.time")
-    async def test_cron(self, mock_time, mock_logger):
+    async def test_cron(self, mock_time: MagicMock, mock_logger: MagicMock) -> None:
         with self.assertRaises(ValueError):
             Worker(
                 self.queue,
@@ -240,13 +255,13 @@ class TestWorker(unittest.IsolatedAsyncioTestCase):
         mock_logger.info.assert_any_call("Scheduled %s", [b"saq:job:default:cron:cron"])
 
     @mock.patch("saq.worker.logger")
-    async def test_abort(self, mock_logger):
-        job = await self.queue.enqueue("sleeper")
+    async def test_abort(self, mock_logger: MagicMock) -> None:
+        job = await self.enqueue("sleeper")
         self.worker.context["sleep"] = 60
         asyncio.create_task(self.worker.process())
 
         # wait for the job to actually start
-        def callback(job_key, status):
+        def callback(job_key: str, status: Status) -> bool:
             self.assertEqual(job.key, job_key)
             self.assertEqual(status, Status.ACTIVE)
             return True
@@ -281,21 +296,21 @@ class TestWorker(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await self.queue.count("incomplete"), 1)
         self.assertEqual(await self.queue.count("active"), 0)
 
-    async def test_sync_function(self):
-        async def before_process(*_, **__):
+    async def test_sync_function(self) -> None:
+        async def before_process(*_: t.Any, **__: t.Any) -> None:
             ctx_var.set("123")
 
         self.worker.before_process = before_process
         asyncio.create_task(self.worker.start())
         self.assertEqual(await self.queue.apply("sync_echo_ctx"), "123")
 
-    async def test_propagation(self):
-        async def before_process(ctx):
+    async def test_propagation(self) -> None:
+        async def before_process(ctx: Context) -> None:
             correlation_id = ctx["job"].meta.get("correlation_id")
             ctx_var.set(correlation_id)
             ctx["queue"] = self.queue
 
-        async def before_enqueue(job):
+        async def before_enqueue(job: Job) -> None:
             job.meta["correlation_id"] = ctx_var.get(None) or uuid1()
 
         self.worker.before_process = before_process

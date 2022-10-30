@@ -1,13 +1,26 @@
+from __future__ import annotations
+
 import html
 import logging
 import os
 import pathlib
 import traceback
+import typing as t
 
 from aiohttp import web
 
+if t.TYPE_CHECKING:
+    from aiohttp.typedefs import Handler
+    from aiohttp.web import StreamResponse
+    from aiohttp.web_app import Application
+    from aiohttp.web_request import Request
+    from aiohttp.web_response import Response
 
-static = os.path.join(pathlib.Path(__file__).parent.resolve(), "static")
+    from saq.job import Job
+    from saq.queue import Queue
+    from saq.types import QueueInfo
+
+static = pathlib.Path(__file__).parent.resolve() / "static"
 
 body = """
 <!DOCTYPE html>
@@ -27,14 +40,14 @@ body = """
 """.strip()
 
 
-def render(**kwargs):
+def render(**kwargs: t.Any) -> str:
     return body.format(**{k: html.escape(v) for k, v in kwargs.items()})
 
 
-async def queues_(request):
+async def queues_(request: Request) -> Response:
     queue_name = request.match_info.get("queue")
 
-    response = {}
+    response: dict[str, QueueInfo | list[QueueInfo]] = {}
 
     if queue_name:
         response["queue"] = await _get_queue(request, queue_name).info(jobs=True)
@@ -44,7 +57,7 @@ async def queues_(request):
     return web.json_response(response)
 
 
-async def jobs(request):
+async def jobs(request: Request) -> Response:
     job = await _get_job(request)
     job_dict = job.to_dict()
     if "kwargs" in job_dict:
@@ -54,39 +67,39 @@ async def jobs(request):
     return web.json_response({"job": job_dict})
 
 
-async def retry(request):
+async def retry(request: Request) -> Response:
     job = await _get_job(request)
     await job.retry("retried from ui")
     return web.json_response({})
 
 
-async def abort(request):
+async def abort(request: Request) -> Response:
     job = await _get_job(request)
     await job.abort("aborted from ui")
     return web.json_response({})
 
 
-async def views(_request):
+async def views(_request: Request) -> Response:
     return web.Response(text=render(), content_type="text/html")
 
 
-async def health(request):
+async def health(request: Request) -> Response:
     if await _get_all_info(request):
         return web.Response(text="OK")
     raise web.HTTPInternalServerError
 
 
-async def _get_all_info(request):
+async def _get_all_info(request: Request) -> list[QueueInfo]:
     return [await q.info() for q in request.app["queues"].values()]
 
 
-def _get_queue(request, queue_name):
+def _get_queue(request: Request, queue_name: str) -> Queue:
     return request.app["queues"][queue_name]
 
 
-async def _get_job(request):
-    queue_name = request.match_info.get("queue")
-    job_key = request.match_info.get("job")
+async def _get_job(request: Request) -> Job:
+    queue_name = request.match_info.get("queue", "")
+    job_key = request.match_info.get("job", "")
 
     job = await _get_queue(request, queue_name).job(job_key)
     if not job:
@@ -95,7 +108,7 @@ async def _get_job(request):
 
 
 @web.middleware
-async def exceptions(request, handler):
+async def exceptions(request: Request, handler: Handler) -> StreamResponse:
     if request.path.startswith("/api"):
         try:
             resp = await handler(request)
@@ -107,17 +120,17 @@ async def exceptions(request, handler):
     return await handler(request)
 
 
-async def shutdown(app):
+async def shutdown(app: Application) -> None:
     for queue in app.get("queues", {}).values():
         await queue.disconnect()
 
 
-def create_app(queues):
+def create_app(queues: list[Queue]) -> Application:
     middlewares = [exceptions]
     password = os.environ.get("AUTH_PASSWORD")
 
     if password:
-        from aiohttp_basicauth import BasicAuthMiddleware
+        from aiohttp_basicauth import BasicAuthMiddleware  # type:ignore[import]
 
         user = os.environ.get("AUTH_USER", "admin")
         middlewares.append(BasicAuthMiddleware(username=user, password=password))

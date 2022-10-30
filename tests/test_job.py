@@ -1,30 +1,37 @@
+from __future__ import annotations
+
 import asyncio
+import typing as t
 import unittest
+from unittest import mock
 
 from saq.job import Job, Status
-from tests.helpers import create_queue, cleanup_queue
+from tests.helpers import cleanup_queue, create_queue
+
+if t.TYPE_CHECKING:
+    from unittest.mock import MagicMock
 
 
 class TestJob(unittest.IsolatedAsyncioTestCase):
-    def setUp(self):
+    def setUp(self) -> None:
         self.queue = create_queue()
         self.job = Job("func", queue=self.queue)
 
-    async def asyncTearDown(self):
+    async def asyncTearDown(self) -> None:
         await cleanup_queue(self.queue)
 
-    def test_duration(self):
+    def test_duration(self) -> None:
         self.assertIsNone(Job("").duration("process"))
         self.assertIsNone(Job("").duration("start"))
         self.assertIsNone(Job("").duration("total"))
         with self.assertRaises(ValueError):
-            Job("").duration("x")
+            Job("").duration("x")  # type:ignore[arg-type]
 
         self.assertEqual(Job("", completed=2, started=1).duration("process"), 1)
         self.assertEqual(Job("", started=2, queued=1).duration("start"), 1)
         self.assertEqual(Job("", completed=2, queued=1).duration("total"), 1)
 
-    async def test_enqueue(self):
+    async def test_enqueue(self) -> None:
         self.assertEqual(await self.queue.count("queued"), 0)
         self.assertEqual(self.job.status, Status.NEW)
         await self.job.enqueue()
@@ -40,22 +47,22 @@ class TestJob(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(ValueError):
             await self.job.enqueue(create_queue(name="queue2"))
 
-    async def test_finish(self):
+    async def test_finish(self) -> None:
         await self.job.finish(Status.COMPLETE, result={})
         self.assertEqual(self.job.status, Status.COMPLETE)
         self.assertEqual(self.job.result, {})
 
-    async def test_retry(self):
+    async def test_retry(self) -> None:
         await self.job.retry("error")
         self.assertEqual(self.job.error, "error")
 
-    async def test_update(self):
+    async def test_update(self) -> None:
         self.assertEqual(self.job.attempts, 0)
         self.job.attempts += 1
         await self.job.update()
         self.assertEqual(self.job.attempts, 1)
 
-    async def test_refresh(self):
+    async def test_refresh(self) -> None:
         with self.assertRaises(RuntimeError):
             await self.job.refresh()
 
@@ -67,7 +74,7 @@ class TestJob(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(asyncio.TimeoutError):
             await asyncio.wait_for(self.job.refresh(0), 0.1)
 
-        async def finish():
+        async def finish() -> None:
             await asyncio.sleep(0.01)
             await self.job.finish(Status.COMPLETE)
 
@@ -76,7 +83,7 @@ class TestJob(unittest.IsolatedAsyncioTestCase):
         await self.job.refresh(0.1)
         self.assertEqual(self.job.status, Status.COMPLETE)
 
-    async def test_retry_delay(self):
+    async def test_retry_delay(self) -> None:
         job = Job("f")
         self.assertAlmostEqual(job.next_retry_delay(), 0)
         job = Job("f", retry_delay=1.0)
@@ -84,7 +91,23 @@ class TestJob(unittest.IsolatedAsyncioTestCase):
         job = Job("f", retry_delay=1.0, retry_backoff=True, attempts=3)
         self.assertTrue(0 <= job.next_retry_delay() < 4)
 
-    async def test_to_dict(self):
+    @mock.patch("saq.job.exponential_backoff")
+    async def test_next_retry_delay_with_max_delay(self, eb_mock: MagicMock) -> None:
+        job = Job("f", retry_delay=1.0, retry_backoff=10, attempts=3)
+        job.next_retry_delay()
+        eb_mock.assert_called_once_with(
+            attempts=3, base_delay=1.0, max_delay=10, jitter=True
+        )
+
+    @mock.patch("saq.job.exponential_backoff")
+    async def test_next_retry_delay_no_maximum(self, eb_mock: MagicMock) -> None:
+        job = Job("f", retry_delay=1.0, retry_backoff=True, attempts=3)
+        job.next_retry_delay()
+        eb_mock.assert_called_once_with(
+            attempts=3, base_delay=1.0, max_delay=None, jitter=True
+        )
+
+    async def test_to_dict(self) -> None:
         assert Job("f", key="a").to_dict() == {"function": "f", "key": "a"}
         assert Job("f", key="a", meta={"x": 1}, queue=self.queue).to_dict() == {
             "function": "f",

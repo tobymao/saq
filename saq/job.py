@@ -1,13 +1,19 @@
+from __future__ import annotations
+
 import dataclasses
 import enum
-import typing
+import typing as t
 
-from saq.utils import now, seconds, uuid1, exponential_backoff
+from saq.utils import exponential_backoff, now, seconds, uuid1
 
 ABORT_ID_PREFIX = "saq:abort:"
 
+if t.TYPE_CHECKING:
+    from saq.queue import Queue
+    from saq.types import DurationKind, Function
 
-def get_default_job_key():
+
+def get_default_job_key() -> str:
     return uuid1()
 
 
@@ -37,13 +43,13 @@ class CronJob:
     Remaining kwargs are pass through to Job
     """
 
-    function: typing.Callable
+    function: Function
     cron: str
     unique: bool = True
-    timeout: typing.Optional[int] = None
-    heartbeat: typing.Optional[int] = None
-    retries: typing.Optional[int] = None
-    ttl: typing.Optional[int] = None
+    timeout: int | None = None
+    heartbeat: int | None = None
+    retries: int | None = None
+    ttl: int | None = None
 
 
 @dataclasses.dataclass
@@ -57,7 +63,7 @@ class Job:
         queue: the saq.Queue object associated with the job
         key: unique identifier of a job, defaults to uuid1, can be passed in to avoid duplicate jobs
         timeout: the maximum amount of time a job can run for in seconds, defaults to 10 (0 means disabled)
-        heartbeat: the maximum amount of time a job can survive without a heartebat in seconds, defaults to 0 (disabled)
+        heartbeat: the maximum amount of time a job can survive without a heartbeat in seconds, defaults to 0 (disabled)
             a heartbeat can be triggered manually within a job by calling await job.update()
         retries: the maximum number of attempts to retry a job, defaults to 1
         ttl: the maximum time in seconds to store information about a job including results, defaults to 600 (0 means indefinitely, -1 means disabled)
@@ -77,20 +83,20 @@ class Job:
         started: job started time epoch seconds
         touched: job touched/updated time epoch seconds
         results: payload containing the results, this is the return of the function provided, must be serializable, defaults to json
-        error: stack trace if an runtime error occurs
-        status: Status Enum, defaulst to Status.New
+        error: stack trace if a runtime error occurs
+        status: Status Enum, default to Status.New
     """
 
     function: str
-    kwargs: typing.Optional[dict] = None
-    queue: typing.Optional["Queue"] = None
+    kwargs: dict[str, t.Any] | None = None
+    queue: Queue | None = None
     key: str = dataclasses.field(default_factory=get_default_job_key)
     timeout: int = 10
     heartbeat: int = 0
     retries: int = 1
     ttl: int = 600
     retry_delay: float = 0.0
-    retry_backoff: typing.Union[bool, float] = False
+    retry_backoff: bool | float = False
     scheduled: int = 0
     progress: float = 0.0
     attempts: int = 0
@@ -98,18 +104,18 @@ class Job:
     queued: int = 0
     started: int = 0
     touched: int = 0
-    result: typing.Any = None
-    error: typing.Optional[str] = None
+    result: t.Any = None
+    error: str | None = None
     status: Status = Status.NEW
-    meta: dict = dataclasses.field(default_factory=dict)
+    meta: dict[t.Any, t.Any] = dataclasses.field(default_factory=dict)
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         kwargs = ", ".join(
             f"{k}={v}"
             for k, v in {
                 "function": self.function,
                 "kwargs": self.kwargs,
-                "queue": self.queue.name,
+                "queue": self.get_queue().name,
                 "id": self.id,
                 "scheduled": self.scheduled,
                 "progress": self.progress,
@@ -126,22 +132,22 @@ class Job:
         )
         return f"Job<{kwargs}>"
 
-    def __hash__(self):
+    def __hash__(self) -> int:
         return hash(self.key)
 
     @property
-    def id(self):
-        return self.queue.job_id(self.key)
+    def id(self) -> str:
+        return self.get_queue().job_id(self.key)
 
     @classmethod
-    def key_from_id(cls, job_id):
+    def key_from_id(cls, job_id: str) -> str:
         return job_id.split(":")[-1]
 
     @property
-    def abort_id(self):
+    def abort_id(self) -> str:
         return f"{ABORT_ID_PREFIX}{self.key}"
 
-    def to_dict(self):
+    def to_dict(self) -> dict[str, t.Any]:
         result = {}
         for field in dataclasses.fields(self):
             key = field.name
@@ -155,7 +161,7 @@ class Job:
             result[key] = value
         return result
 
-    def duration(self, kind):
+    def duration(self, kind: DurationKind) -> int | None:
         """
         Returns the duration of the job given kind.
 
@@ -172,23 +178,21 @@ class Job:
             return self._duration(now(), self.started)
         raise ValueError(f"Unknown duration type: {kind}")
 
-    def _duration(self, a, b):
+    def _duration(self, a: int, b: int) -> int | None:
         return a - b if a and b else None
 
     @property
-    def stuck(self):
-        """Checks if an active job is passed it's timeout or heartbeat."""
+    def stuck(self) -> bool:
+        """Checks if an active job is passed its timeout or heartbeat."""
         current = now()
-        return (self.status == Status.ACTIVE) and (
+        return (self.status == Status.ACTIVE) and bool(
             seconds(current - self.started) > self.timeout
             or (self.heartbeat and seconds(current - self.touched) > self.heartbeat)
         )
 
-    def next_retry_delay(self):
-        if self.retry_backoff:
-            max_delay = self.retry_delay
-            if max_delay is True:
-                max_delay = None
+    def next_retry_delay(self) -> float:
+        if self.retry_backoff is not False:
+            max_delay = None if self.retry_backoff is True else self.retry_backoff
             return exponential_backoff(
                 attempts=self.attempts,
                 base_delay=self.retry_delay,
@@ -197,31 +201,32 @@ class Job:
             )
         return self.retry_delay
 
-    async def enqueue(self, queue=None):
+    async def enqueue(self, queue: Queue | None = None) -> None:
         """
         Enqueues the job to it's queue or a provided one.
 
         A job that already has a queue cannot be re-enqueued. Job uniqueness is determined by its id.
-        If a job has already been queued, it will update it's properties to match what is stored in the db.
+        If a job has already been queued, it will update its properties to match what is stored in the db.
         """
-        queue = queue or self.queue
-        assert queue, "Queue unspecified"
+        queue = queue or self.get_queue()
         if not await queue.enqueue(self):
             await self.refresh()
 
-    async def abort(self, error, ttl=5):
+    async def abort(self, error: str, ttl: int = 5) -> None:
         """Tries to abort the job."""
-        await self.queue.abort(self, error, ttl=ttl)
+        await self.get_queue().abort(self, error, ttl=ttl)
 
-    async def finish(self, status, *, result=None, error=None):
+    async def finish(
+        self, status: Status, *, result: t.Any = None, error: str | None = None
+    ) -> None:
         """Finishes the job with a Job.Status, result, and or error."""
-        await self.queue.finish(self, status, result=result, error=error)
+        await self.get_queue().finish(self, status, result=result, error=error)
 
-    async def retry(self, error):
-        """Retries the job by removing it from active and requeueing it."""
-        await self.queue.retry(self, error)
+    async def retry(self, error: str | None) -> None:
+        """Retries the job by removing it from active and enqueueing it again."""
+        await self.get_queue().retry(self, error)
 
-    async def update(self, **kwargs):
+    async def update(self, **kwargs: t.Any) -> None:
         """
         Updates the stored job in redis.
 
@@ -229,16 +234,16 @@ class Job:
         """
         for k, v in kwargs.items():
             setattr(self, k, v)
-        await self.queue.update(self)
+        await self.get_queue().update(self)
 
-    async def refresh(self, until_complete=None):
+    async def refresh(self, until_complete: float | None = None) -> None:
         """
         Refresh the current job with the latest data from the db.
 
         until_complete: None or Numeric seconds. if None (default), don't wait,
             else wait seconds until the job is complete or the interval has been reached. 0 means wait forever
         """
-        job = await self.queue.job(self.key)
+        job = await self.get_queue().job(self.key)
 
         if not job:
             raise RuntimeError(f"{self} doesn't exist")
@@ -247,14 +252,20 @@ class Job:
 
         if until_complete is not None and not self.completed:
 
-            async def callback(_id, status):
-                if status in TERMINAL_STATUSES:
-                    return True
+            async def callback(_id: str, status: Status) -> bool:
+                return status in TERMINAL_STATUSES
 
-            await self.queue.listen([self.key], callback, until_complete)
+            await self.get_queue().listen([self.key], callback, until_complete)
             await self.refresh()
 
-    def replace(self, job):
+    def replace(self, job: Job) -> None:
         """Replace current attributes with job attributes."""
-        for field in job.__dataclass_fields__:
-            setattr(self, field, getattr(job, field))
+        for field in dataclasses.fields(job):
+            setattr(self, field.name, getattr(job, field.name))
+
+    def get_queue(self) -> Queue:
+        if self.queue is None:
+            raise TypeError(
+                "`Job` must be associated with a `Queue` before this operation can proceed"
+            )
+        return self.queue
