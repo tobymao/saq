@@ -19,7 +19,7 @@ from saq.job import (
 from saq.utils import millis, now, seconds, uuid1
 
 if t.TYPE_CHECKING:
-    from collections.abc import AsyncIterator, Sequence
+    from collections.abc import AsyncIterator, Iterable, Sequence
 
     from redis.asyncio.client import Redis
     from redis.commands.core import AsyncScript
@@ -288,7 +288,7 @@ class Queue:
 
     async def listen(
         self,
-        job_keys: set[str] | list[str],
+        job_keys: Iterable[str],
         callback: ListenCallback,
         timeout: float | None = 10,
     ) -> None:
