@@ -310,7 +310,7 @@ def start(
 ) -> None:
     settings_obj = import_settings(settings)
 
-    if "queue" not in settings:
+    if "queue" not in settings_obj:
         settings_obj["queue"] = Queue.from_url("redis://localhost")
 
     loop = asyncio.new_event_loop()
