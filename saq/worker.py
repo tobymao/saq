@@ -237,7 +237,7 @@ class Worker:
             job.status = Status.ACTIVE
             job.attempts += 1
             await job.update()
-            context = {"worker": self, "job": job}
+            context = {**self.context, "job": job}
             await self._before_process(context)
             logger.info("Processing %s", job)
 
