@@ -29,7 +29,7 @@ setup(
         saq=saq.__main__:main
     """,
     install_requires=[
-        "redis>=4.2.0",
+        "redis>=4.2,<4.4",
         "croniter>=0.3.18",
     ],
     extras_require={
