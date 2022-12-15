@@ -186,7 +186,7 @@ class Job:
         """Checks if an active job is passed its timeout or heartbeat."""
         current = now()
         return (self.status == Status.ACTIVE) and bool(
-            seconds(current - self.started) > self.timeout
+            (self.timeout and seconds(current - self.started) > self.timeout)
             or (self.heartbeat and seconds(current - self.touched) > self.heartbeat)
         )
 

@@ -244,7 +244,7 @@ class Worker:
             function = ensure_coroutine_function(self.functions[job.function])
             task = asyncio.create_task(function(context, **(job.kwargs or {})))
             self.job_task_contexts[job] = {"task": task, "aborted": False}
-            result = await asyncio.wait_for(task, job.timeout)
+            result = await asyncio.wait_for(task, job.timeout if job.timeout else None)
             await job.finish(Status.COMPLETE, result=result)
         except asyncio.CancelledError:
             if job and not self.job_task_contexts.get(job, {}).get("aborted"):
