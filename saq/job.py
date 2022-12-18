@@ -82,7 +82,7 @@ class Job:
         queued: job enqueued time epoch seconds
         started: job started time epoch seconds
         touched: job touched/updated time epoch seconds
-        results: payload containing the results, this is the return of the function provided, must be serializable, defaults to json
+        result: payload containing the results, this is the return of the function provided, must be serializable, defaults to json
         error: stack trace if a runtime error occurs
         status: Status Enum, default to Status.New
     """
