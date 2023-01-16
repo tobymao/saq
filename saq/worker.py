@@ -131,6 +131,9 @@ class Worker:
                 self._process()
 
             await self.event.wait()
+
+            for signum in self.SIGNALS:
+                loop.remove_signal_handler(signum)
         finally:
             logger.info("Shutting down")
 
