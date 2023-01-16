@@ -514,7 +514,9 @@ class Queue:
         kwargs: Same as Queue.enqueue
         """
         results = await self.map(job_or_func, timeout=timeout, iter_kwargs=[kwargs])
-        return results[0]
+        if results:
+            return results[0]
+        return None
 
     async def map(
         self,

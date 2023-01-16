@@ -319,6 +319,8 @@ class TestQueue(unittest.IsolatedAsyncioTestCase):
         worker = Worker(self.queue, functions=functions)
         task = asyncio.create_task(worker.start())
 
+        self.assertEqual(await self.queue.apply("echo", a=1, ttl=-1), None)
+
         self.assertEqual(await self.queue.apply("echo", a=1), 1)
         with self.assertRaises(JobError):
             await self.queue.apply("error")
