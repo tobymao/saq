@@ -3,4 +3,4 @@
 python -m pylint saq/ tests/ setup.py
 python -m black --check saq/ tests/ setup.py
 python -m mypy saq/ tests/ setup.py
-python -m unittest
+python -m unittest discover -s tests
