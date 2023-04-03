@@ -85,7 +85,7 @@ queue = Queue.from_url("redis://localhost")
 
 settings = {
     "queue": queue,
-    "functions": [test],
+    "functions": [test, "path.to.another_test"],
     "concurrency": 10,
     "cron_jobs": [CronJob(cron, cron="* * * * * */5")], # run every 5 seconds
     "startup": startup,
@@ -104,18 +104,21 @@ saq module.file.settings
 To enqueue jobs
 
 ```python
-# schedule a job normally
-job = await queue.enqueue("test", a=1)
+# schedule a job normally (via dotted notation or scoped function)
+job = await queue.enqueue(test, a=1)
+job = await queue.enqueue("path.to.another_test", a=1)
 
 # wait 1 second for the job to complete
 await job.refresh(1)
 print(job.results)
 
-# run a job and return the result
-print(await queue.apply("test", a=2))
+# run a job and return the result (via dotted notation or scoped function)
+print(await queue.apply(test, a=2))
+print(await queue.apply("path.to.another_test", a=2))
 
 # schedule a job in 10 seconds
-await queue.enqueue("test", a=1, scheduled=time.time() + 10)
+await queue.enqueue(test, a=1, scheduled=time.time() + 10)
+await queue.enqueue("path.to.another_test", a=1, scheduled=time.time() + 10)
 ```
 
 ## Demo
