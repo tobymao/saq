@@ -12,7 +12,7 @@ from croniter import croniter
 
 from saq.job import Status
 from saq.queue import Queue
-from saq.utils import millis, now, seconds
+from saq.utils import millis, now, seconds, normalize_function
 
 if t.TYPE_CHECKING:
     from asyncio import Task
@@ -99,9 +99,15 @@ class Worker:
 
         for function in functions:
             if isinstance(function, tuple):
-                name, function = function
+                name, function = function[0], normalize_function(function[1])
+
             else:
-                name = function.__qualname__
+                function = normalize_function(function)
+
+                if function.__qualname__ == function.__name__:
+                    name = f"{function.__module__}.{function.__name__}"
+                else:
+                    name = function.__qualname__
 
             self.functions[name] = function
 
@@ -154,12 +160,14 @@ class Worker:
     async def schedule(self, lock: int = 1) -> None:
         for cron_job in self.cron_jobs:
             kwargs = cron_job.__dict__.copy()
-            function = kwargs.pop("function").__qualname__
-            kwargs["key"] = f"cron:{function}" if kwargs.pop("unique") else None
+            function = normalize_function(kwargs.pop("function"))
+            kwargs["key"] = (
+                f"cron:{function.__qualname__}" if kwargs.pop("unique") else None
+            )
             scheduled = croniter(kwargs.pop("cron"), seconds(now())).get_next()
 
             await self.queue.enqueue(
-                function,
+                normalize_function(function),  # type:ignore[arg-type]
                 scheduled=int(scheduled),
                 **{k: v for k, v in kwargs.items() if v is not None},
             )
@@ -244,7 +252,15 @@ class Worker:
             await self._before_process(context)
             logger.info("Processing %s", job)
 
-            function = ensure_coroutine_function(self.functions[job.function])
+            if not self.functions.get(job.function, None):
+                raise ValueError(
+                    f"Error running job [{job.function}]: Not a registered function name in [{self.functions}]"
+                )
+
+            function = ensure_coroutine_function(
+                self.functions[job.function]  # type:ignore[arg-type]
+            )
+
             task = asyncio.create_task(function(context, **(job.kwargs or {})))
             self.job_task_contexts[job] = {"task": task, "aborted": False}
             result = await asyncio.wait_for(task, job.timeout if job.timeout else None)
@@ -252,8 +268,8 @@ class Worker:
         except asyncio.CancelledError:
             if job and not self.job_task_contexts.get(job, {}).get("aborted"):
                 await job.retry("cancelled")
-        except Exception:
-            logger.exception("Error processing job %s", job)
+        except Exception as e:
+            logger.exception("Generic error processing job %s -> %s", job, e)
 
             if job:
                 error = traceback.format_exc()

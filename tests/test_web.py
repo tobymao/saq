@@ -51,7 +51,7 @@ class TestWorker(AioHTTPTestCase):
             self.assertEqual(json["queue"]["name"], "queue1")
 
     async def test_jobs(self) -> None:
-        job = await self.queue1.enqueue("echo", a=1)
+        job = await self.queue1.enqueue("test_web.echo", a=1)
         assert job is not None
         url = f"/api/queues/{self.queue1.name}/jobs/{job.key}"
         await self.worker.process()

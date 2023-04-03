@@ -16,7 +16,7 @@ async def recurse(ctx, *, n):
     logger.info(n)
     if n == 0:
         return
-    await queue.apply("recurse", n=n - 1)
+    await queue.apply("propagation.recurse", n=n - 1)
 
 
 async def before_enqueue(job):
@@ -54,7 +54,7 @@ root_logger.handlers = [handler]
 
 
 async def enqueue():
-    await queue.apply("recurse", n=3)
+    await queue.apply("propagation.recurse", n=3)
 
 
 if __name__ == "__main__":

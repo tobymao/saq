@@ -35,6 +35,7 @@ if t.TYPE_CHECKING:
         VersionTuple,
     )
 
+
 logger = logging.getLogger("saq")
 
 ID_PREFIX = "saq:job:"
@@ -456,7 +457,17 @@ class Queue:
         if isinstance(job_or_func, str):
             job = Job(function=job_or_func, **job_kwargs)
         else:
-            job = job_or_func
+            try:
+                # ask forgiveness
+                import inspect
+
+                job = Job(
+                    f"{inspect.getmodulename(job_or_func.__globals__['__file__'])}.{job_or_func.__name__}",  # type:ignore[attr-defined]
+                    **job_kwargs,
+                )
+            except AttributeError:
+                # already a Job
+                job = job_or_func
 
             for k, v in job_kwargs.items():
                 setattr(job, k, v)

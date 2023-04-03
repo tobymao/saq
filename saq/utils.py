@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import typing as t
+
 import time
 import uuid
 from random import random
+
+from .types import Function
 
 
 def now() -> int:
@@ -41,3 +45,34 @@ def exponential_backoff(
     if jitter:
         backoff = backoff * random()
     return backoff
+
+
+def normalize_function(
+    function: t.Union[Function, str]
+) -> t.Callable[..., t.Coroutine]:
+    """
+    Taken from pydantic.utils.
+    """
+    from importlib import import_module
+
+    if not isinstance(function, str):
+        return function
+
+    module_path, class_name = "", ""
+    try:
+        if function.find(".") >= 0:
+            module_path, class_name = function.strip(" ").rsplit(".", 1)
+        else:
+            raise ImportError(
+                f'String specified Function "{function}" must be specified as "full.path.to.function"'
+            )
+    except ValueError as e:
+        raise ImportError(f'"{function}" doesn\'t look like a module path') from e
+
+    module = import_module(module_path)
+    try:
+        return getattr(module, class_name)
+    except AttributeError as e:
+        raise ImportError(
+            f'Module "{module_path}" does not define a "{class_name}" attribute'
+        ) from e

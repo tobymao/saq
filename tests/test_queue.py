@@ -14,7 +14,6 @@ from saq.worker import Worker
 from tests.helpers import cleanup_queue, create_queue
 
 if t.TYPE_CHECKING:
-
     from unittest.mock import MagicMock
 
     from saq.types import Context, CountKind, Function
@@ -28,7 +27,7 @@ async def error(_ctx: Context) -> None:
     raise ValueError("oops")
 
 
-functions: list[Function] = [echo, error]
+functions: list[Function] = [echo, error, "test_worker.supplied_as_string"]
 
 
 class TestQueue(unittest.IsolatedAsyncioTestCase):
@@ -319,9 +318,9 @@ class TestQueue(unittest.IsolatedAsyncioTestCase):
         worker = Worker(self.queue, functions=functions)
         task = asyncio.create_task(worker.start())
 
-        self.assertEqual(await self.queue.apply("echo", a=1, ttl=-1), None)
+        self.assertEqual(await self.queue.apply("test_queue.echo", a=1, ttl=-1), None)
 
-        self.assertEqual(await self.queue.apply("echo", a=1), 1)
+        self.assertEqual(await self.queue.apply("test_queue.echo", a=1), 1)
         with self.assertRaises(JobError):
             await self.queue.apply("error")
 
@@ -331,28 +330,35 @@ class TestQueue(unittest.IsolatedAsyncioTestCase):
         worker = Worker(self.queue, functions=functions)
         task = asyncio.create_task(worker.start())
 
-        self.assertEqual(await self.queue.map("echo", []), [])
-        self.assertEqual(await self.queue.map("echo", [{"a": 1}]), [1])
-        self.assertEqual(await self.queue.map("echo", [{"a": 1}, {"a": 2}]), [1, 2])
+        self.assertEqual(await self.queue.map("test_queue.echo", []), [])
+        self.assertEqual(await self.queue.map("test_queue.echo", [{"a": 1}]), [1])
         self.assertEqual(
-            await self.queue.map("echo", [{}, {"a": 2}], timeout=10, a=3), [3, 2]
+            await self.queue.map("test_queue.echo", [{"a": 1}, {"a": 2}]), [1, 2]
+        )
+        self.assertEqual(
+            await self.queue.map("test_queue.echo", [{}, {"a": 2}], timeout=10, a=3),
+            [3, 2],
         )
         with self.assertRaises(JobError):
             await self.queue.map("error", [{}, {}])
 
-        results = await self.queue.map("error", [{}, {}], return_exceptions=True)
+        results = await self.queue.map(
+            "test_queue.error", [{}, {}], return_exceptions=True
+        )
         self.assertTrue(all(isinstance(r, JobError) for r in results))
 
         key = uuid1()
-        await self.enqueue("echo", key=key, a=3)
-        self.assertEqual(await self.queue.map("echo", [{"a": 1, "key": key}]), [3])
+        await self.enqueue("test_queue.echo", key=key, a=3)
+        self.assertEqual(
+            await self.queue.map("test_queue.echo", [{"a": 1, "key": key}]), [3]
+        )
 
         task.cancel()
 
     async def test_batch(self) -> None:
         with contextlib.suppress(ValueError):
             async with self.queue.batch():
-                job = await self.enqueue("echo", a=1)
+                job = await self.enqueue("test_queue.echo", a=1)
                 raise ValueError()
 
         self.assertEqual(job.status, Status.ABORTED)

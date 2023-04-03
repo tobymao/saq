@@ -13,7 +13,7 @@ async def square(ctx, *, a):
 async def sum_of_squares(ctx, *, n):
     async with queue.batch():
         squares = await queue.map(
-            square.__name__,
+            square,
             [{"a": i} for i in range(n)],
         )
     return sum(squares)
@@ -27,7 +27,7 @@ settings = {
 
 
 async def enqueue():
-    result = await queue.apply(sum_of_squares.__name__, n=10000)
+    result = await queue.apply(sum_of_squares, n=10000)
     print(result)
 
 
