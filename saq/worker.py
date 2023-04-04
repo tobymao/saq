@@ -269,8 +269,6 @@ class Worker:
             if job and not self.job_task_contexts.get(job, {}).get("aborted"):
                 await job.retry("cancelled")
         except Exception as e:
-            logger.exception("Generic error processing job %s -> %s", job, e)
-
             if job:
                 error = traceback.format_exc()
 
@@ -344,16 +342,20 @@ def start(
         web_settings = [settings_obj] + [import_settings(s) for s in extra_web_settings]
         queues = [s["queue"] for s in web_settings if s.get("queue")]
 
-        async def shutdown(_app: Application) -> None:
-            await worker.stop()
+        async def shutdown_worker(_app: Application) -> None:
+            logging.info("Received Server Shutdown Signal ... stopping")
 
         app = create_app(queues)
-        app.on_shutdown.append(shutdown)
+        app.on_shutdown.append(shutdown_worker)
 
         loop.create_task(worker.start())
         aiohttp.web.run_app(app, port=port, loop=loop)
     else:
-        loop.run_until_complete(worker.start())
+        try:
+            asyncio.run(worker.start(), debug=False)
+        finally:
+            logging.info("Received Server Shutdown Signal ... stopping")
+            loop.close()
 
 
 async def async_check_health(queue: Queue) -> int:
