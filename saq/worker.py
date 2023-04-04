@@ -268,7 +268,7 @@ class Worker:
         except asyncio.CancelledError:
             if job and not self.job_task_contexts.get(job, {}).get("aborted"):
                 await job.retry("cancelled")
-        except Exception as e:
+        except Exception:
             if job:
                 error = traceback.format_exc()
 
