@@ -99,6 +99,7 @@ class TestWorker(unittest.IsolatedAsyncioTestCase):
         await asyncio.sleep(0.05)
         await job.refresh()
         self.assertEqual(job.status, Status.QUEUED)
+        await cleanup_queue(self.queue)
 
         asyncio.create_task(self.worker.start())
         job = await self.enqueue("test_worker.noop")
