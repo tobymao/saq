@@ -153,9 +153,7 @@ SAQ is heavily inspired by [ARQ](https://github.com/samuelcolvin/arq) but has se
 
 ## Development
 ```
-python -m venv env
-source env/bin/activate
-pip install -e ".[dev,web]"
+poetry install
 docker run -p 6379:6379 redis
-./run_checks.sh
+poetry run poe run_checks
 ```
