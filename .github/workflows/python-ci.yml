@@ -31,15 +31,37 @@ jobs:
           --health-retries 5
 
     steps:
-    - uses: actions/checkout@v2
+    - uses: actions/checkout@v3
+    - name: Set up Poetry
+      run: pipx install poetry
     - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@v2
+      id: setup-python
+      uses: actions/setup-python@v4
       with:
         python-version: ${{ matrix.python-version }}
-    - name: Install dependencies
+        cache: 'poetry'
+    - name: Upgrade pip
       run: |
-        python -m pip install --upgrade pip
-        pip install .[dev,web]
+        python -m pip install --no-warn-conflicts --upgrade pip
+
+     #----------------------------------------------
+     #       load cached venv if cache exists
+     #----------------------------------------------
+    - name: Load cached venv
+      id: cached-poetry-dependencies
+      uses: actions/cache@v3
+      with:
+        path: .venv
+        key: venv-${{ runner.os }}-${{ steps.setup-python.outputs.python-version }}-${{ hashFiles('**/poetry.lock') }}
+     #----------------------------------------------
+     # install your root project, if required
+     #----------------------------------------------
+    - name: Install dependancies
+      run: poetry install --no-interaction
+  
+     #----------------------------------------------
+     #              run test suite
+     #----------------------------------------------
     - name: Run Checks
       run: |
-        ./run_checks.sh
+        poetry run poe run_checks
