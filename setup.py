@@ -1,7 +1,6 @@
 # pylint: disable=consider-using-with
 from setuptools import setup
 
-
 version = (
     open("saq/__init__.py", encoding="utf8")
     .read()
@@ -29,11 +28,11 @@ setup(
         saq=saq.__main__:main
     """,
     install_requires=[
-        "redis>=4.2,<4.4",
+        "redis>=4.2,<4.6",
         "croniter>=0.3.18",
     ],
     extras_require={
-        "hiredis": ["redis[hiredis]>=4.2.0"],
+        "hiredis": ["redis[hiredis]>=4.2,<4.6"],
         "web": ["aiohttp", "aiohttp_basicauth"],
         "dev": [
             "black",
