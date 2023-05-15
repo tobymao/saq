@@ -14,7 +14,6 @@ from saq.worker import Worker
 from tests.helpers import cleanup_queue, create_queue
 
 if t.TYPE_CHECKING:
-
     from unittest.mock import MagicMock
 
     from saq.types import Context, CountKind, Function
