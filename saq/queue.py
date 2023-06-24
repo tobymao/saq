@@ -76,6 +76,7 @@ class Queue:
         dump: DumpType | None = None,
         load: LoadType | None = None,
         max_concurrent_ops: int = 20,
+        fifo: bool = False,
     ) -> None:
         self.redis = redis
         self.name = name
@@ -99,6 +100,9 @@ class Queue:
         self._load = load or json.loads
         self._before_enqueues: dict[int, BeforeEnqueueType] = {}
         self._op_sem = asyncio.Semaphore(max_concurrent_ops)
+        self._move_opts: list[t.Literal["LEFT", "RIGHT"]] = (
+            ["LEFT", "RIGHT"] if fifo else ["RIGHT", "LEFT"]
+        )
 
     def register_before_enqueue(self, callback: BeforeEnqueueType) -> None:
         self._before_enqueues[id(callback)] = callback
@@ -427,8 +431,12 @@ class Queue:
                 self._queued, self._active, timeout  # type:ignore[arg-type]
             )
         else:
-            job_id = await self.redis.execute_command(
-                "BLMOVE", self._queued, self._active, "RIGHT", "LEFT", timeout
+            job_id = await self.redis.blmove(
+                self._queued,
+                self._active,
+                timeout,
+                self._move_opts[0],  # source
+                self._move_opts[1],  # destination
             )
         if job_id is not None:
             return await self._get_job_by_id(job_id)

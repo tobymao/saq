@@ -104,6 +104,35 @@ class TestQueue(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await self.count("queued"), 0)
         await task
 
+    async def test_dequeue_fifo(self) -> None:
+        await cleanup_queue(self.queue)
+        self.queue = create_queue(**{"fifo": True})
+        job = await self.enqueue("test")
+        job_second = await self.enqueue("test_second")
+        self.assertEqual(await self.count("queued"), 2)
+        self.assertEqual(await self.count("incomplete"), 2)
+        self.assertEqual(await self.count("active"), 0)
+        dequeued = await self.dequeue()
+        self.assertEqual(job, dequeued)
+        self.assertEqual(await self.count("queued"), 1)
+        self.assertEqual(await self.count("incomplete"), 2)
+        self.assertEqual(await self.count("active"), 1)
+
+        await self.enqueue("test")
+        self.assertEqual(await self.count("queued"), 2)
+        dequeued = await self.dequeue()
+        self.assertEqual(job_second, dequeued)
+        self.assertEqual(await self.count("queued"), 1)
+        self.assertEqual(await self.count("incomplete"), 3)
+        self.assertEqual(await self.count("active"), 2)
+        task = asyncio.get_running_loop().create_task(self.dequeue())
+        self.assertEqual(await self.count("queued"), 1)
+        self.assertEqual(await self.count("incomplete"), 3)
+        self.assertEqual(await self.count("active"), 3)
+        await task
+        self.assertEqual(await self.count("incomplete"), 3)
+        self.assertEqual(await self.count("queued"), 0)
+
     async def test_dequeue_timeout(self) -> None:
         dequeued = await self.queue.dequeue(timeout=1)
         self.assertEqual(None, dequeued)
