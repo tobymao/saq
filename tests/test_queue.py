@@ -106,7 +106,7 @@ class TestQueue(unittest.IsolatedAsyncioTestCase):
 
     async def test_dequeue_fifo(self) -> None:
         await cleanup_queue(self.queue)
-        self.queue = create_queue(**{"fifo": True})
+        self.queue = create_queue()
         job = await self.enqueue("test")
         job_second = await self.enqueue("test_second")
         self.assertEqual(await self.count("queued"), 2)
