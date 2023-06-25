@@ -427,8 +427,12 @@ class Queue:
                 self._queued, self._active, timeout  # type:ignore[arg-type]
             )
         else:
-            job_id = await self.redis.execute_command(
-                "BLMOVE", self._queued, self._active, "RIGHT", "LEFT", timeout
+            job_id = await self.redis.blmove(
+                self._queued,
+                self._active,
+                timeout,
+                "LEFT",
+                "RIGHT",
             )
         if job_id is not None:
             return await self._get_job_by_id(job_id)
