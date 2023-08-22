@@ -1,0 +1,2 @@
+-e .[hiredis,web,dev]
+
