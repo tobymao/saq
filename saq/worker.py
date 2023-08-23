@@ -81,8 +81,7 @@ class Worker:
             "abort": 1,
         }
         if timers is not None:
-            # https://github.com/python/mypy/issues/6462
-            self.timers.update(timers)  # type:ignore[typeddict-item]
+            self.timers.update(timers)
         self.event = asyncio.Event()
         functions = set(functions)
         self.functions: dict[str, Function] = {}

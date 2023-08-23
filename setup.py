@@ -37,6 +37,7 @@ setup(
         "web": ["aiohttp", "aiohttp_basicauth"],
         "dev": [
             "black",
+            "coverage",
             "mypy",
             "pylint",
             "types-croniter",
