@@ -1,10 +1,11 @@
 PATHS = saq/ tests/ setup.py
+INSTALL = -e .[hiredis,web,dev]
 
 help:
 	@echo  "tobymao/saq dev makefile"
 	@echo  ""
 	@echo  "usage: make <target>"
-	@echo  " up	Updates dev/test dependencies"
+	@echo  " up	Force updates dev/test dependencies - attempts clean-install"
 	@echo  " deps	Ensure dev/test dependencies are installed"
 	@echo  " test	Runs all tests"
 	@echo  " lint	Reports all linter violations"
@@ -12,16 +13,16 @@ help:
 	@echo  " format Tries to auto-fix simpler linting issues"
 
 up:
-	pip-compile -qU tests/requirements.in
-	sed -i 's/^-e .*/-e ./' tests/requirements.txt
-	pip-sync tests/requirements.txt
+	pip freeze | grep -v "^-e" | xargs pip uninstall -y
+	pip install -U --upgrade-strategy eager ${INSTALL}
 
 deps:
-	@which pip-sync > /dev/null || pip install pip-tools
-	pip-sync -q tests/requirements.txt
+	pip install -q ${INSTALL}
 
 test:
-	python -m green
+	@python -m coverage erase
+	python -m coverage run -m unittest
+	@python -m coverage report
 
 lint:
 	python -m pylint ${PATHS}
