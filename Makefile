@@ -19,6 +19,9 @@ up:
 deps:
 	pip install -q ${INSTALL}
 
+deps_docs:
+	pip install -q -r docs/requirements.txt
+
 test:
 	@python -m coverage erase
 	python -m coverage run -m unittest
@@ -36,3 +39,6 @@ ci: deps lint test
 
 run:
 	./etc/devrun.sh
+
+devdocs: deps_docs
+	sphinx-autobuild docs docs/_build/html
