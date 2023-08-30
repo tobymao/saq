@@ -43,6 +43,7 @@ setup(
             "types-croniter",
             "types-redis",
             "types-setuptools",
+            "starlette",
         ],
     },
     classifiers=[
