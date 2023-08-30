@@ -15,12 +15,13 @@ from saq.queue import Queue
 from saq.utils import millis, now, seconds
 
 if t.TYPE_CHECKING:
+    from saq.job import CronJob, Job
+
     from asyncio import Task
     from collections.abc import Callable, Collection, Coroutine
 
     from aiohttp.web_app import Application
 
-    from saq.job import CronJob, Job
     from saq.types import (
         Context,
         Function,

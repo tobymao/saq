@@ -275,7 +275,7 @@ class TestWorker(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await self.queue.count("incomplete"), 0)
         self.assertEqual(await self.queue.count("active"), 0)
 
-        # ensure job doens't get requeued
+        # ensure job doesn't get requeued
         await job.enqueue()
         self.assertEqual(await self.queue.count("queued"), 0)
         self.assertEqual(await self.queue.count("incomplete"), 0)
@@ -307,7 +307,7 @@ class TestWorker(unittest.IsolatedAsyncioTestCase):
     async def test_propagation(self) -> None:
         async def before_process(ctx: Context) -> None:
             correlation_id = ctx["job"].meta.get("correlation_id")
-            ctx_var.set(correlation_id)
+            ctx_var.set(correlation_id)  # type: ignore
             ctx["queue"] = self.queue
 
         async def before_enqueue(job: Job) -> None:

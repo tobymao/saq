@@ -47,11 +47,11 @@ app.mount("/monitor", saq_web("/monitor", queues=all_the_queues_list))
 ```
 
 
-```{py:function} saq_web(root_path: str, queues: list[Queue]) -> Starlette:
+```{py:function} saq_web(root_path: str, queues: list[saq.queue.Queue]) -> Starlette:
 
 Create an embeddable monitoring Web UI
 
 :param str root_path: The absolute mount point
-:param list[Queue] queue: The list of known queues
+:param list[saq.queue.Queue] queue: The list of known queues
 :rtype: Starlette
 ```

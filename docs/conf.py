@@ -28,10 +28,11 @@ author = 'Toby Mao'
 
 extensions = [
     'sphinx.ext.napoleon',
+    'sphinx.ext.autodoc',
     'sphinx.ext.viewcode',
     'sphinx.ext.intersphinx',
     'myst_parser',
-    'autodoc2',
+    'autoapi.extension'
 ]
 
 templates_path = ['_templates']
@@ -39,16 +40,13 @@ exclude_patterns = ['_build', 'Thumbs.db', '.DS_Store']
 
 intersphinx_mapping = {
     'python': ('https://docs.python.org/3', None),
+    'redis': ('https://redis-py.readthedocs.io/en/stable/', None),
 }
 
-autodoc2_packages = [
-    {
-        "path": "../saq",
-        "auto_mode": True,
-        "exclude_files": [
-            "__main__.py"
-        ]
-    },
+autoapi_dirs = ['../saq']
+autoapi_ignore = [
+    '*/saq/__main__.py',
+    '*/saq/web/common.py'
 ]
 
 myst_enable_extensions = [
