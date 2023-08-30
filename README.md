@@ -7,7 +7,7 @@ It is similar to [RQ](https://github.com/rq/rq) and heavily inspired by [ARQ](ht
 
 SAQ optionally comes with a simple UI for monitor workers and jobs.
 
-<img src="web.png" alt="SAQ Web UI" style="width:100%;"/>
+<img src="docs/web.png" alt="SAQ Web UI" style="width:100%;"/>
 
 ## Install
 ```

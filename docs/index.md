@@ -4,6 +4,7 @@
 :hidden:
 
 getting_started
+monitoring
 comparison
 benchmarks
 apidocs/index
@@ -17,7 +18,11 @@ It is similar to [RQ](https://github.com/rq/rq) and heavily inspired by [ARQ](ht
 
 SAQ optionally comes with a simple UI for monitor workers and jobs:
 
-<img src="web.png" alt="SAQ Web UI" style="width:100%;"/>
+```{figure-md}
+![SAQ Web UI](web.png){width=100%}
+
+SAQ Web UI
+```
 
 # Indices and tables
 
