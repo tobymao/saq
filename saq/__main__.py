@@ -1,6 +1,7 @@
 import argparse
 import logging
 import multiprocessing
+import os
 import sys
 
 from saq.worker import check_health, start
@@ -53,6 +54,9 @@ def main() -> None:
     )
 
     args = parser.parse_args()
+
+    # Includes the current path as a module path to allow importlib finding in-development modules
+    sys.path.append(os.getcwd())
 
     if not args.quiet:
         level = args.verbose
