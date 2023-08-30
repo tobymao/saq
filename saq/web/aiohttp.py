@@ -1,13 +1,13 @@
 from __future__ import annotations
 
-import html
 import logging
 import os
-import pathlib
 import traceback
 import typing as t
 
 from aiohttp import web
+
+from saq.web.common import STATIC_PATH, job_dict, render
 
 if t.TYPE_CHECKING:
     from aiohttp.typedefs import Handler
@@ -19,29 +19,6 @@ if t.TYPE_CHECKING:
     from saq.job import Job
     from saq.queue import Queue
     from saq.types import QueueInfo
-
-static = pathlib.Path(__file__).parent.resolve() / "static"
-
-body = """
-<!DOCTYPE html>
-<html>
-    <head>
-        <meta charset="utf-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1">
-        <link rel="stylesheet" type="text/css" href="/static/pico.min.css.gz">
-        <title>SAQ</title>
-    </head>
-    <body>
-        <div id="app"></div>
-        <script src="/static/snabbdom.js.gz"></script>
-        <script src="/static/app.js"></script>
-    </body>
-</html>
-""".strip()
-
-
-def render(**kwargs: t.Any) -> str:
-    return body.format(**{k: html.escape(v) for k, v in kwargs.items()})
 
 
 async def queues_(request: Request) -> Response:
@@ -59,12 +36,7 @@ async def queues_(request: Request) -> Response:
 
 async def jobs(request: Request) -> Response:
     job = await _get_job(request)
-    job_dict = job.to_dict()
-    if "kwargs" in job_dict:
-        job_dict["kwargs"] = repr(job_dict["kwargs"])
-    if "result" in job_dict:
-        job_dict["result"] = repr(job_dict["result"])
-    return web.json_response({"job": job_dict})
+    return web.json_response({"job": job_dict(job)})
 
 
 async def retry(request: Request) -> Response:
@@ -80,7 +52,7 @@ async def abort(request: Request) -> Response:
 
 
 async def views(_request: Request) -> Response:
-    return web.Response(text=render(), content_type="text/html")
+    return web.Response(text=render(root_path=""), content_type="text/html")
 
 
 async def health(request: Request) -> Response:
@@ -140,7 +112,7 @@ def create_app(queues: list[Queue]) -> Application:
 
     app.add_routes(
         [
-            web.static("/static", static, append_version=True),
+            web.static("/static", STATIC_PATH, append_version=True),
             web.get("/api/queues/{queue}/jobs/{job}", jobs),
             web.post("/api/queues/{queue}/jobs/{job}/retry", retry),
             web.post("/api/queues/{queue}/jobs/{job}/abort", abort),

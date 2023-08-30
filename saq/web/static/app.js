@@ -23,9 +23,13 @@ const handle_error = function(error) {
   return {error: error.toString()}
 }
 
+const apiPath = function(path) {
+  return root_path + "/api" + path.replace(RegExp(`^${root_path}`), '')
+}
+
 const get = async function(path) {
   try {
-    const response = await fetch("/api" + path)
+    const response = await fetch(apiPath(path))
     return await response.json()
   } catch (error) {
     return handle_error(error)
@@ -35,7 +39,7 @@ const get = async function(path) {
 const post = async function(path, data) {
   try {
     const response = await fetch(
-      "/api" + path,
+      apiPath(path),
       {
         method: "post",
         headers: {
@@ -94,7 +98,7 @@ const home_view = function(data) {
       ]),
       h("tbody", {attrs: {role: "grid"}}, data.queues.map(queue =>
         h("tr", [
-          h("td", link({props: {href: "/queues/" + queue.name}}, queue.name)),
+          h("td", link({props: {href: root_path + "/queues/" + queue.name}}, queue.name)),
           h("td", queue.active),
           h("td", queue.queued),
           h("td", queue.scheduled),
@@ -171,7 +175,7 @@ const queue_view = function(data, queue_name) {
       h("thead", h("tr", [h("th", "Key"), ...job_headers()])),
       h("tbody", queue.jobs.map(job =>
         h("tr", [
-          link({props: {href: "/queues/" + queue_name + "/jobs/" + job.key}}, h("td", job.key)),
+          link({props: {href: root_path + "/queues/" + queue_name + "/jobs/" + job.key}}, h("td", job.key)),
           ...job_columns(job),
         ])
       )),
@@ -183,14 +187,14 @@ const job_view = function(data, queue_name, job_key) {
   const job = data.job
   const buttons = [button(
     "Retry",
-    event => post("/queues/" + queue_name + "/jobs/" + job_key + "/retry"),
+    event => post(root_path + "/queues/" + queue_name + "/jobs/" + job_key + "/retry"),
     {style: {marginRight: "1rem"}},
   )]
 
   if (!job.completed) {
     buttons.push(button(
       "Abort",
-      event => post("/queues/" + queue_name + "/jobs/" + job_key + "/abort"),
+      event => post(root_path +  "/queues/" + queue_name + "/jobs/" + job_key + "/abort"),
       {style: {borderColor: "#d81b60", backgroundColor: "#d81b60"}},
     ))
   }
@@ -233,11 +237,12 @@ const error_view = function(error) {
   ])
 }
 
-let routes = {
-  '/': {view: home_view, data: "/queues"},
-  '/queues/:queue_id': {view: queue_view},
-  '/queues/:queue_id/jobs/:job_id': {view: job_view}
-}
+const root_path_1 = root_path + '/'
+
+let routes = {}
+routes[root_path + '/'] = {view: home_view, data: "/queues"}
+routes[root_path + '/queues/:queue_id'] = {view: queue_view}
+routes[root_path + '/queues/:queue_id/jobs/:job_id'] = {view: job_view}
 
 routes = Object.keys(routes)
   .sort(function(a, b){ return b.length - a.length; })
@@ -261,9 +266,9 @@ const page = async function(path) {
 
   return h("div", [
     h("nav.container", [
-      h("ul", h("li", link({props: {href: "/"}}, h("strong", "SAQ")))),
+      h("ul", h("li", link({props: {href: root_path + "/"}}, h("strong", "SAQ")))),
       h("ul", [
-        h("li", h("a", {props: {href: "https://github.com/tobymao/saq"}}, "Docs")),
+        h("li", h("a", {props: {href: "https://saq-py.readthedocs.io"}}, "Docs")),
       ]),
     ]),
     h("main.container", view),

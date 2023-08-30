@@ -6,7 +6,7 @@ import typing as t
 from aiohttp.test_utils import AioHTTPTestCase
 
 from saq.job import Status
-from saq.web import create_app
+from saq.web.aiohttp import create_app
 from saq.worker import Worker
 from tests.helpers import cleanup_queue, create_queue
 

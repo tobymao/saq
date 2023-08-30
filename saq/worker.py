@@ -321,7 +321,7 @@ def start(
     if web:
         import aiohttp.web
 
-        from saq.web import create_app
+        from saq.web.aiohttp import create_app
 
         extra_web_settings = extra_web_settings or []
         web_settings = [settings_obj] + [import_settings(s) for s in extra_web_settings]
