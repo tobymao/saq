@@ -34,22 +34,12 @@ class GZStaticFiles(StaticFiles):
         response = FileResponse(
             full_path, status_code=status_code, stat_result=stat_result, method=method
         )
+        # By default, the starlette StaticFiles handler doesn't handle pre-compressed files, but we explicitly want it to.
         if str(full_path).endswith(".gz"):
             response.headers.setdefault("Content-Encoding", "gzip")
         if self.is_not_modified(response.headers, request_headers):
             return NotModifiedResponse(response.headers)
         return response
-
-
-async def app_js(request: Request) -> Response:  # pylint: disable=unused-argument
-    with open(STATIC_PATH / "app.js", encoding="utf-8") as f:
-        data = f.read()
-        return Response(
-            content=data.replace(
-                'const root_path = ""', f'const root_path = "{ROOT_PATH}"'
-            ),
-            media_type="application/javascript",
-        )
 
 
 async def views(request: Request) -> Response:  # pylint: disable=unused-argument
@@ -134,7 +124,6 @@ def saq_web(root_path: str, queues: list[Queue]) -> Starlette:
             Route("/api/queues/{queue}/jobs/{job}", jobs),
             Route("/api/queues/{queue}/jobs/{job}/retry", retry, methods=["POST"]),
             Route("/api/queues/{queue}/jobs/{job}/abort", abort, methods=["POST"]),
-            Route("/static/app.js", app_js),
             Mount("/static", GZStaticFiles(directory=STATIC_PATH)),
             Route("/health", health),
         ]

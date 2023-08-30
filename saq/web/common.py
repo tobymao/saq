@@ -16,6 +16,7 @@ BODY = """
     </head>
     <body>
         <div id="app"></div>
+        <script>const root_path = "{root_path}";</script>
         <script src="{root_path}/static/snabbdom.js.gz"></script>
         <script src="{root_path}/static/app.js"></script>
     </body>

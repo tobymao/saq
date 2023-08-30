@@ -7,8 +7,6 @@ const patch = snabbdom.init([
 
 const h = snabbdom.h
 
-const root_path = ""
-
 let container = document.getElementById("app")
 
 const render = function(vnode) {
