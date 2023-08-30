@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import os
 
 from starlette.applications import Starlette
@@ -61,11 +63,12 @@ async def health(request: Request) -> Response:  # pylint: disable=unused-argume
 
 
 async def queues_(request: Request) -> JSONResponse:
-    queue = request.path_params.get("queue")
+    queue_name = request.path_params.get("queue")
 
     response: dict[str, QueueInfo | list[QueueInfo]] = {}
-    if queue:
-        response["queue"] = await _get_queue(queue).info(jobs=True)
+
+    if queue_name:
+        response["queue"] = await _get_queue(queue_name).info(jobs=True)
     else:
         response["queues"] = await _get_all_info()
 
@@ -73,27 +76,27 @@ async def queues_(request: Request) -> JSONResponse:
 
 
 async def jobs(request: Request) -> JSONResponse:
-    queue = request.path_params["queue"]
+    queue_name = request.path_params["queue"]
     job_key = request.path_params["job"]
 
-    job = await _get_job(queue, job_key)
+    job = await _get_job(queue_name, job_key)
     return JSONResponse({"job": job_dict(job)})
 
 
 async def retry(request: Request) -> JSONResponse:
-    queue = request.path_params["queue"]
+    queue_name = request.path_params["queue"]
     job_key = request.path_params["job"]
 
-    job = await _get_job(queue, job_key)
+    job = await _get_job(queue_name, job_key)
     await job.retry("retried from ui")
     return JSONResponse({})
 
 
 async def abort(request: Request) -> JSONResponse:
-    queue = request.path_params["queue"]
+    queue_name = request.path_params["queue"]
     job_key = request.path_params["job"]
 
-    job = await _get_job(queue, job_key)
+    job = await _get_job(queue_name, job_key)
     await job.abort("aborted from ui")
     return JSONResponse({})
 
@@ -106,8 +109,8 @@ def _get_queue(queue_name: str) -> Queue:
     return QUEUES[queue_name]
 
 
-async def _get_job(queue: str, job_key: str) -> Job:
-    job = await _get_queue(queue).job(job_key)
+async def _get_job(queue_name: str, job_key: str) -> Job:
+    job = await _get_queue(queue_name).job(job_key)
     if not job:
         raise ValueError(f"Job {job_key} not found")
     return job
