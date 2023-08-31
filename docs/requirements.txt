@@ -4,3 +4,5 @@ myst-parser
 sphinx-autobuild
 sphinx-autoapi
 sphinx-design
+gitchangelog
+pystache
