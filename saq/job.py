@@ -24,6 +24,7 @@ class Status(str, enum.Enum):
     """
     Queue Status
     """
+
     NEW = "new"
     DEFERRED = "deferred"
     QUEUED = "queued"
@@ -80,7 +81,8 @@ class Job:
         heartbeat (int): the maximum amount of time a job can survive without a heartbeat in seconds, defaults to 0 (disabled)
             a heartbeat can be triggered manually within a job by calling await job.update()
         retries (int): the maximum number of attempts to retry a job, defaults to 1
-        ttl (int): the maximum time in seconds to store information about a job including results, defaults to 600 (0 means indefinitely, -1 means disabled)
+        ttl (int): the maximum time in seconds to store information about a job including results, defaults to 600
+            (0 means indefinitely, -1 means disabled)
         retry_delay (float): seconds to delay before retrying the job
         retry_backoff (bool | float): If true, use exponential backoff for retry delays.
             The first retry will have whatever retry_delay is.

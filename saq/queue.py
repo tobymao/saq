@@ -47,6 +47,7 @@ class JobError(Exception):
     """
     Basic Job error
     """
+
     def __init__(self, job: Job) -> None:
         super().__init__(
             f"Job {job.id} {job.status}\n\nThe above job failed with the following error:\n\n{job.error}"
