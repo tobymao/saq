@@ -3,3 +3,4 @@ furo
 myst-parser
 sphinx-autobuild
 sphinx-autoapi
+sphinx-design

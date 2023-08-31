@@ -59,10 +59,10 @@ QueueT = t.TypeVar("QueueT", bound="Queue")
 
 class Queue:
     """
-    Queue is used to interact with aioredis.
+    Queue is used to interact with redis.
 
     Args:
-        redis (Redis): instance of aioredis pool
+        redis (Redis): instance of redis.asyncio pool
         name (str): name of the queue (default "default")
         dump (DumpType | None): lambda that takes a dictionary and outputs bytes (default `json.dumps`)
         load (LoadType | None): lambda that takes bytes and outputs a python dictionary (default `json.loads`)
