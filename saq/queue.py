@@ -167,14 +167,10 @@ class Queue:
             deserialized_jobs = (
                 self.deserialize(job_bytes)
                 for job_bytes in await self.redis.mget(
-                    (
-                        await self.redis.lrange(
-                            self.namespace("active"), offset, limit - 1
-                        )
-                    )
+                    (await self.redis.lrange(self._active, offset, limit - 1))
                     + (
-                        await self.redis.lrange(
-                            self.namespace("queued"), offset, limit - 1
+                        await self.redis.zrange(
+                            self._incomplete, offset, limit - 1, withscores=False
                         )
                     )
                 )
