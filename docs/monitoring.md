@@ -23,9 +23,21 @@ saq examples.simple.settings --web --port 7000
 You can also mount the Web UI as part of your own web service
 
 ### Starlette/FastAPI
-Module `saq.web.starlette` contains a starlette instance for use in anything that is derived from Starlette.
+Module {py:class}`saq.web.starlette` contains a starlette instance for use in anything that is derived from Starlette.
 
-**Starlette**
+::::{tab-set}
+:::{tab-item} FastAPI
+```python
+from fastapi import FastAPI
+from saq.web.starlette import saq_web
+
+app = FastAPI()
+
+app.mount("/monitor", saq_web("/monitor", queues=all_the_queues_list))
+```
+:::
+
+:::{tab-item} Starlette
 ```python
 from saq.web.starlette import saq_web
 from starlette.routing import Mount
@@ -35,23 +47,10 @@ routes = [
     Mount("/monitor", saq_web("/monitor", queues=all_the_queues_list))
 ]
 ```
+:::
+::::
 
-**FastAPI**
-```python
-from fastapi import FastAPI
-from saq.web.starlette import saq_web
-
-app = FastAPI()
-
-app.mount("/monitor", saq_web("/monitor", queues=all_the_queues_list))
-```
-
-
-```{py:function} saq_web(root_path: str, queues: list[saq.queue.Queue]) -> Starlette:
-
-Create an embeddable monitoring Web UI
-
-:param str root_path: The absolute mount point
-:param list[saq.queue.Queue] queue: The list of known queues
-:rtype: Starlette
+```{eval-rst}
+.. autoapifunction:: saq.web.starlette.saq_web
+    :noindex:
 ```

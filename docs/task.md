@@ -1,5 +1,16 @@
 # Tasks
 
+## Task spec
+
+```{py:function} task_type(ctx: saq.types.Context, *, **kwargs) -> JSONType:
+
+Basic task type
+
+:param saq.types.Context ctx: The task context
+:param kwargs: Task parameters
+:rtype: Any JSON serialisable
+```
+
 Example:
 ```python
 import asyncio
@@ -14,14 +25,8 @@ async def double(ctx: Context, *, val: int) -> int:
     return val * 2
 ```
 
+## Retries
+If you configured retries when enqueueing, your task will automatically retry on any {py:class}`Exception` except {py:class}`asyncio.CancelledError`
 
-```{py:function} task_type(ctx: saq.types.Context, *, **kwargs) -> JSONType:
-
-Basic task type
-
-:param saq.types.Context ctx: The task context
-:param kwargs: Task parameters
-:rtype: Any JSON serialisable
-```
-
-Discuss that if you configured retries that it will automatically retry on any Exception except asyncio.CancelledError
+## Context
+TODO: Discuss context, and enriching context

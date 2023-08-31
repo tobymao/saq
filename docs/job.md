@@ -1,7 +1,10 @@
 # Jobs
 
-To enqueue a job:
+Jobs can be scheduled to run as:
+* Fire-and-forget tasks: {py:class}`saq.queue.Queue.enqueue`
+* Wait-for-result tasks: {py:class}`saq.queue.Queue.apply`
 
+Sample code:
 ```python
 # schedule a job normally
 job = await queue.enqueue("test", a=1)
@@ -17,10 +20,37 @@ print(await queue.apply("test", a=2))
 await queue.enqueue("test", a=1, scheduled=time.time() + 10)
 ```
 
-Discuss simple enque and specifying extra options and using Job()
+## Common
 
-queue.enqueue(Job(...))
+### Explicit vs Implicit job calling
+TODO: queue.enqueue(Job(...)) vs known-parameters
 
-Discuss example to subclass Queue to configure defaults for enqueue (e.g. retries)
+### Job defaults
+TODO: Discuss example to subclass Queue to configure defaults for enqueue (e.g. retries)
 
-Discuss that retries ALWAYS jitter
+### Retries
+TODOL Discuss that retries ALWAYS jitter
+
+## Enqueue
+```{eval-rst}
+.. autoapifunction:: saq.queue.Queue.enqueue
+    :noindex:
+```
+
+## Apply
+```{eval-rst}
+.. autoapifunction:: saq.queue.Queue.apply
+    :noindex:
+```
+
+## Map
+```{eval-rst}
+.. autoapifunction:: saq.queue.Queue.map
+    :noindex:
+```
+
+## Batch
+```{eval-rst}
+.. autoapifunction:: saq.queue.Queue.batch
+    :noindex:
+```

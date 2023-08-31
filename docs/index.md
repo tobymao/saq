@@ -10,6 +10,7 @@ getting_started
 usage
 comparison
 changelog
+contribute
 ```
 
 ## SAQ (Simple Async Queue) documentation
@@ -22,8 +23,8 @@ It is similar to [RQ](https://github.com/rq/rq) and heavily inspired by [ARQ](ht
 
 
 ::::{grid} 2
-:gutter: 4
-:margin: 4
+:gutter: 3
+:margin: 1
 
 :::{grid-item-card}  Getting Started
 :link: getting_started
@@ -36,7 +37,7 @@ Getting started with SAQ?
 :link: usage
 :link-type: doc
 
-Guide on how to use SAQ
+Guides on how to use SAQ
 :::
 
 :::{grid-item-card}  API Reference
