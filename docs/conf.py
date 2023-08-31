@@ -60,6 +60,10 @@ intersphinx_mapping = {
 }
 
 autoapi_dirs = ['../saq']
+autoapi_ignore = [
+    '*/saq/__main__.py',
+    '*/saq/web/common.py'
+]
 autoapi_options = [
     'members',
     'undoc-members',
