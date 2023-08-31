@@ -11,6 +11,7 @@ if t.TYPE_CHECKING:
     from saq.job import Job, Status
     from saq.worker import Worker
     from saq.queue import Queue
+    from typing_extensions import Required
 
 
 class Context(t.TypedDict, total=False):
@@ -18,7 +19,7 @@ class Context(t.TypedDict, total=False):
     Task context
     """
 
-    worker: Worker
+    worker: Required[Worker]
     job: Job
     queue: Queue
     sleep: int

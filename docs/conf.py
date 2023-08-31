@@ -56,12 +56,13 @@ exclude_patterns = ['_build', 'Thumbs.db', '.DS_Store']
 intersphinx_mapping = {
     'python': ('https://docs.python.org/3', None),
     'redis': ('https://redis-py.readthedocs.io/en/stable/', None),
+    'typing_extensions': ('https://typing-extensions.readthedocs.io/en/latest/', None),
 }
 
 autoapi_dirs = ['../saq']
 autoapi_options = [
     'members',
-    # 'undoc-members',
+    'undoc-members',
     'private-members',
     'show-inheritance',
     'show-module-summary',
