@@ -1,8 +1,16 @@
 # Changelog
 
-## Next
-- `saq` command-line client includes current path to simplify development
+## v0.11
+
+### v0.11.2
+- Added package `saq.web` to build
+
+### v0.11.1
 - Added embeddable `saq.web.starlette`
+
+### v0.11.0
+- `saq` command-line client includes current path to simplify development
+- Fetch outstanding jobs from incomplete namespace instead of queued.
 - Documentation now hosted on [Read The Docs](https://saq-py.readthedocs.io/)
 
 ## v0.10
