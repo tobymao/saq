@@ -124,9 +124,8 @@ class Queue:
             return None
 
         job_dict = self._load(job_bytes)
-        assert (
-            job_dict.pop("queue") == self.name
-        ), f"Job {job_dict} fetched by wrong queue: {self.name}"
+        if job_dict.pop("queue") != self.name:
+            raise ValueError(f"Job {job_dict} fetched by wrong queue: {self.name}")
         return Job(**job_dict, queue=self)
 
     async def disconnect(self) -> None:
