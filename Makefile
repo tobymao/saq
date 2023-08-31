@@ -39,4 +39,4 @@ format:
 ci: deps lint test
 
 devdocs: deps_docs
-	sphinx-autobuild docs docs/_build/html
+	sphinx-autobuild --ignore '*/changelog.md' docs docs/_build/html

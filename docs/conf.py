@@ -12,10 +12,16 @@ import datetime
 import os
 import re
 import sys
+from subprocess import check_output
 
 sys.path.insert(0, os.path.abspath('.'))
 sys.path.insert(0, os.path.abspath('..'))
 
+# Generate changelog
+os.environ['GITCHANGELOG_CONFIG_FILENAME'] = os.path.abspath('./gitchangelog.rc')
+changelog = check_output(['gitchangelog']).decode().replace('\n### \n', '')
+with open(os.path.abspath('./changelog.md'), 'wt') as f:
+    f.write(changelog)
 
 # -- Project information -----------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#project-information
