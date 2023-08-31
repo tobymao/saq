@@ -18,7 +18,7 @@ class Context(t.TypedDict, total=False):
     Task context
     """
 
-    worker: t.Required[Worker]
+    worker: Worker
     job: Job
     queue: Queue
     sleep: int
