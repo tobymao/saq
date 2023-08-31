@@ -1,7 +1,6 @@
 # pylint: disable=consider-using-with
 from setuptools import setup
 
-
 version = (
     open("saq/__init__.py", encoding="utf8")
     .read()
@@ -44,6 +43,7 @@ setup(
             "types-redis",
             "types-setuptools",
             "starlette",
+            "httpx",
         ],
     },
     classifiers=[
