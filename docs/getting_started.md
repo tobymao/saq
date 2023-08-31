@@ -2,51 +2,19 @@
 
 ## Install
 
-### Minimal install
+::::{tab-set}
+:::{tab-item} Minimal install
 ```nasm
 pip install saq
 ```
+:::
 
-### Web + hiredis
+:::{tab-item} With Web UI & hiredis
 ```nasm
 pip install saq[web,hiredis]
 ```
-
-
-## Usage
-```text
-usage: saq [-h] [--workers WORKERS] [--verbose] [--web]
-           [--extra-web-settings EXTRA_WEB_SETTINGS]
-           [--port PORT] [--check]
-           settings
-
-Start Simple Async Queue Worker
-
-positional arguments:
-  settings              Namespaced variable containing
-                        worker settings eg: eg
-                        module_a.settings
-
-options:
-  -h, --help            show this help message and exit
-  --workers WORKERS     Number of worker processes
-  --verbose, -v         Logging level: 0: ERROR, 1: INFO,
-                        2: DEBUG
-  --web                 Start web app. By default, this
-                        only monitors the current
-                        worker's queue. To monitor
-                        multiple queues, see '--extra-
-                        web-settings'
-  --extra-web-settings EXTRA_WEB_SETTINGS, -e EXTRA_WEB_SETTINGS
-                        Additional worker settings to
-                        monitor in the web app
-  --port PORT           Web app port, defaults to 8080
-  --check               Perform a health check
-
-environment variables:
-  AUTH_USER     basic auth user, defaults to admin
-  AUTH_PASSWORD basic auth password, if not specified, no auth will be used
-```
+:::
+::::
 
 ## Example
 ```python
@@ -115,24 +83,13 @@ await queue.enqueue("test", a=1, scheduled=time.time() + 10)
 
 ## Demo
 
-Start the worker
-
+**Start the worker:**
 ```nasm
 saq examples.simple.settings --web
 ```
+Navigate to the Web UI: [http://localhost:8080](http://localhost:8080)
 
-Navigate to the [web ui](http://localhost:8080])
-
-Enqueue jobs
+**Enqueue jobs:**
 ```nasm
 python examples/simple.py
-```
-
-## Development
-```
-python -m venv env
-source env/bin/activate
-pip install -e ".[dev,web]"
-docker run -p 6379:6379 redis
-./run_checks.sh
 ```

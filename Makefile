@@ -5,12 +5,13 @@ help:
 	@echo  "tobymao/saq dev makefile"
 	@echo  ""
 	@echo  "usage: make <target>"
-	@echo  " up	Force updates dev/test dependencies - attempts clean-install"
-	@echo  " deps	Ensure dev/test dependencies are installed"
-	@echo  " test	Runs all tests"
-	@echo  " lint	Reports all linter violations"
-	@echo  " ci	Runs lints & tests (as a full CI run would)"
-	@echo  " format Tries to auto-fix simpler linting issues"
+	@echo  " up		Force updates dev/test dependencies - attempts clean-install"
+	@echo  " deps		Ensure dev/test dependencies are installed"
+	@echo  " test		Runs all tests"
+	@echo  " lint		Reports all linter violations"
+	@echo  " ci		Runs lints & tests (as a full CI run would)"
+	@echo  " format		Tries to auto-fix simpler linting issues"
+	@echo  " devdocs	Builds docs and hosts them on port 8000"
 
 up:
 	pip freeze | grep -v "^-e" | xargs pip uninstall -y
@@ -36,9 +37,6 @@ format:
 	python -m black ${PATHS}
 
 ci: deps lint test
-
-run:
-	./etc/devrun.sh
 
 devdocs: deps_docs
 	sphinx-autobuild docs docs/_build/html

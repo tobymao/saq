@@ -1,3 +1,6 @@
+"""
+Starlette/FastAPI/ASGI
+"""
 from __future__ import annotations
 
 import os
@@ -107,6 +110,23 @@ async def _get_job(queue_name: str, job_key: str) -> Job:
 
 
 def saq_web(root_path: str, queues: list[Queue]) -> Starlette:
+    """
+    Create an embeddable monitoring Web UI
+
+    Example:
+        .. code-block::
+
+            routes = [
+                Mount("/monitor", saq_web("/monitor", queues=all_the_queues_list))
+            ]
+
+    Args:
+        root_path (str): The absolute mount point, typically the same as where you mount it.
+        queues (list[saq.queue.Queue]): The list of known queues
+
+    Returns:
+        Starlette ASGI instance.
+    """
     global ROOT_PATH  # pylint: disable=global-statement
 
     QUEUES.clear()
