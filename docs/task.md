@@ -24,4 +24,4 @@ Basic task type
 :rtype: Any JSON serialisable
 ```
 
-Discuss that if you configured retries that it will automatically retry on any Exception.
+Discuss that if you configured retries that it will automatically retry on any Exception except asyncio.CancelledError

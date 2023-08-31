@@ -44,10 +44,19 @@ intersphinx_mapping = {
 }
 
 autoapi_dirs = ['../saq']
-autoapi_ignore = [
-    '*/saq/__main__.py',
-    '*/saq/web/common.py'
+autoapi_options = [
+    'members',
+    # 'undoc-members',
+    'private-members',
+    'show-inheritance',
+    'show-module-summary',
+    'special-members',
+    'imported-members',
 ]
+napoleon_use_admonition_for_notes = True
+napoleon_preprocess_types = True
+napoleon_attr_annotations = True
+highlight_language = 'python'
 
 myst_enable_extensions = [
     "fieldlist"

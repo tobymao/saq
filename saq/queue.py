@@ -1,3 +1,6 @@
+"""
+Queues
+"""
 from __future__ import annotations
 
 import asyncio
@@ -41,6 +44,9 @@ ID_PREFIX = "saq:job:"
 
 
 class JobError(Exception):
+    """
+    Basic Job error
+    """
     def __init__(self, job: Job) -> None:
         super().__init__(
             f"Job {job.id} {job.status}\n\nThe above job failed with the following error:\n\n{job.error}"
@@ -55,13 +61,14 @@ class Queue:
     """
     Queue is used to interact with aioredis.
 
-    redis: instance of aioredis pool
-    name: name of the queue
-    dump: lambda that takes a dictionary and outputs bytes (default json.dumps)
-    load: lambda that takes bytes and outputs a python dictionary (default json.loads)
-    max_concurrent_ops: maximum concurrent operations.
-        This throttles calls to `enqueue`, `job`, and `abort` to prevent the Queue
-        from consuming too many Redis connections.
+    Args:
+        redis (Redis): instance of aioredis pool
+        name (str): name of the queue (default "default")
+        dump (DumpType | None): lambda that takes a dictionary and outputs bytes (default `json.dumps`)
+        load (LoadType | None): lambda that takes bytes and outputs a python dictionary (default `json.loads`)
+        max_concurrent_ops (int): maximum concurrent operations. (default 20)
+            This throttles calls to `enqueue`, `job`, and `abort` to prevent the Queue
+            from consuming too many Redis connections.
     """
 
     @classmethod
@@ -142,6 +149,14 @@ class Queue:
     async def info(
         self, jobs: bool = False, offset: int = 0, limit: int = 10
     ) -> QueueInfo:
+        """
+        Returns info on the queue
+
+        Args:
+            jobs (bool): Include job info (default False)
+            offset (int): Offset of job info for pagination (default 0)
+            limit (int): Max length of job info (default 10)
+        """
         # pylint: disable=too-many-locals
         worker_uuids = []
 
@@ -194,6 +209,12 @@ class Queue:
         }
 
     async def stats(self, ttl: int = 60) -> QueueStats:
+        """
+        Returns & updates stats on the queue
+
+        Args:
+            ttl (int): Time-to-live of stats saved in Redis
+        """
         current = now()
         stats: QueueStats = {
             "complete": self.complete,
@@ -214,6 +235,12 @@ class Queue:
         return stats
 
     async def count(self, kind: CountKind) -> int:
+        """
+        Gets count of the kind provided by CountKind
+
+        Args:
+            kind (CountKind): The type of Kind you want counts info on
+        """
         if kind == "queued":
             return await self.redis.llen(self._queued)
         if kind == "active":
@@ -295,9 +322,10 @@ class Queue:
         """
         Listen to updates on jobs.
 
-        job_keys: sequence of job keys
-        callback: callback function, if it returns truthy, break
-        timeout: if timeout is truthy, wait for timeout seconds
+        Args:
+            job_keys (Iterable[str]): sequence of job keys
+            callback (ListenCallback): callback function, if it returns truthy, break
+            timeout (float | None): if timeout is truthy, wait for timeout seconds
         """
         pubsub = self.redis.pubsub()
         job_ids = [self.job_id(job_key) for job_key in job_keys]
@@ -444,10 +472,19 @@ class Queue:
         """
         Enqueue a job by instance or string.
 
-        Kwargs can be arguments of the function or properties of the job.
-        If a job instance is passed in, it's properties are overriden.
+        Example:
+            .. code-block::
 
-        If the job has already been enqueued, this returns None.
+                job = await queue.enqueue("add", a=1, b=2)
+                print(job.id)
+
+        Args:
+            job_or_func (str | Job): The job or function to enqueue.
+                If a job instance is passed in, it's properties are overriden.
+            kwargs: Kwargs can be arguments of the function or properties of the job.
+
+        Returns:
+            If the job has already been enqueued, this returns None, else Job
         """
         job_kwargs: dict[str, t.Any] = {}
 
@@ -508,14 +545,18 @@ class Queue:
         If the job is successful, this returns its result.
         If the job is unsuccessful, this raises a JobError.
 
-        Example::
-            try:
-                assert await queue.apply("add", a=1, b=2) == 3
-            except JobError:
-                print("job failed")
+        Example:
+            .. code-block::
 
-        job_or_func: Same as Queue.enqueue
-        kwargs: Same as Queue.enqueue
+                try:
+                    assert await queue.apply("add", a=1, b=2) == 3
+                except JobError:
+                    print("job failed")
+
+        Args:
+            job_or_func (str): Same as Queue.enqueue
+            timeout (float | None): If provided, how long to wait for result, else infinite (default None)
+            kwargs: Same as Queue.enqueue
         """
         results = await self.map(job_or_func, timeout=timeout, iter_kwargs=[kwargs])
         if results:
@@ -533,26 +574,29 @@ class Queue:
         """
         Enqueue multiple jobs and collect all of their results.
 
-        Example::
-            try:
-                assert await queue.map(
-                    "add",
-                    [
-                        {"a": 1, "b": 2},
-                        {"a": 3, "b": 4},
-                    ]
-                ) == [3, 7]
-            except JobError:
-                print("any of the jobs failed")
+        Example:
+            .. code-block::
 
-        job_or_func: Same as Queue.enqueue
-        iter_kwargs: Enqueue a job for each item in this sequence. Each item is the same
-            as kwargs for Queue.enqueue.
-        timeout: Total seconds to wait for all jobs to complete. If None (default) or 0, wait forever.
-        return_exceptions: If False (default), an exception is immediately raised as soon as any jobs
-            fail. Other jobs won't be cancelled and will continue to run.
-            If True, exceptions are treated the same as successful results and aggregated in the result list.
-        kwargs: Default kwargs for all jobs. These will be overridden by those in iter_kwargs.
+                try:
+                    assert await queue.map(
+                        "add",
+                        [
+                            {"a": 1, "b": 2},
+                            {"a": 3, "b": 4},
+                        ]
+                    ) == [3, 7]
+                except JobError:
+                    print("any of the jobs failed")
+
+        Args:
+            job_or_func (str | Job): Same as Queue.enqueue
+            iter_kwargs (Sequence[dict[str, t.Any]]): Enqueue a job for each item in this sequence. Each item is the same
+                as kwargs for Queue.enqueue.
+            timeout (float | None): Total seconds to wait for all jobs to complete. If None (default) or 0, wait forever.
+            return_exceptions (bool): If False (default), an exception is immediately raised as soon as any jobs
+                fail. Other jobs won't be cancelled and will continue to run.
+                If True, exceptions are treated the same as successful results and aggregated in the result list.
+            kwargs: Default kwargs for all jobs. These will be overridden by those in iter_kwargs.
         """
         iter_kwargs = [
             {
@@ -618,10 +662,12 @@ class Queue:
         This tracks all jobs enqueued within the context manager scope and ensures that
         all are aborted if any exception is raised.
 
-        Example::
-            async with queue.batch():
-                await queue.enqueue("test")  # This will get cancelled
-                raise asyncio.CancelledError
+        Example:
+            .. code-block::
+
+                async with queue.batch():
+                    await queue.enqueue("test")  # This will get cancelled
+                    raise asyncio.CancelledError
         """
         children = set()
 

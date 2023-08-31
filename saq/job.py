@@ -1,3 +1,6 @@
+"""
+Jobs
+"""
 from __future__ import annotations
 
 import dataclasses
@@ -18,6 +21,9 @@ def get_default_job_key() -> str:
 
 
 class Status(str, enum.Enum):
+    """
+    Queue Status
+    """
     NEW = "new"
     DEFERRED = "deferred"
     QUEUED = "queued"
@@ -36,11 +42,17 @@ class CronJob:
     """
     Allows scheduling of repeated jobs with cron syntax.
 
-    function: the async function to run
-    cron: cron string for a job to be repeated, uses croniter
-    unique: unique jobs only one once per queue, defaults true
+    Args:
+        function (saq.types.Function): the async function to run
+        cron (str): cron string for a job to be repeated, uses croniter
+        unique (bool): unique jobs only one once per queue, defaults true
 
-    Remaining kwargs are pass through to Job
+    **The remaining kwargs are pass through to Job:** (see equivalent field in Job for more)
+
+    * timeout
+    * heartbeat
+    * retries
+    * ttl
     """
 
     function: Function
@@ -57,34 +69,40 @@ class Job:
     """
     Main job class representing a run of a function.
 
-    User Provided Arguments
-        function: the async function name to run
-        kwargs: kwargs to pass to the function
-        queue: the saq.Queue object associated with the job
-        key: unique identifier of a job, defaults to uuid1, can be passed in to avoid duplicate jobs
-        timeout: the maximum amount of time a job can run for in seconds, defaults to 10 (0 means disabled)
-        heartbeat: the maximum amount of time a job can survive without a heartbeat in seconds, defaults to 0 (disabled)
+    **User specified Arguments:**
+
+    Args:
+        function (str): the async function name to run
+        kwargs (dict[str, Any] | None): kwargs to pass to the function
+        queue (saq.queue.Queue): the saq.Queue object associated with the job
+        key (str): unique identifier of a job, defaults to uuid1, can be passed in to avoid duplicate jobs
+        timeout (int): the maximum amount of time a job can run for in seconds, defaults to 10 (0 means disabled)
+        heartbeat (int): the maximum amount of time a job can survive without a heartbeat in seconds, defaults to 0 (disabled)
             a heartbeat can be triggered manually within a job by calling await job.update()
-        retries: the maximum number of attempts to retry a job, defaults to 1
-        ttl: the maximum time in seconds to store information about a job including results, defaults to 600 (0 means indefinitely, -1 means disabled)
-        retry_delay: seconds to delay before retrying the job
-        retry_backoff: If true, use exponential backoff for retry delays.
+        retries (int): the maximum number of attempts to retry a job, defaults to 1
+        ttl (int): the maximum time in seconds to store information about a job including results, defaults to 600 (0 means indefinitely, -1 means disabled)
+        retry_delay (float): seconds to delay before retrying the job
+        retry_backoff (bool | float): If true, use exponential backoff for retry delays.
             The first retry will have whatever retry_delay is.
             The second retry will have retry_delay*2. The third retry will have retry_delay*4. And so on.
             This always includes jitter, where the final retry delay is a random number between 0 and the calculated retry delay.
             If retry_backoff is set to a number, that number is the maximum retry delay, in seconds.
-        scheduled: epoch seconds for when the job should be scheduled, defaults to 0 (schedule right away)
-        progress: job progress 0.0..1.0
-        meta: arbitrary metadata to attach to the job
-    Framework Set Properties
-        attempts: number of attempts a job has had
-        completed: job completion time epoch seconds
-        queued: job enqueued time epoch seconds
-        started: job started time epoch seconds
-        touched: job touched/updated time epoch seconds
+        scheduled (int): epoch seconds for when the job should be scheduled, defaults to 0 (schedule right away)
+        progress (float): job progress 0.0..1.0
+        meta (dict): arbitrary metadata to attach to the job
+
+    **Framework Set Properties:**
+    Don't set these, but you can read them.
+
+    Parameters:
+        attempts (int): number of attempts a job has had
+        completed (int): job completion time epoch seconds
+        queued (int): job enqueued time epoch seconds
+        started (int): job started time epoch seconds
+        touched (int): job touched/updated time epoch seconds
         result: payload containing the results, this is the return of the function provided, must be serializable, defaults to json
-        error: stack trace if a runtime error occurs
-        status: Status Enum, default to Status.New
+        error (str | None): stack trace if a runtime error occurs
+        status (Status): Status Enum, default to Status.New
     """
 
     function: str
@@ -137,10 +155,12 @@ class Job:
 
     @property
     def id(self) -> str:
+        """Full Job ID"""
         return self.get_queue().job_id(self.key)
 
     @classmethod
     def key_from_id(cls, job_id: str) -> str:
+        """Key portion of Job ID"""
         return job_id.split(":")[-1]
 
     @property
@@ -148,6 +168,9 @@ class Job:
         return f"{ABORT_ID_PREFIX}{self.key}"
 
     def to_dict(self) -> dict[str, t.Any]:
+        """
+        Serialises the Job to dict
+        """
         result = {}
         for field in dataclasses.fields(self):
             key = field.name
@@ -165,8 +188,12 @@ class Job:
         """
         Returns the duration of the job given kind.
 
-        Kind can be process (how long it took to process),
-        start (how long it took to start), or total.
+        Args:
+            Kind (DurationKind): The kind of duration type, can be:
+                * `process` (how long it took to process)
+                * `start` (how long it took to start)
+                * `total`
+                * `running`
         """
         if kind == "process":
             return self._duration(self.completed, self.started)
@@ -240,8 +267,9 @@ class Job:
         """
         Refresh the current job with the latest data from the db.
 
-        until_complete: None or Numeric seconds. if None (default), don't wait,
-            else wait seconds until the job is complete or the interval has been reached. 0 means wait forever
+        Args:
+            until_complete (float | None): None or Numeric seconds. if None (default), don't wait,
+                else wait seconds until the job is complete or the interval has been reached. 0 means wait forever
         """
         job = await self.get_queue().job(self.key)
 
