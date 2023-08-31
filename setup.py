@@ -21,7 +21,10 @@ setup(
     author="Toby Mao",
     author_email="toby.mao@gmail.com",
     license="MIT",
-    packages=["saq"],
+    packages=[
+        "saq",
+        "saq.web",
+    ],
     include_package_data=True,
     entry_points="""
         [console_scripts]
