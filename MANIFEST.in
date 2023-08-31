@@ -2,4 +2,4 @@ include setup.py
 include README.md
 include LICENSE
 include saq/py.typed
-recursive-include saq/static *
+recursive-include saq/web/static *
