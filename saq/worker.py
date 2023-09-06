@@ -232,17 +232,11 @@ class Worker:
             await self.queue.redis.delete(job.abort_id)
             logger.info("Aborting %s", job.id)
 
-    async def process(self) -> None:
+    async def process_job(self, job: Job) -> Job:
         # pylint: disable=too-many-branches
         context: Context | None = None
-        job: Job | None = None
 
         try:
-            job = await self.queue.dequeue(self.dequeue_timeout)
-
-            if job is None:
-                return
-
             job.started = now()
             job.status = Status.ACTIVE
             job.attempts += 1
@@ -278,6 +272,14 @@ class Worker:
                     await self._after_process(context)
                 except (Exception, asyncio.CancelledError):
                     logger.exception("Failed to run after process hook")
+
+        return job
+
+    async def process(self) -> None:
+        job: Job | None = await self.queue.dequeue(self.dequeue_timeout)
+
+        if job:
+            await self.process_job(job)
 
     def _process(self, previous_task: Task | None = None) -> None:
         if previous_task:

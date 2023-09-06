@@ -383,13 +383,17 @@ class Queue:
                 await self.redis.lrem(self._active, 0, job.id)
 
     async def retry(self, job: Job, error: str | None) -> None:
-        job_id = job.id
         job.status = Status.QUEUED
         job.error = error
         job.completed = 0
         job.started = 0
         job.progress = 0
         job.touched = now()
+
+        await self._retry(job)
+
+    async def _retry(self, job: Job) -> None:
+        job_id = job.id
         next_retry_delay = job.next_retry_delay()
 
         async with self.redis.pipeline(transaction=True) as pipe:
@@ -414,7 +418,6 @@ class Queue:
         result: t.Any = None,
         error: str | None = None,
     ) -> None:
-        job_id = job.id
         job.status = status
         job.result = result
         job.error = error
@@ -422,6 +425,11 @@ class Queue:
 
         if status == Status.COMPLETE:
             job.progress = 1.0
+
+        await self._finish(job, status)
+
+    async def _finish(self, job: Job, status: Status) -> None:
+        job_id = job.id
 
         async with self.redis.pipeline(transaction=True) as pipe:
             pipe = pipe.lrem(self._active, 1, job_id).zrem(self._incomplete, job_id)
@@ -464,24 +472,7 @@ class Queue:
         logger.debug("Dequeue timed out")
         return None
 
-    async def enqueue(self, job_or_func: str | Job, **kwargs: t.Any) -> Job | None:
-        """
-        Enqueue a job by instance or string.
-
-        Example:
-            .. code-block::
-
-                job = await queue.enqueue("add", a=1, b=2)
-                print(job.id)
-
-        Args:
-            job_or_func (str | Job): The job or function to enqueue.
-                If a job instance is passed in, it's properties are overriden.
-            kwargs: Kwargs can be arguments of the function or properties of the job.
-
-        Returns:
-            If the job has already been enqueued, this returns None, else Job
-        """
+    def get_job(self, job_or_func: str | Job, **kwargs: t.Any) -> Job:
         job_kwargs: dict[str, t.Any] = {}
 
         for k, v in kwargs.items():
@@ -501,6 +492,30 @@ class Queue:
         if job.queue and job.queue.name != self.name:
             raise ValueError(f"Job {job} registered to a different queue")
 
+        job.queue = self
+        job.queued = now()
+        job.status = Status.QUEUED
+
+        return job
+
+    async def enqueue(self, job_or_func: str | Job, **kwargs: t.Any) -> Job | None:
+        """
+        Enqueue a job by instance or string.
+
+        Example:
+            .. code-block::
+
+                job = await queue.enqueue("add", a=1, b=2)
+                print(job.id)
+
+        Args:
+            job_or_func (str | Job): The job or function to enqueue.
+                If a job instance is passed in, it's properties are overriden.
+            kwargs: Kwargs can be arguments of the function or properties of the job.
+
+        Returns:
+            If the job has already been enqueued, this returns None, else Job
+        """
         if not self._enqueue_script:
             self._enqueue_script = self.redis.register_script(
                 """
@@ -515,9 +530,7 @@ class Queue:
                 """
             )
 
-        job.queue = self
-        job.queued = now()
-        job.status = Status.QUEUED
+        job = self.get_job(job_or_func, **kwargs)
 
         await self._before_enqueue(job)
 
@@ -634,8 +647,16 @@ class Queue:
 
         await asyncio.wait_for(task, timeout=timeout)
 
-        jobs: list[Job | None]
-        jobs = await asyncio.gather(*[self.job(job_key) for job_key in job_keys])
+        return await self._map(
+            [self.job(job_key) for job_key in job_keys], return_exceptions
+        )
+
+    async def _map(
+        self,
+        jobs_: list[t.Coroutine[t.Any, t.Any, Job | None]],
+        return_exceptions: bool,
+    ) -> list[t.Any]:
+        jobs: list[Job | None] = await asyncio.gather(*jobs_)
 
         results: list[t.Any] = []
         for job in jobs:
