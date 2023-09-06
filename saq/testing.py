@@ -1,3 +1,6 @@
+"""
+Testing helpers
+"""
 from __future__ import annotations
 
 import typing as t
@@ -19,6 +22,17 @@ class TestWorker(Worker):
 
 
 class TestQueue(Queue):
+    """
+    This is a test double of Queue, it's used in testing.
+    Please refer to the Testing documentation for more detail.
+
+    Args:
+        worker: Optional worker instance
+        settings: Optional settings dict
+
+    Raises:
+        AssertionError: If both `worker` and `settings` have been provided.
+    """
     def __init__(
         self, *, worker: Worker | None = None, settings: dict[str, t.Any] | None = None
     ) -> None:
@@ -80,6 +94,13 @@ class TestQueue(Queue):
     #########################################################################
 
     def getEnqueued(self, job_name: str, *, kwargs: dict | None = None) -> list[Job]:
+        """
+        Get jobs that have been enqueued, filtered by `job_name` and `kwargs`
+
+        Args:
+            job_name: Job name to filter by
+            kwargs: Exact match of kwargs of job. (optional)
+        """
         jobs = [job for job in self._enqueued if job.function == job_name]
         if kwargs:
             jobs = [job for job in jobs if job.kwargs == kwargs]
@@ -88,6 +109,17 @@ class TestQueue(Queue):
     def assertEnqueuedTimes(
         self, job_name: str, times: int, kwargs: dict | None = None
     ) -> None:
+        """
+        Asserts that the job(s) have been enqueued.
+
+        Args:
+            job_name: Job name to filter by
+            times: Times the job was expected to be enqueued
+            kwargs: Exact match of kwargs of job. (optional)
+
+        Raises:
+            AssertionError: If job has not been enqueued the right amount of times.
+        """
         jobs = self.getEnqueued(job_name, kwargs=kwargs)
 
         if len(jobs) != times:
@@ -96,12 +128,29 @@ class TestQueue(Queue):
             )
 
     def assertNotEnqueued(self, job_name: str, *, kwargs: dict | None = None) -> None:
+        """
+        Asserts that the job(s) have **not** been enqueued.
+
+        Args:
+            job_name: Job name to filter by
+            kwargs: Exact match of kwargs of job. (optional)
+
+        Raises:
+            AssertionError: If job has not been enqueued.
+        """
         jobs = self.getEnqueued(job_name, kwargs=kwargs)
 
         if jobs:
             raise AssertionError(f"Job '{job_name}' called unexpectedly")
 
     def getRetried(self, job_name: str, *, kwargs: dict | None = None) -> list[Job]:
+        """
+        Get jobs that have been retried, filtered by `job_name` and `kwargs`
+
+        Args:
+            job_name: Job name to filter by
+            kwargs: Exact match of kwargs of job. (optional)
+        """
         jobs = [job for job in self._retried if job.function == job_name]
         if kwargs:
             jobs = [job for job in jobs if job.kwargs == kwargs]
@@ -110,6 +159,17 @@ class TestQueue(Queue):
     def assertRetriedTimes(
         self, job_name: str, times: int, kwargs: dict | None = None
     ) -> None:
+        """
+        Asserts that the job(s) have been retried.
+
+        Args:
+            job_name: Job name to filter by
+            times: Times the job was expected to be retried
+            kwargs: Exact match of kwargs of job. (optional)
+
+        Raises:
+            AssertionError: If job has not been retried the right amount of times.
+        """
         jobs = self.getRetried(job_name, kwargs=kwargs)
 
         if len(jobs) != times:
@@ -118,6 +178,16 @@ class TestQueue(Queue):
             )
 
     def assertNotRetried(self, job_name: str, *, kwargs: dict | None = None) -> None:
+        """
+        Asserts that the job(s) have **not** been retried..
+
+        Args:
+            job_name: Job name to filter by
+            kwargs: Exact match of kwargs of job. (optional)
+
+        Raises:
+            AssertionError: If job has been retried.
+        """
         jobs = self.getRetried(job_name, kwargs=kwargs)
 
         if jobs:
