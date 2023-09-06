@@ -33,6 +33,7 @@ class TestQueue(Queue):
     Raises:
         AssertionError: If both `worker` and `settings` have been provided.
     """
+
     def __init__(
         self, *, worker: Worker | None = None, settings: dict[str, t.Any] | None = None
     ) -> None:
