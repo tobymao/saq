@@ -62,7 +62,7 @@ def main() -> None:
         level = args.verbose
 
         if level == 0:
-            level = logging.ERROR
+            level = logging.WARNING
         elif level == 1:
             level = logging.INFO
         else:

@@ -122,6 +122,11 @@ class Worker:
 
     async def start(self) -> None:
         """Start processing jobs and upkeep tasks."""
+        logger.info("Worker starting: %s", repr(self.queue))
+        logger.debug(
+            "Registered functions:\n%s", "\n".join(f"  {key}" for key in self.functions)
+        )
+
         try:
             self.event = asyncio.Event()
             loop = asyncio.get_running_loop()
@@ -142,7 +147,7 @@ class Worker:
             for signum in self.SIGNALS:
                 loop.remove_signal_handler(signum)
         finally:
-            logger.info("Shutting down")
+            logger.info("Worker shutting down")
 
             if self.shutdown:
                 await self.shutdown(self.context)
@@ -249,7 +254,7 @@ class Worker:
             await job.update()
             context = {**self.context, "job": job}
             await self._before_process(context)
-            logger.info("Processing %s", job)
+            logger.info("Processing %s", job.info(logger.isEnabledFor(logging.DEBUG)))
 
             function = ensure_coroutine_function(self.functions[job.function])
             task = asyncio.create_task(function(context, **(job.kwargs or {})))
