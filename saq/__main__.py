@@ -82,12 +82,15 @@ def main() -> None:
                 p = multiprocessing.Process(target=start, args=(settings,))
                 p.start()
 
-        start(
-            settings,
-            web=args.web,
-            extra_web_settings=args.extra_web_settings,
-            port=args.port,
-        )
+        try:
+            start(
+                settings,
+                web=args.web,
+                extra_web_settings=args.extra_web_settings,
+                port=args.port,
+            )
+        except KeyboardInterrupt:
+            pass
 
 
 if __name__ == "__main__":
