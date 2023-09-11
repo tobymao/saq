@@ -128,6 +128,7 @@ class TestQueue(unittest.IsolatedAsyncioTestCase):
         task = asyncio.get_running_loop().create_task(self.dequeue())
         self.assertEqual(await self.count("queued"), 1)
         self.assertEqual(await self.count("incomplete"), 3)
+        await asyncio.sleep(0.05)
         self.assertEqual(await self.count("active"), 3)
         await task
         self.assertEqual(await self.count("incomplete"), 3)
