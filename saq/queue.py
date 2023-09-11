@@ -63,11 +63,11 @@ class Queue:
     Queue is used to interact with redis.
 
     Args:
-        redis (Redis): instance of redis.asyncio pool
-        name (str): name of the queue (default "default")
-        dump (DumpType | None): lambda that takes a dictionary and outputs bytes (default `json.dumps`)
-        load (LoadType | None): lambda that takes bytes and outputs a python dictionary (default `json.loads`)
-        max_concurrent_ops (int): maximum concurrent operations. (default 20)
+        redis: instance of redis.asyncio pool
+        name: name of the queue (default "default")
+        dump: lambda that takes a dictionary and outputs bytes (default `json.dumps`)
+        load: lambda that takes bytes and outputs a python dictionary (default `json.loads`)
+        max_concurrent_ops: maximum concurrent operations. (default 20)
             This throttles calls to `enqueue`, `job`, and `abort` to prevent the Queue
             from consuming too many Redis connections.
     """
@@ -156,9 +156,9 @@ class Queue:
         Returns info on the queue
 
         Args:
-            jobs (bool): Include job info (default False)
-            offset (int): Offset of job info for pagination (default 0)
-            limit (int): Max length of job info (default 10)
+            jobs: Include job info (default False)
+            offset: Offset of job info for pagination (default 0)
+            limit: Max length of job info (default 10)
         """
         # pylint: disable=too-many-locals
         worker_uuids = []
@@ -212,7 +212,7 @@ class Queue:
         Returns & updates stats on the queue
 
         Args:
-            ttl (int): Time-to-live of stats saved in Redis
+            ttl: Time-to-live of stats saved in Redis
         """
         current = now()
         stats: QueueStats = {
@@ -238,7 +238,7 @@ class Queue:
         Gets count of the kind provided by CountKind
 
         Args:
-            kind (CountKind): The type of Kind you want counts info on
+            kind: The type of Kind you want counts info on
         """
         if kind == "queued":
             return await self.redis.llen(self._queued)
@@ -324,9 +324,9 @@ class Queue:
         Listen to updates on jobs.
 
         Args:
-            job_keys (Iterable[str]): sequence of job keys
-            callback (ListenCallback): callback function, if it returns truthy, break
-            timeout (float | None): if timeout is truthy, wait for timeout seconds
+            job_keys: sequence of job keys
+            callback: callback function, if it returns truthy, break
+            timeout: if timeout is truthy, wait for timeout seconds
         """
         pubsub = self.redis.pubsub()
         job_ids = [self.job_id(job_key) for job_key in job_keys]
@@ -480,7 +480,7 @@ class Queue:
                 print(job.id)
 
         Args:
-            job_or_func (str | Job): The job or function to enqueue.
+            job_or_func: The job or function to enqueue.
                 If a job instance is passed in, it's properties are overriden.
             kwargs: Kwargs can be arguments of the function or properties of the job.
 
@@ -555,8 +555,8 @@ class Queue:
                     print("job failed")
 
         Args:
-            job_or_func (str): Same as Queue.enqueue
-            timeout (float | None): If provided, how long to wait for result, else infinite (default None)
+            job_or_func: Same as Queue.enqueue
+            timeout: If provided, how long to wait for result, else infinite (default None)
             kwargs: Same as Queue.enqueue
         """
         results = await self.map(job_or_func, timeout=timeout, iter_kwargs=[kwargs])
@@ -590,11 +590,11 @@ class Queue:
                     print("any of the jobs failed")
 
         Args:
-            job_or_func (str | Job): Same as Queue.enqueue
-            iter_kwargs (Sequence[dict[str, t.Any]]): Enqueue a job for each item in this sequence. Each item is the same
+            job_or_func: Same as Queue.enqueue
+            iter_kwargs: Enqueue a job for each item in this sequence. Each item is the same
                 as kwargs for Queue.enqueue.
-            timeout (float | None): Total seconds to wait for all jobs to complete. If None (default) or 0, wait forever.
-            return_exceptions (bool): If False (default), an exception is immediately raised as soon as any jobs
+            timeout: Total seconds to wait for all jobs to complete. If None (default) or 0, wait forever.
+            return_exceptions: If False (default), an exception is immediately raised as soon as any jobs
                 fail. Other jobs won't be cancelled and will continue to run.
                 If True, exceptions are treated the same as successful results and aggregated in the result list.
             kwargs: Default kwargs for all jobs. These will be overridden by those in iter_kwargs.

@@ -141,6 +141,12 @@ class Job:
     }
 
     def info(self, full: bool = False) -> str:
+        """
+        String with Job info
+
+        Args:
+            full: If true, will list the full kwargs for the Job, else an abridged version.
+        """
         # Using an exclusion list preserves order for kwargs below
         excluded = set() if full else self._EXCLUDE_NON_FULL
         kwargs = ", ".join(

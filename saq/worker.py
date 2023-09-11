@@ -42,22 +42,20 @@ class Worker:
     Worker is used to process and monitor jobs.
 
     Args:
-        queue (Queue): instance of saq.queue.Queue
-        functions (Collection[Function | tuple[str, Function]]): list of async functions
-
-    Keyword Args:
-        concurrency (int): number of jobs to process concurrently
-        cron_jobs (Collection[CronJob] | None):
-        startup (ReceivesContext | None): async function to call on startup
-        shutdown (ReceivesContext | None): async function to call on shutdown
-        before_process (ReceivesContext | None): async function to call before a job processes
-        after_process (ReceivesContext | None): async function to call after a job processes
-        timers (PartialTimersDict | None): dict with various timer overrides in seconds
+        queue: instance of saq.queue.Queue
+        functions: list of async functions
+        concurrency: number of jobs to process concurrently
+        cron_jobs: List of CronJob instances.
+        startup: async function to call on startup
+        shutdown: async function to call on shutdown
+        before_process: async function to call before a job processes
+        after_process: async function to call after a job processes
+        timers: dict with various timer overrides in seconds
             schedule: how often we poll to schedule jobs
             stats: how often to update stats
             sweep: how often to clean up stuck jobs
             abort: how often to check if a job is aborted
-        dequeue_timeout (float): how long it will wait to dequeue
+        dequeue_timeout: how long it will wait to dequeue
     """
 
     SIGNALS = [signal.SIGINT, signal.SIGTERM] if os.name != "nt" else [signal.SIGTERM]

@@ -16,13 +16,17 @@ if t.TYPE_CHECKING:
 
 class Context(t.TypedDict, total=False):
     """
-    Task context
+    Task context.
+
+    Extra context fields are allowed.
     """
 
     worker: Required[Worker]
+    "Worker currently executing the task"
     job: Job
+    "Job() instance of the task"
     queue: Queue
-    sleep: int
+    "Queue the task is running on"
 
 
 class JobTaskContext(t.TypedDict, total=False):
@@ -31,7 +35,9 @@ class JobTaskContext(t.TypedDict, total=False):
     """
 
     task: Task[t.Any]
+    "asyncio Task of the Job"
     aborted: bool
+    "Did the task abort?"
 
 
 class QueueInfo(t.TypedDict):
@@ -40,11 +46,16 @@ class QueueInfo(t.TypedDict):
     """
 
     workers: dict[str, dict[str, t.Any]]
+    "Worker information"
     name: str
+    "Queue name"
     queued: int
+    "Number of jobs currently in the queue"
     active: int
+    "Number of jobs currently active"
     scheduled: int
     jobs: list[dict[str, t.Any]]
+    "A truncated list containing the jobs that are scheduled to execute soonest"
 
 
 class QueueStats(t.TypedDict):
@@ -53,10 +64,15 @@ class QueueStats(t.TypedDict):
     """
 
     complete: int
+    "Number of complete tasks"
     failed: int
+    "Number of failed tasks"
     retried: int
+    "Number of retries"
     aborted: int
+    "Number of aborted tasks"
     uptime: int
+    "Queue uptime in milliseconds"
 
 
 class TimersDict(t.TypedDict):
@@ -65,9 +81,13 @@ class TimersDict(t.TypedDict):
     """
 
     schedule: int
+    "How often we poll to schedule jobs in seconds (default 1)"
     stats: int
+    "How often to update stats in seconds (default 10)"
     sweep: int
+    "How often to clean up stuck jobs in seconds (default 60)"
     abort: int
+    "How often to check if a job is aborted in seconds (default 1)"
 
 
 class PartialTimersDict(TimersDict, total=False):
