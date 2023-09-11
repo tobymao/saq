@@ -108,6 +108,9 @@ class Queue:
         self._before_enqueues: dict[int, BeforeEnqueueType] = {}
         self._op_sem = asyncio.Semaphore(max_concurrent_ops)
 
+    def __repr__(self) -> str:
+        return f"{self.__class__.__name__}<redis={self.redis}, name='{self.name}'>"
+
     def register_before_enqueue(self, callback: BeforeEnqueueType) -> None:
         self._before_enqueues[id(callback)] = callback
 
@@ -306,7 +309,9 @@ class Queue:
                 elif job.status != Status.ACTIVE or job.stuck:
                     swept.append(job_id)
                     await job.finish(Status.ABORTED, error="swept")
-                    logger.info("Sweeping job %s", job)
+                    logger.info(
+                        "Sweeping job %s", job.info(logger.isEnabledFor(logging.DEBUG))
+                    )
         return swept
 
     async def listen(
@@ -404,7 +409,7 @@ class Queue:
             await pipe.set(job_id, self.serialize(job)).execute()
             self.retried += 1
             await self.notify(job)
-            logger.info("Retrying %s", job)
+            logger.info("Retrying %s", job.info(logger.isEnabledFor(logging.DEBUG)))
 
     async def finish(
         self,
@@ -443,7 +448,7 @@ class Queue:
                 self.aborted += 1
 
             await self.notify(job)
-            logger.info("Finished %s", job)
+            logger.info("Finished %s", job.info(logger.isEnabledFor(logging.DEBUG)))
 
     async def dequeue(self, timeout: float = 0) -> Job | None:
         if await self.version() < (6, 2, 0):
@@ -529,7 +534,7 @@ class Queue:
             ):
                 return None
 
-        logger.info("Enqueuing %s", job)
+        logger.info("Enqueuing %s", job.info(logger.isEnabledFor(logging.DEBUG)))
         return job
 
     async def apply(

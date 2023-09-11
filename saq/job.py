@@ -129,7 +129,20 @@ class Job:
     status: Status = Status.NEW
     meta: dict[t.Any, t.Any] = dataclasses.field(default_factory=dict)
 
-    def __repr__(self) -> str:
+    _EXCLUDE_NON_FULL = {
+        "kwargs",
+        "scheduled",
+        "progress",
+        "total_ms",
+        "result",
+        "error",
+        "status",
+        "meta",
+    }
+
+    def info(self, full: bool = False) -> str:
+        # Using an exclusion list preserves order for kwargs below
+        excluded = set() if full else self._EXCLUDE_NON_FULL
         kwargs = ", ".join(
             f"{k}={v}"
             for k, v in {
@@ -148,9 +161,12 @@ class Job:
                 "status": self.status,
                 "meta": self.meta,
             }.items()
-            if v is not None
+            if v is not None and k not in excluded
         )
         return f"Job<{kwargs}>"
+
+    def __repr__(self) -> str:
+        return self.info(True)
 
     def __hash__(self) -> int:
         return hash(self.key)
