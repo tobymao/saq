@@ -121,8 +121,8 @@ def saq_web(root_path: str, queues: list[Queue]) -> Starlette:
             ]
 
     Args:
-        root_path (str): The absolute mount point, typically the same as where you mount it.
-        queues (list[saq.queue.Queue]): The list of known queues
+        root_path: The absolute mount point, typically the same as where you mount it.
+        queues: The list of known queues
 
     Returns:
         Starlette ASGI instance.

@@ -2,7 +2,7 @@
 
 TODO: Discuss running workers
 
-## Command-line tool
+## Command-line runner
 ```text
 usage: saq [-h] [--workers WORKERS] [--verbose] [--web]
            [--extra-web-settings EXTRA_WEB_SETTINGS] [--port PORT] [--check]
@@ -32,4 +32,25 @@ environment variables:
   AUTH_USER            Basic auth user, defaults to admin
   AUTH_PASSWORD        Basic auth password, if not specified, no auth will be
                        used
+```
+
+The `settings` attribute should be a string to the fully-qualified name of the settings dictionary.
+For detail info on that please refer to [](#settings)
+
+### Running workers
+
+```nasm
+saq examples.simple.settings --web
+```
+
+### Auto-reloading during development
+If, during development you want to have your worker auto-reload, you can do so by using [Watchdog](https://github.com/gorakhargosh/watchdog):
+
+```nasm
+pip install watchdog
+```
+
+And to use for a hypothetical project `myproject`:
+```nasm
+watchmedo auto-restart -d myproject/ -R -- saq myproject.tasks.settings -v
 ```

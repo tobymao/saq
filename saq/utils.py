@@ -38,10 +38,10 @@ def exponential_backoff(
     Get the next delay for retries in exponential backoff.
 
     Args:
-        attempts (int): Number of attempts so far
-        base_delay (float): Base delay, in seconds
-        max_delay (float | None): Max delay, in seconds. If None (default), there is no max.
-        jitter (bool): If True, add a random jitter to the delay
+        attempts: Number of attempts so far
+        base_delay: Base delay, in seconds
+        max_delay: Max delay, in seconds. If None (default), there is no max.
+        jitter: If True, add a random jitter to the delay
 
     Returns:
         Delay in seconds

@@ -26,31 +26,49 @@ It is similar to [RQ](https://github.com/rq/rq) and heavily inspired by [ARQ](ht
 :gutter: 3
 :margin: 1
 
-:::{grid-item-card}  Getting Started
+:::{grid-item-card}
 :link: getting_started
 :link-type: doc
-
+:text-align: center
+:class-header: secondary
+**Getting Started**
+^^^
 Getting started with SAQ?
 :::
 
-:::{grid-item-card}  Usage
+:::{grid-item-card}
 :link: usage
 :link-type: doc
-
+:text-align: center
+**Usage**
+^^^
 Guides on how to use SAQ
 :::
 
-:::{grid-item-card}  API Reference
+:::{grid-item-card}
+:link: monitoring
+:link-type: doc
+:text-align: center
+**Monitoring**
+^^^
+SAQ provides a simple UI for monitor workers and jobs.
+:::
+
+:::{grid-item-card}
 :link: autoapi/index
 :link-type: doc
-
+:text-align: center
+**API Reference**
+^^^
 The API Reference for advanced users.
 :::
 
-:::{grid-item-card}  Changelog
+:::{grid-item-card}
 :link: changelog
 :link-type: doc
-
+:text-align: center
+**Changelog**
+^^^
 See the recent changes, and upgrade instuctions if needed.
 :::
 ::::

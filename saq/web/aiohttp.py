@@ -1,3 +1,7 @@
+"""
+Built-in AIOHttp webserver, activated with --web param to worker.
+"""
+
 from __future__ import annotations
 
 import logging
