@@ -9,11 +9,12 @@ import typing as t
 
 from saq.utils import exponential_backoff, now, seconds, uuid1
 
-ABORT_ID_PREFIX = "saq:abort:"
 
 if t.TYPE_CHECKING:
     from saq.queue import Queue
     from saq.types import DurationKind, Function
+
+ABORT_ID_PREFIX = "saq:abort:"
 
 
 def get_default_job_key() -> str:
@@ -303,7 +304,6 @@ class Job:
         self.replace(job)
 
         if until_complete is not None and not self.completed:
-
             async def callback(_id: str, status: Status) -> bool:
                 return status in TERMINAL_STATUSES
 
