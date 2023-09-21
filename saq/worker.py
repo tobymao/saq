@@ -352,12 +352,22 @@ def start(
 
 async def async_check_health(queue: Queue) -> int:
     info = await queue.info()
-    if not info.get("name") == queue.name:
-        logger.warning("Health check failed")
+    name = info.get("name")
+    if name != queue.name:
+        logger.warning(
+            "Health check failed. Unknown queue name %s. Expected %s",
+            name,
+            queue.name,
+        )
+        status = 1
+    elif not info.get("workers"):
+        logger.warning("No active workers found for queue %s", name)
         status = 1
     else:
-        logger.info(info["name"])
+        workers = len(info["workers"].values())
+        logger.info("Found %d active workers for queue %s", workers, name)
         status = 0
+
     await queue.disconnect()
     return status
 
