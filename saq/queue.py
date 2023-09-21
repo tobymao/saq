@@ -66,7 +66,7 @@ class Queue:
         redis: instance of redis.asyncio pool
         name: name of the queue (default "default")
         dump: lambda that takes a dictionary and outputs bytes (default `json.dumps`)
-        load: lambda that takes bytes and outputs a python dictionary (default `json.loads`)
+        load: lambda that takes str or bytes and outputs a python dictionary (default `json.loads`)
         max_concurrent_ops: maximum concurrent operations. (default 20)
             This throttles calls to `enqueue`, `job`, and `abort` to prevent the Queue
             from consuming too many Redis connections.
@@ -175,7 +175,7 @@ class Queue:
         worker_info = {}
         for worker_uuid, stats in zip(worker_uuids, worker_stats):
             if stats:
-                stats_obj = json.loads(stats.decode("UTF-8"))
+                stats_obj = self._load(stats)
                 worker_info[worker_uuid] = stats_obj
 
         queued = await self.count("queued")
@@ -225,7 +225,7 @@ class Queue:
         async with self.redis.pipeline(transaction=True) as pipe:
             key = self.namespace(f"stats:{self.uuid}")
             await (
-                pipe.setex(key, ttl, json.dumps(stats))
+                pipe.setex(key, ttl, self._dump(stats))
                 .zremrangebyscore(self._stats, 0, current)
                 .zadd(self._stats, {key: current + millis(ttl)})
                 .expire(self._stats, ttl)
