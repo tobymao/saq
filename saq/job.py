@@ -304,6 +304,7 @@ class Job:
         self.replace(job)
 
         if until_complete is not None and not self.completed:
+
             async def callback(_id: str, status: Status) -> bool:
                 return status in TERMINAL_STATUSES
 
