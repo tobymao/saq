@@ -13,6 +13,7 @@ from saq.utils import uuid1
 from saq.worker import Worker
 from tests.helpers import cleanup_queue, create_queue
 
+
 if t.TYPE_CHECKING:
     from unittest.mock import MagicMock
 
@@ -23,8 +24,9 @@ async def echo(_ctx: Context, *, a: int) -> int:
     return a
 
 
-async def error(_ctx: Context) -> None:
-    raise ValueError("oops")
+async def error(_ctx: Context) -> t.NoReturn:
+    msg = "oops"
+    raise ValueError(msg)
 
 
 functions: list[Function] = [echo, error]
@@ -304,7 +306,6 @@ class TestQueue(unittest.IsolatedAsyncioTestCase):
         # missing job
         job4 = Job(function="", queue=self.queue)
 
-        # pylint: disable=protected-access
         await self.queue.redis.lpush(self.queue._active, job4.id)
 
         mock_time.time.return_value = 3
@@ -364,7 +365,8 @@ class TestQueue(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await self.queue.map("echo", [{"a": 1}]), [1])
         self.assertEqual(await self.queue.map("echo", [{"a": 1}, {"a": 2}]), [1, 2])
         self.assertEqual(
-            await self.queue.map("echo", [{}, {"a": 2}], timeout=10, a=3), [3, 2]
+            await self.queue.map("echo", [{}, {"a": 2}], timeout=10, a=3),
+            [3, 2],
         )
         with self.assertRaises(JobError):
             await self.queue.map("error", [{}, {}])

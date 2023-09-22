@@ -5,13 +5,15 @@ from __future__ import annotations
 
 import typing as t
 
+
 if t.TYPE_CHECKING:
     from asyncio import Task
 
-    from saq.job import Job, Status
-    from saq.worker import Worker
-    from saq.queue import Queue
     from typing_extensions import Required
+
+    from saq.job import Job, Status
+    from saq.queue import Queue
+    from saq.worker import Worker
 
 
 class Context(t.TypedDict, total=False):

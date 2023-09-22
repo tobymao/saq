@@ -29,11 +29,12 @@ test:
 	@python -m coverage report
 
 lint:
-	python -m pylint ${PATHS}
-	python -m black ${PATHS}
+	python -m ruff check ${PATHS}
+	python -m black --check ${PATHS}
 	python -m mypy ${PATHS}
 
 format:
+	python -m ruff check --fix ${PATHS}
 	python -m black ${PATHS}
 
 ci: deps lint test

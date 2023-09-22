@@ -4,6 +4,7 @@ from typing import Any
 
 from saq.job import Job
 
+
 STATIC_PATH = pathlib.Path(__file__).parent.resolve() / "static"
 BODY = """
 <!DOCTYPE html>

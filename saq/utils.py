@@ -50,5 +50,5 @@ def exponential_backoff(
         max_delay = float("inf")
     backoff = min(max_delay, base_delay * 2 ** max(attempts - 1, 0))
     if jitter:
-        backoff = backoff * random()
+        backoff = backoff * random()  # noqa: S311
     return backoff

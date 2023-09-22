@@ -1,4 +1,5 @@
 import argparse
+import contextlib
 import logging
 import multiprocessing
 import os
@@ -15,7 +16,10 @@ def main() -> None:
         help="Namespaced variable containing worker settings eg: eg module_a.settings",
     )
     parser.add_argument(
-        "--workers", type=int, help="Number of worker processes", default=1
+        "--workers",
+        type=int,
+        help="Number of worker processes",
+        default=1,
     )
     parser.add_argument(
         "--verbose",
@@ -82,15 +86,13 @@ def main() -> None:
                 p = multiprocessing.Process(target=start, args=(settings,))
                 p.start()
 
-        try:
+        with contextlib.suppress(KeyboardInterrupt):
             start(
                 settings,
                 web=args.web,
                 extra_web_settings=args.extra_web_settings,
                 port=args.port,
             )
-        except KeyboardInterrupt:
-            pass
 
 
 if __name__ == "__main__":

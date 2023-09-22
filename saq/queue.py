@@ -21,6 +21,7 @@ from saq.job import (
 )
 from saq.utils import millis, now, seconds, uuid1
 
+
 if t.TYPE_CHECKING:
     from collections.abc import AsyncIterator, Iterable, Sequence
 
@@ -50,7 +51,7 @@ class JobError(Exception):
 
     def __init__(self, job: Job) -> None:
         super().__init__(
-            f"Job {job.id} {job.status}\n\nThe above job failed with the following error:\n\n{job.error}"
+            f"Job {job.id} {job.status}\n\nThe above job failed with the following error:\n\n{job.error}",
         )
         self.job = job
 
@@ -77,7 +78,7 @@ class Queue:
         """Create a queue with a redis url a name."""
         return cls(aioredis.from_url(url), **kwargs)
 
-    def __init__(  # pylint: disable=too-many-arguments
+    def __init__(  # noqa: PLR0913
         self,
         redis: Redis[bytes],
         name: str = "default",
@@ -136,7 +137,8 @@ class Queue:
 
         job_dict = self._load(job_bytes)
         if job_dict.pop("queue") != self.name:
-            raise ValueError(f"Job {job_dict} fetched by wrong queue: {self.name}")
+            msg = f"Job {job_dict} fetched by wrong queue: {self.name}"
+            raise ValueError(msg)
         return Job(**job_dict, queue=self)
 
     async def disconnect(self) -> None:
@@ -150,7 +152,10 @@ class Queue:
         return self._version
 
     async def info(
-        self, jobs: bool = False, offset: int = 0, limit: int = 10
+        self,
+        jobs: bool = False,
+        offset: int = 0,
+        limit: int = 10,
     ) -> QueueInfo:
         """
         Returns info on the queue
@@ -160,7 +165,6 @@ class Queue:
             offset: Offset of job info for pagination (default 0)
             limit: Max length of job info (default 10)
         """
-        # pylint: disable=too-many-locals
         worker_uuids = []
 
         for key in await self.redis.zrangebyscore(self._stats, now(), "inf"):
@@ -189,9 +193,12 @@ class Queue:
                     (await self.redis.lrange(self._active, offset, limit - 1))
                     + (
                         await self.redis.zrange(
-                            self._incomplete, offset, limit - 1, withscores=False
+                            self._incomplete,
+                            offset,
+                            limit - 1,
+                            withscores=False,
                         )
-                    )
+                    ),
                 )
             )
             job_info = [job.to_dict() for job in deserialized_jobs if job is not None]
@@ -246,7 +253,7 @@ class Queue:
             return await self.redis.llen(self._active)
         if kind == "incomplete":
             return await self.redis.zcard(self._incomplete)
-        raise ValueError("Can't count unknown type {kind}")
+        raise ValueError(f"Can't count unknown type {kind}")  # noqa: EM102
 
     async def schedule(self, lock: int = 1) -> t.Any:
         if not self._schedule_script:
@@ -268,7 +275,7 @@ class Queue:
 
                     return jobs
                 end
-                """
+                """,
             )
 
         return await self._schedule_script(
@@ -284,11 +291,13 @@ class Queue:
                     redis.call('SETEX', KEYS[1], ARGV[1], 1)
                     return redis.call('LRANGE', KEYS[2], 0, -1)
                 end
-                """
+                """,
             )
 
         job_ids = await self._cleanup_script(
-            keys=[self._sweep, self._active], args=[lock], client=self.redis
+            keys=[self._sweep, self._active],
+            args=[lock],
+            client=self.redis,
         )
 
         swept = []
@@ -310,7 +319,8 @@ class Queue:
                     swept.append(job_id)
                     await job.finish(Status.ABORTED, error="swept")
                     logger.info(
-                        "Sweeping job %s", job.info(logger.isEnabledFor(logging.DEBUG))
+                        "Sweeping job %s",
+                        job.info(logger.isEnabledFor(logging.DEBUG)),
                     )
         return swept
 
@@ -398,15 +408,19 @@ class Queue:
         next_retry_delay = job.next_retry_delay()
 
         async with self.redis.pipeline(transaction=True) as pipe:
-            pipe = pipe.lrem(self._active, 1, job_id)
-            pipe = pipe.lrem(self._queued, 1, job_id)
+            pipe.lrem(self._active, 1, job_id)
+            pipe.lrem(self._queued, 1, job_id)
+
             if next_retry_delay:
                 scheduled = time.time() + next_retry_delay
-                pipe = pipe.zadd(self._incomplete, {job_id: scheduled})
+                pipe.zadd(self._incomplete, {job_id: scheduled})
             else:
-                pipe = pipe.zadd(self._incomplete, {job_id: job.scheduled})
-                pipe = pipe.rpush(self._queued, job_id)
-            await pipe.set(job_id, self.serialize(job)).execute()
+                pipe.zadd(self._incomplete, {job_id: job.scheduled})
+                pipe.rpush(self._queued, job_id)
+
+            pipe.set(job_id, self.serialize(job))
+            await pipe.execute()
+
             self.retried += 1
             await self.notify(job)
             logger.info("Retrying %s", job.info(logger.isEnabledFor(logging.DEBUG)))
@@ -429,12 +443,13 @@ class Queue:
             job.progress = 1.0
 
         async with self.redis.pipeline(transaction=True) as pipe:
-            pipe = pipe.lrem(self._active, 1, job_id).zrem(self._incomplete, job_id)
+            pipe.lrem(self._active, 1, job_id)
+            pipe.zrem(self._incomplete, job_id)
 
             if job.ttl > 0:
-                pipe = pipe.setex(job_id, job.ttl, self.serialize(job))
+                pipe.setex(job_id, job.ttl, self.serialize(job))
             elif job.ttl == 0:
-                pipe = pipe.set(job_id, self.serialize(job))
+                pipe.set(job_id, self.serialize(job))
             else:
                 pipe.delete(job_id)
 
@@ -453,7 +468,9 @@ class Queue:
     async def dequeue(self, timeout: float = 0) -> Job | None:
         if await self.version() < (6, 2, 0):
             job_id = await self.redis.brpoplpush(
-                self._queued, self._active, timeout  # type:ignore[arg-type]
+                self._queued,
+                self._active,
+                timeout,  # type:ignore[arg-type]
             )
         else:
             job_id = await self.redis.blmove(
@@ -490,7 +507,7 @@ class Queue:
         job_kwargs: dict[str, t.Any] = {}
 
         for k, v in kwargs.items():
-            if k in Job.__dataclass_fields__:  # pylint: disable=no-member
+            if k in Job.__dataclass_fields__:
                 job_kwargs[k] = v
             else:
                 job_kwargs.setdefault("kwargs", {})[k] = v
@@ -504,7 +521,8 @@ class Queue:
                 setattr(job, k, v)
 
         if job.queue and job.queue.name != self.name:
-            raise ValueError(f"Job {job} registered to a different queue")
+            msg = f"Job {job} registered to a different queue"
+            raise ValueError(msg)
 
         if not self._enqueue_script:
             self._enqueue_script = self.redis.register_script(
@@ -517,7 +535,7 @@ class Queue:
                 else
                     return nil
                 end
-                """
+                """,
             )
 
         job.queue = self
@@ -538,7 +556,10 @@ class Queue:
         return job
 
     async def apply(
-        self, job_or_func: str, timeout: float | None = None, **kwargs: t.Any
+        self,
+        job_or_func: str,
+        timeout: float | None = None,
+        **kwargs: t.Any,
     ) -> t.Any:
         """
         Enqueue a job and wait for its result.
@@ -626,12 +647,12 @@ class Queue:
         # Start listening before we enqueue the jobs.
         # This ensures we don't miss any updates.
         task = asyncio.create_task(
-            self.listen(pending_job_keys, callback, timeout=None)
+            self.listen(pending_job_keys, callback, timeout=None),
         )
 
         try:
             await asyncio.gather(
-                *[self.enqueue(job_or_func, **kw) for kw in iter_kwargs]
+                *[self.enqueue(job_or_func, **kw) for kw in iter_kwargs],
             )
         except:
             task.cancel()

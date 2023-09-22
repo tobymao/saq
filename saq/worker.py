@@ -17,6 +17,7 @@ from saq.job import Status
 from saq.queue import Queue
 from saq.utils import millis, now, seconds
 
+
 if t.TYPE_CHECKING:
     from asyncio import Task
     from collections.abc import Callable, Collection, Coroutine
@@ -60,7 +61,7 @@ class Worker:
 
     SIGNALS = [signal.SIGINT, signal.SIGTERM] if os.name != "nt" else [signal.SIGTERM]
 
-    def __init__(
+    def __init__(  # noqa: PLR0913
         self,
         queue: Queue,
         functions: Collection[Function | tuple[str, Function]],
@@ -99,12 +100,13 @@ class Worker:
 
         for job in self.cron_jobs:
             if not croniter.is_valid(job.cron):
-                raise ValueError(f"Cron is invalid {job.cron}")
+                msg = f"Cron is invalid {job.cron}"
+                raise ValueError(msg)
             functions.add(job.function)
 
         for function in functions:
             if isinstance(function, tuple):
-                name, function = function
+                name, function = function  # noqa: PLW2901
             else:
                 name = function.__qualname__
 
@@ -122,7 +124,8 @@ class Worker:
         """Start processing jobs and upkeep tasks."""
         logger.info("Worker starting: %s", repr(self.queue))
         logger.debug(
-            "Registered functions:\n%s", "\n".join(f"  {key}" for key in self.functions)
+            "Registered functions:\n%s",
+            "\n".join(f"  {key}" for key in self.functions),
         )
 
         try:
@@ -183,7 +186,9 @@ class Worker:
         """Start various upkeep tasks async."""
 
         async def poll(
-            func: Callable[[int], Coroutine], sleep: int, arg: int | None = None
+            func: Callable[[int], Coroutine],
+            sleep: int,
+            arg: int | None = None,
         ) -> None:
             while not self.event.is_set():
                 try:
@@ -200,7 +205,7 @@ class Worker:
             asyncio.create_task(poll(self.schedule, self.timers["schedule"])),
             asyncio.create_task(poll(self.queue.sweep, self.timers["sweep"])),
             asyncio.create_task(
-                poll(self.queue.stats, self.timers["stats"], self.timers["stats"] + 1)
+                poll(self.queue.stats, self.timers["stats"], self.timers["stats"] + 1),
             ),
         ]
 
@@ -235,8 +240,7 @@ class Worker:
             await self.queue.redis.delete(job.abort_id)
             logger.info("Aborting %s", job.id)
 
-    async def process(self) -> None:
-        # pylint: disable=too-many-branches
+    async def process(self) -> None:  # noqa: PLR0912
         context: Context | None = None
         job: Job | None = None
 
@@ -300,7 +304,8 @@ def ensure_coroutine_function(func: Callable) -> Callable[..., Coroutine]:
         loop = asyncio.get_running_loop()
         ctx = contextvars.copy_context()
         return await loop.run_in_executor(
-            executor=None, func=lambda: ctx.run(func, *args, **kwargs)
+            executor=None,
+            func=lambda: ctx.run(func, *args, **kwargs),
         )
 
     return wrapped

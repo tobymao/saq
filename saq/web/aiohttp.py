@@ -13,6 +13,7 @@ from aiohttp import web
 
 from saq.web.common import STATIC_PATH, job_dict, render
 
+
 if t.TYPE_CHECKING:
     from aiohttp.typedefs import Handler
     from aiohttp.web import StreamResponse
@@ -79,7 +80,8 @@ async def _get_job(request: Request) -> Job:
 
     job = await _get_queue(request, queue_name).job(job_key)
     if not job:
-        raise ValueError(f"Job {job_key} not found")
+        msg = f"Job {job_key} not found"
+        raise ValueError(msg)
     return job
 
 
@@ -87,12 +89,10 @@ async def _get_job(request: Request) -> Job:
 async def exceptions(request: Request, handler: Handler) -> StreamResponse:
     if request.path.startswith("/api"):
         try:
-            resp = await handler(request)
-            return resp
+            return await handler(request)
         except Exception:
-            error = traceback.format_exc()
-            logging.error(error)
-            return web.json_response({"error": error})
+            logging.exception("Request handling error")
+            return web.json_response({"error": traceback.format_exc()})
     return await handler(request)
 
 
@@ -126,7 +126,7 @@ def create_app(queues: list[Queue]) -> Application:
             web.get("/queues/{queue}", views),
             web.get("/queues/{queue}/jobs/{job}", views),
             web.get("/health", health),
-        ]
+        ],
     )
     app.on_shutdown.append(shutdown)
     return app

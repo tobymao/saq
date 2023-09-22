@@ -1,0 +1,70 @@
+[tool.ruff]
+select = [
+  "E", # pycodestyle errors
+  "W", # pycodestyle warnings
+  "F", # pyflakes
+  "B", # flake-bugbear
+  "Q", # flake8-quotes
+  "I", # isort
+  "S", # flake8-bandit
+  "RET", # flake8-return
+  "SIM", # flake8-simplify
+  "C4", # flake8-comprehensions
+  "PIE", # flake8-pie
+  "TRY", # tryceratops
+  "RUF", # ruff
+  "PL", # pylint
+  "DTZ", # flake8-datetimez
+  "UP", # pyupgrade
+  "C90", # mccabe
+  "COM", # flake8-commas
+  "INP", # flake8-no-pep420
+  "TID", # flake8-tidy-imports
+  "ERA", # eradicate
+  "EM", # flake8-errmsg
+  "FA", # flake8-future-annotations
+  "PERF", # Perflint
+  "PYI" # flake8-pyi
+]
+
+ignore = [
+  "E501", # Never enforce line length
+  "RUF001", # ruff unicode specific rules
+  "RUF002", # ruff unicode specific rules
+  "RUF003", # ruff unicode specific rules
+  "TRY003", # Duplicates EM101 warning
+  "TRY200", # Duplicates B904 warning
+]
+
+unfixable = [
+  "B", # Avoid trying to fix flake8-bugbear violations.
+  "ERA", # Avoid deleting commented-out code
+]
+
+target-version = "py38"
+line-length = 88
+
+[tool.ruff.per-file-ignores]
+"tests/*" = [
+  "ARG001", # Unused function argument
+  "ARG002", # Unused method argument
+  "ERA001", # Found commented-out code
+  "PLR0913", # Too many arguments to function call
+  "PLR2004", # Magic value used in comparison
+  "S101", # Use of `assert` detected
+]
+
+[tool.ruff.flake8-quotes]
+inline-quotes = "double"
+
+[tool.ruff.mccabe]
+max-complexity = 10
+
+[tool.ruff.isort]
+lines-after-imports = 2
+
+
+[tool.black]
+line-length = 88
+target-version = ["py38", "py39", "py310", "py311"]
+skip-string-normalization = true

@@ -130,7 +130,7 @@ class Job:
     status: Status = Status.NEW
     meta: dict[t.Any, t.Any] = dataclasses.field(default_factory=dict)
 
-    _EXCLUDE_NON_FULL = {
+    _EXCLUDE_NON_FULL: t.ClassVar[set[str]] = {
         "kwargs",
         "scheduled",
         "progress",
@@ -228,7 +228,7 @@ class Job:
             return self._duration(self.completed, self.queued)
         if kind == "running":
             return self._duration(now(), self.started)
-        raise ValueError(f"Unknown duration type: {kind}")
+        raise ValueError(f"Unknown duration type: {kind}")  # noqa: EM102
 
     def _duration(self, a: int, b: int) -> int | None:
         return a - b if a and b else None
@@ -239,7 +239,7 @@ class Job:
         current = now()
         return (self.status == Status.ACTIVE) and bool(
             (self.timeout and seconds(current - self.started) > self.timeout)
-            or (self.heartbeat and seconds(current - self.touched) > self.heartbeat)
+            or (self.heartbeat and seconds(current - self.touched) > self.heartbeat),
         )
 
     def next_retry_delay(self) -> float:
@@ -269,7 +269,11 @@ class Job:
         await self.get_queue().abort(self, error, ttl=ttl)
 
     async def finish(
-        self, status: Status, *, result: t.Any = None, error: str | None = None
+        self,
+        status: Status,
+        *,
+        result: t.Any = None,
+        error: str | None = None,
     ) -> None:
         """Finishes the job with a Job.Status, result, and or error."""
         await self.get_queue().finish(self, status, result=result, error=error)
@@ -299,7 +303,8 @@ class Job:
         job = await self.get_queue().job(self.key)
 
         if not job:
-            raise RuntimeError(f"{self} doesn't exist")
+            msg = f"{self} doesn't exist"
+            raise RuntimeError(msg)
 
         self.replace(job)
 
@@ -318,7 +323,6 @@ class Job:
 
     def get_queue(self) -> Queue:
         if self.queue is None:
-            raise TypeError(
-                "`Job` must be associated with a `Queue` before this operation can proceed"
-            )
+            msg = "`Job` must be associated with a `Queue` before this operation can proceed"
+            raise TypeError(msg)
         return self.queue

@@ -12,6 +12,7 @@ from saq.utils import uuid1
 from saq.worker import Worker
 from tests.helpers import cleanup_queue, create_queue
 
+
 if t.TYPE_CHECKING:
     from unittest.mock import MagicMock
 
@@ -37,7 +38,8 @@ async def cron(_ctx: Context) -> int:
 
 
 async def error(_ctx: Context) -> t.NoReturn:
-    raise ValueError("oops")
+    msg = "oops"
+    raise ValueError(msg)
 
 
 def sync_echo_ctx(_ctx: Context) -> str:
@@ -88,7 +90,7 @@ class TestWorker(unittest.IsolatedAsyncioTestCase):
         await job.refresh()
         self.assertEqual(job.status, Status.QUEUED)
 
-        asyncio.create_task(self.worker.start())
+        _ = asyncio.create_task(self.worker.start())
         job = await self.enqueue("noop")
         await job.refresh(1)
         self.assertEqual(job.result, 1)
@@ -153,7 +155,7 @@ class TestWorker(unittest.IsolatedAsyncioTestCase):
         assert job.completed != 0
         self.assertEqual(job.attempts, 2)
         self.assertEqual(job.status, Status.FAILED)
-        assert job.error is not None and 'ValueError("oops")' in job.error
+        assert job.error is not None and "ValueError: oops" in job.error
 
     def test_stop(self) -> None:
         loop = asyncio.new_event_loop()
@@ -247,7 +249,6 @@ class TestWorker(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await self.queue.count("incomplete"), 1)
 
         mock_time.time.return_value = 60
-        # pylint: disable=protected-access
         await self.queue.redis.delete(self.queue._schedule)
         await worker.schedule()
         self.assertEqual(await self.queue.count("queued"), 1)
@@ -258,7 +259,7 @@ class TestWorker(unittest.IsolatedAsyncioTestCase):
     async def test_abort(self, mock_logger: MagicMock) -> None:
         job = await self.enqueue("sleeper")
         self.worker.context["sleep"] = 60
-        asyncio.create_task(self.worker.process())
+        _ = asyncio.create_task(self.worker.process())
 
         # wait for the job to actually start
         def callback(job_key: str, status: Status) -> bool:
@@ -301,7 +302,7 @@ class TestWorker(unittest.IsolatedAsyncioTestCase):
             ctx_var.set("123")
 
         self.worker.before_process = before_process
-        asyncio.create_task(self.worker.start())
+        _ = asyncio.create_task(self.worker.start())
         self.assertEqual(await self.queue.apply("sync_echo_ctx"), "123")
 
     async def test_propagation(self) -> None:
@@ -315,7 +316,7 @@ class TestWorker(unittest.IsolatedAsyncioTestCase):
 
         self.worker.before_process = before_process
         self.queue.register_before_enqueue(before_enqueue)
-        asyncio.create_task(self.worker.start())
+        _ = asyncio.create_task(self.worker.start())
         correlation_ids = await self.queue.apply("recurse", n=2)
         self.assertEqual(len(correlation_ids), 3)
         self.assertTrue(all(cid == correlation_ids[0] for cid in correlation_ids[1:]))

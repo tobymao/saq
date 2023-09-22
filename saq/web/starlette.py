@@ -19,6 +19,7 @@ from saq.queue import Queue
 from saq.types import QueueInfo
 from saq.web.common import STATIC_PATH, job_dict, render
 
+
 QUEUES: dict[str, Queue] = {}
 ROOT_PATH: str = ""
 
@@ -35,7 +36,10 @@ class GZStaticFiles(StaticFiles):
         request_headers = Headers(scope=scope)
 
         response = FileResponse(
-            full_path, status_code=status_code, stat_result=stat_result, method=method
+            full_path,
+            status_code=status_code,
+            stat_result=stat_result,
+            method=method,
         )
         # By default, the starlette StaticFiles handler doesn't handle pre-compressed files, but we explicitly want it to.
         if str(full_path).endswith(".gz"):
@@ -45,11 +49,11 @@ class GZStaticFiles(StaticFiles):
         return response
 
 
-async def views(request: Request) -> Response:  # pylint: disable=unused-argument
+async def views(_: Request) -> Response:
     return Response(content=render(root_path=ROOT_PATH), media_type="text/html")
 
 
-async def health(request: Request) -> Response:  # pylint: disable=unused-argument
+async def health(_: Request) -> Response:
     if await _get_all_info():
         return Response(content="OK", media_type="text/plain")
     raise HTTPException(status_code=500)
@@ -105,7 +109,8 @@ def _get_queue(queue_name: str) -> Queue:
 async def _get_job(queue_name: str, job_key: str) -> Job:
     job = await _get_queue(queue_name).job(job_key)
     if not job:
-        raise ValueError(f"Job {job_key} not found")
+        msg = f"Job {job_key} not found"
+        raise ValueError(msg)
     return job
 
 
@@ -127,7 +132,7 @@ def saq_web(root_path: str, queues: list[Queue]) -> Starlette:
     Returns:
         Starlette ASGI instance.
     """
-    global ROOT_PATH  # pylint: disable=global-statement
+    global ROOT_PATH  # noqa: PLW0603
 
     QUEUES.clear()
     for queue in queues:
@@ -146,5 +151,5 @@ def saq_web(root_path: str, queues: list[Queue]) -> Starlette:
             Route("/api/queues/{queue}/jobs/{job}/abort", abort, methods=["POST"]),
             Mount("/static", GZStaticFiles(directory=STATIC_PATH)),
             Route("/health", health),
-        ]
+        ],
     )

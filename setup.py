@@ -1,5 +1,6 @@
-# pylint: disable=consider-using-with
+# ruff: noqa: SIM115
 from setuptools import setup
+
 
 version = (
     open("saq/__init__.py", encoding="utf8")
@@ -39,9 +40,9 @@ setup(
         "web": ["aiohttp", "aiohttp_basicauth"],
         "dev": [
             "black",
+            "ruff",
             "coverage",
             "mypy",
-            "pylint",
             "types-croniter",
             "types-redis",
             "types-setuptools",
