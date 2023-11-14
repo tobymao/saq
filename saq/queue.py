@@ -40,7 +40,7 @@ if t.TYPE_CHECKING:
     )
 
     # PubSubMultiplexer Queue
-    Q: t.TypeAlias = asyncio.Queue[dict]
+    Q = asyncio.Queue[dict]
 
 logger = logging.getLogger("saq")
 
