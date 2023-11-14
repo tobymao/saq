@@ -39,6 +39,9 @@ if t.TYPE_CHECKING:
         VersionTuple,
     )
 
+    # PubSubMultiplexer Queue
+    Q: t.TypeAlias = asyncio.Queue[dict]
+
 logger = logging.getLogger("saq")
 
 ID_PREFIX = "saq:job:"
@@ -696,9 +699,6 @@ class Queue:
             raise
         finally:
             self.unregister_before_enqueue(track_child)
-
-
-Q: t.TypeAlias = asyncio.Queue[dict]
 
 
 class PubSubMultiplexer:
