@@ -77,13 +77,10 @@ class TestJob(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(asyncio.TimeoutError):
             await asyncio.wait_for(self.job.refresh(0), 0.1)
 
-        async def finish() -> None:
-            await asyncio.sleep(0.01)
-            await self.job.finish(Status.COMPLETE)
-
         self.assertEqual(self.job.status, Status.QUEUED)
-        asyncio.create_task(finish())
-        await self.job.refresh(0.1)
+        task = asyncio.create_task(self.job.refresh())
+        await self.job.finish(Status.COMPLETE)
+        await task
         self.assertEqual(self.job.status, Status.COMPLETE)
 
     async def test_retry_delay(self) -> None:
