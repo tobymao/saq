@@ -8,6 +8,7 @@ import json
 import logging
 import time
 import typing as t
+from collections import defaultdict
 from contextlib import asynccontextmanager
 
 from redis import asyncio as aioredis
@@ -24,7 +25,7 @@ from saq.utils import millis, now, seconds, uuid1
 if t.TYPE_CHECKING:
     from collections.abc import AsyncIterator, Iterable, Sequence
 
-    from redis.asyncio.client import Redis
+    from redis.asyncio.client import Redis, PubSub
     from redis.commands.core import AsyncScript
 
     from saq.types import (
@@ -37,6 +38,9 @@ if t.TYPE_CHECKING:
         QueueStats,
         VersionTuple,
     )
+
+    # PubSubMultiplexer Queue
+    Q = asyncio.Queue[dict]
 
 logger = logging.getLogger("saq")
 
@@ -107,6 +111,9 @@ class Queue:
         self._load = load or json.loads
         self._before_enqueues: dict[int, BeforeEnqueueType] = {}
         self._op_sem = asyncio.Semaphore(max_concurrent_ops)
+        self._pubsub = PubSubMultiplexer(
+            redis.pubsub(), prefix=f"{ID_PREFIX}{self.name}"
+        )
 
     def __repr__(self) -> str:
         return f"{self.__class__.__name__}<redis={self.redis}, name='{self.name}'>"
@@ -140,6 +147,7 @@ class Queue:
         return Job(**job_dict, queue=self)
 
     async def disconnect(self) -> None:
+        await self._pubsub.close()
         await self.redis.close()
         await self.redis.connection_pool.disconnect()
 
@@ -328,23 +336,26 @@ class Queue:
             callback: callback function, if it returns truthy, break
             timeout: if timeout is truthy, wait for timeout seconds
         """
-        pubsub = self.redis.pubsub()
         job_ids = [self.job_id(job_key) for job_key in job_keys]
-        await pubsub.subscribe(*job_ids)
+        if not job_ids:
+            return
+
+        queue = await self._pubsub.subscribe(*job_ids)
 
         async def listen() -> None:
-            async for message in pubsub.listen():
-                if message["type"] == "message":
-                    job_id = message["channel"].decode("utf-8")
-                    job_key = Job.key_from_id(job_id)
-                    status = Status[message["data"].decode("utf-8").upper()]
-                    if asyncio.iscoroutinefunction(callback):
-                        stop = await callback(job_key, status)
-                    else:
-                        stop = callback(job_key, status)
+            while True:
+                message = await queue.get()
+                queue.task_done()
+                job_id = message["channel"].decode("utf-8")
+                job_key = Job.key_from_id(job_id)
+                status = Status[message["data"].decode("utf-8").upper()]
+                if asyncio.iscoroutinefunction(callback):
+                    stop = await callback(job_key, status)
+                else:
+                    stop = callback(job_key, status)
 
-                    if stop:
-                        break
+                if stop:
+                    break
 
         try:
             if timeout:
@@ -352,7 +363,7 @@ class Queue:
             else:
                 await listen()
         finally:
-            await pubsub.unsubscribe(*job_ids)
+            await self._pubsub.unsubscribe(queue)
 
     async def notify(self, job: Job) -> None:
         await self.redis.publish(job.id, job.status)
@@ -687,3 +698,65 @@ class Queue:
             raise
         finally:
             self.unregister_before_enqueue(track_child)
+
+
+class PubSubMultiplexer:
+    """
+    Handle multiple in-process channels over a single Redis channel.
+
+    We use pubsub for realtime job updates. Each pubsub instance needs
+    a connection, and that connection can't be reused when its done (that's
+    an assumption, based on redis-py not releasing the connection and
+    this comment: https://github.com/redis/go-redis/issues/785#issuecomment-394596158).
+    So we use a single pubsub instance that listens to all job changes on
+    the queue and handle message routing in-process.
+    """
+
+    def __init__(self, pubsub: PubSub, prefix: str):
+        self.prefix = prefix
+        self.pubsub = pubsub
+        self._subscriptions: t.Dict[bytes, t.Set[Q]] = defaultdict(set)
+        self._queues: t.Dict[Q, t.Set[bytes]] = {}
+        self._daemon_task: t.Optional[asyncio.Task] = None
+
+    async def _daemon(self) -> None:
+        while True:
+            try:
+                message = await self.pubsub.get_message(timeout=None)  # type: ignore
+                if message and message["type"] == "pmessage":
+                    for queue in self._subscriptions[message["channel"]]:
+                        queue.put_nowait(message)
+            except asyncio.CancelledError:
+                return
+            except Exception:
+                logger.exception("Failed to consume message")
+
+    async def start(self) -> None:
+        if not self._daemon_task:
+            await self.pubsub.psubscribe(f"{self.prefix}*")
+            self._daemon_task = asyncio.create_task(self._daemon())
+
+    async def close(self) -> None:
+        await self.pubsub.punsubscribe()
+        if self._daemon_task:
+            self._daemon_task.cancel()
+            await self._daemon_task
+            self._daemon_task = None
+            self._subscriptions.clear()
+            self._queues.clear()
+
+    async def subscribe(self, *channels: str) -> Q:
+        await self.start()
+        queue: Q = asyncio.Queue()
+
+        # Use bytes so the daemon needs to do less work
+        bchannels = [c.encode() for c in channels]
+
+        self._queues[queue] = set(bchannels)
+        for channel in bchannels:
+            self._subscriptions[channel].add(queue)
+        return queue
+
+    async def unsubscribe(self, queue: Q) -> None:
+        for channel in self._queues.pop(queue, []):
+            self._subscriptions[channel].remove(queue)

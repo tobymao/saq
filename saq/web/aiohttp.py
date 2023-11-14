@@ -106,7 +106,7 @@ def create_app(queues: list[Queue]) -> Application:
     password = os.environ.get("AUTH_PASSWORD")
 
     if password:
-        from aiohttp_basicauth import BasicAuthMiddleware  # type:ignore[import]
+        from aiohttp_basicauth import BasicAuthMiddleware  # type: ignore[import-untyped]
 
         user = os.environ.get("AUTH_USER", "admin")
         middlewares.append(BasicAuthMiddleware(username=user, password=password))
