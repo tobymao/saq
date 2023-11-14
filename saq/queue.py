@@ -336,10 +336,9 @@ class Queue:
             callback: callback function, if it returns truthy, break
             timeout: if timeout is truthy, wait for timeout seconds
         """
-        if not job_keys:
-            return
-
         job_ids = [self.job_id(job_key) for job_key in job_keys]
+        if not job_ids:
+            return
 
         queue = await self._pubsub.subscribe(*job_ids)
 
@@ -759,7 +758,5 @@ class PubSubMultiplexer:
         return queue
 
     async def unsubscribe(self, queue: Q) -> None:
-        channels = self._queues.pop(queue, None)
-        if channels:
-            for channel in channels:
-                self._subscriptions[channel].remove(queue)
+        for channel in self._queues.pop(queue, []):
+            self._subscriptions[channel].remove(queue)
