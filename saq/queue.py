@@ -202,7 +202,14 @@ class Queue:
                     )
                 )
             )
-            job_info = [job.to_dict() for job in deserialized_jobs if job is not None]
+            job_info = list(
+                {
+                    job["key"]: job
+                    for job in (
+                        job.to_dict() for job in deserialized_jobs if job is not None
+                    )
+                }.values()
+            )
         else:
             job_info = []
 
