@@ -38,7 +38,7 @@ def main() -> None:
     )
     parser.add_argument(
         "--port",
-        type=str,
+        type=int,
         help="Web app port, defaults to 8080",
     )
     parser.add_argument(
