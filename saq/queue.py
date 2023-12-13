@@ -148,7 +148,10 @@ class Queue:
 
     async def disconnect(self) -> None:
         await self._pubsub.close()
-        await self.redis.close()
+        if hasattr(self.redis, "aclose"):
+            await self.redis.aclose()
+        else:
+            await self.redis.close()
         await self.redis.connection_pool.disconnect()
 
     async def version(self) -> VersionTuple:
