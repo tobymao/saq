@@ -1,4 +1,4 @@
-PATHS = saq/ tests/ setup.py
+PATHS = saq/ tests/
 INSTALL = -e .[hiredis,web,dev]
 
 help:
