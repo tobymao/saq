@@ -16,7 +16,7 @@ async def adder(ctx, *, a, b):
 
 
 async def cron_job(ctx):
-    print("excuting cron job")
+    print("executing cron job")
 
 
 settings = {
