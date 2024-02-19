@@ -103,6 +103,8 @@ To start the worker, assuming the previous is available in the python path
 saq module.file.settings
 ```
 
+> **_Note:_** `module.file.settings` can also be a callable returning the settings dictionary.
+
 To enqueue jobs
 
 ```python
