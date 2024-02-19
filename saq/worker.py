@@ -312,7 +312,12 @@ def import_settings(settings: str) -> dict[str, t.Any]:
     # given a.b.c, parses out a.b as the module path and c as the variable
     module_path, name = settings.strip().rsplit(".", 1)
     module = importlib.import_module(module_path)
-    return getattr(module, name)
+    settings_obj = getattr(module, name)
+
+    if callable(settings_obj):
+        settings_obj = settings_obj()
+
+    return settings_obj
 
 
 def start(

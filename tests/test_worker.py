@@ -2,14 +2,20 @@ from __future__ import annotations
 
 import asyncio
 import contextvars
+import contextlib
 import logging
+import secrets
+import sys
+import tempfile
+import textwrap
 import typing as t
 import unittest
 from unittest import mock
+from pathlib import Path
 
 from saq.job import CronJob, Job, Status
 from saq.utils import uuid1
-from saq.worker import Worker
+from saq.worker import Worker, import_settings
 from tests.helpers import cleanup_queue, create_queue
 
 if t.TYPE_CHECKING:
@@ -319,3 +325,64 @@ class TestWorker(unittest.IsolatedAsyncioTestCase):
         correlation_ids = await self.queue.apply("recurse", n=2)
         self.assertEqual(len(correlation_ids), 3)
         self.assertTrue(all(cid == correlation_ids[0] for cid in correlation_ids[1:]))
+
+
+class TestSettingsImport(unittest.TestCase):
+    def setUp(self) -> None:
+        self.cm = cm = contextlib.ExitStack()
+
+        tempdir = Path(cm.enter_context(tempfile.TemporaryDirectory()))
+        root_module_name = "foo" + secrets.token_urlsafe(2)
+        file_tree = [
+            tempdir / root_module_name / "__init__.py",
+            tempdir / root_module_name / "bar" / "__init__.py",
+            tempdir / root_module_name / "bar" / "settings.py",
+        ]
+        for path in file_tree:
+            path.parent.mkdir(exist_ok=True, parents=True)
+            path.touch()
+
+        file_tree[-1].write_text(
+            textwrap.dedent(
+                """
+                static = {
+                    "functions": ["pretend_its_a_fn"],
+                    "concurrency": 100
+                }
+
+                def factory():
+                    return {
+                        "functions": ["pretend_its_some_other_fn"],
+                        "concurrency": static["concurrency"] + 100
+                    }
+                """
+            ).strip()
+        )
+        sys.path.append(str(tempdir))
+
+        self.module_path = f"{root_module_name}.bar.settings"
+
+    def tearDown(self) -> None:
+        self.cm.close()
+
+    def test_imports_settings_from_module_path(self) -> None:
+        settings = import_settings(self.module_path + ".static")
+
+        self.assertDictEqual(
+            settings,
+            {
+                "functions": ["pretend_its_a_fn"],
+                "concurrency": 100,
+            },
+        )
+
+    def test_calls_settings_factory(self) -> None:
+        settings = import_settings(self.module_path + ".factory")
+
+        self.assertDictEqual(
+            settings,
+            {
+                "functions": ["pretend_its_some_other_fn"],
+                "concurrency": 200,
+            },
+        )
