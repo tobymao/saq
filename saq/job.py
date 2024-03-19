@@ -1,6 +1,7 @@
 """
 Jobs
 """
+
 from __future__ import annotations
 
 import dataclasses
@@ -182,11 +183,6 @@ class Job:
     def id(self) -> str:
         """Full Job ID"""
         return self.get_queue().job_id(self.key)
-
-    @classmethod
-    def key_from_id(cls, job_id: str) -> str:
-        """Key portion of Job ID"""
-        return job_id.split(":")[-1]
 
     @property
     def abort_id(self) -> str:
