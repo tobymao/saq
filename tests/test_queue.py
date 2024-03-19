@@ -401,3 +401,7 @@ class TestQueue(unittest.IsolatedAsyncioTestCase):
         self.queue.unregister_before_enqueue(callback)
         await self.enqueue("test")
         self.assertIsNone(called_with_job)
+
+    async def test_job_key(self) -> None:
+        self.assertEqual("a", self.queue.job_key_from_id(self.queue.job_id("a")))
+        self.assertEqual("a:b", self.queue.job_key_from_id(self.queue.job_id("a:b")))

@@ -1,6 +1,7 @@
 """
 Queues
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -126,6 +127,9 @@ class Queue:
 
     def job_id(self, job_key: str) -> str:
         return f"{ID_PREFIX}{self.name}:{job_key}"
+
+    def job_key_from_id(self, job_id: str) -> str:
+        return job_id[len(f"{ID_PREFIX}{self.name}:") :]
 
     async def _before_enqueue(self, job: Job) -> None:
         for cb in self._before_enqueues.values():
@@ -357,7 +361,7 @@ class Queue:
                 message = await queue.get()
                 queue.task_done()
                 job_id = message["channel"].decode("utf-8")
-                job_key = Job.key_from_id(job_id)
+                job_key = self.job_key_from_id(job_id)
                 status = Status[message["data"].decode("utf-8").upper()]
                 if asyncio.iscoroutinefunction(callback):
                     stop = await callback(job_key, status)
