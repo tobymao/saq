@@ -279,13 +279,10 @@ class Queue:
                     local jobs = redis.call('ZRANGEBYSCORE', KEYS[2], 1, ARGV[2])
 
                     if next(jobs) then
-                        local scores = {}
                         for _, v in ipairs(jobs) do
-                            table.insert(scores, 0)
-                            table.insert(scores, v)
+                            redis.call('ZADD', KEYS[2], 0, v)
+                            redis.call('RPUSH', KEYS[3], v)
                         end
-                        redis.call('ZADD', KEYS[2], unpack(scores))
-                        redis.call('RPUSH', KEYS[3], unpack(jobs))
                     end
 
                     return jobs
