@@ -729,6 +729,7 @@ class PubSubMultiplexer:
         self._subscriptions: t.Dict[bytes, t.Set[Q]] = defaultdict(set)
         self._queues: t.Dict[Q, t.Set[bytes]] = {}
         self._daemon_task: t.Optional[asyncio.Task] = None
+        self._lock = asyncio.Lock()
 
     async def _daemon(self) -> None:
         while True:
@@ -744,8 +745,10 @@ class PubSubMultiplexer:
 
     async def start(self) -> None:
         if not self._daemon_task:
-            await self.pubsub.psubscribe(f"{self.prefix}*")
-            self._daemon_task = asyncio.create_task(self._daemon())
+            async with self._lock:
+                if not self._daemon_task:
+                    await self.pubsub.psubscribe(f"{self.prefix}*")
+                    self._daemon_task = asyncio.create_task(self._daemon())
 
     async def close(self) -> None:
         await self.pubsub.punsubscribe()
