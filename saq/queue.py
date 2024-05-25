@@ -729,7 +729,7 @@ class PubSubMultiplexer:
         self._subscriptions: t.Dict[bytes, t.Set[Q]] = defaultdict(set)
         self._queues: t.Dict[Q, t.Set[bytes]] = {}
         self._daemon_task: t.Optional[asyncio.Task] = None
-        self._daemon_creation_lock = asyncio.Lock()
+        self._lock = asyncio.Lock()
 
     async def _daemon(self) -> None:
         while True:
@@ -744,7 +744,7 @@ class PubSubMultiplexer:
                 logger.exception("Failed to consume message")
 
     async def start(self) -> None:
-        async with self._daemon_creation_lock:
+        async with self._lock:
             if not self._daemon_task:
                 await self.pubsub.psubscribe(f"{self.prefix}*")
                 self._daemon_task = asyncio.create_task(self._daemon())
