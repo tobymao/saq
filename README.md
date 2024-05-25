@@ -118,6 +118,9 @@ print(job.results)
 # run a job and return the result
 print(await queue.apply("test", a=2))
 
+# Run multiple jobs concurrently and collect the results into a list
+print(await queue.map("test", [{"a": 3}, {"a": 4}]))
+
 # schedule a job in 10 seconds
 await queue.enqueue("test", a=1, scheduled=time.time() + 10)
 ```
