@@ -744,10 +744,11 @@ class PubSubMultiplexer:
                 logger.exception("Failed to consume message")
 
     async def start(self) -> None:
-        async with self._lock:
-            if not self._daemon_task:
-                await self.pubsub.psubscribe(f"{self.prefix}*")
-                self._daemon_task = asyncio.create_task(self._daemon())
+        if not self._daemon_task:
+            async with self._lock:
+                if not self._daemon_task:
+                    await self.pubsub.psubscribe(f"{self.prefix}*")
+                    self._daemon_task = asyncio.create_task(self._daemon())
 
     async def close(self) -> None:
         await self.pubsub.punsubscribe()
