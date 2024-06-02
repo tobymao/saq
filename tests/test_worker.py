@@ -213,6 +213,32 @@ class TestWorker(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(x["before"], 2)
         self.assertEqual(x["after"], 2)
 
+    async def test_abort_status_after_process(self) -> None:
+        status = None
+        event = asyncio.Event()
+
+        async def function(_ctx: Context) -> None:
+            event.set()
+            await asyncio.sleep(float("inf"))
+
+        async def after_process(ctx: Context) -> None:
+            nonlocal status
+            status = ctx["job"].status
+
+        worker = Worker(
+            self.queue,
+            functions=[("function", function)],
+            after_process=after_process,
+        )
+        job = await self.enqueue("function")
+
+        task = asyncio.create_task(worker.process())
+        await event.wait()
+        await job.abort("aborted")
+        await worker.abort(0)
+        await task
+        self.assertEqual(Status.ABORTED, status)
+
     @mock.patch("saq.utils.time")
     async def test_schedule(self, mock_time: MagicMock) -> None:
         mock_time.time.return_value = 1
