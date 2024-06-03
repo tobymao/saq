@@ -37,8 +37,8 @@ class JobTaskContext(t.TypedDict, total=False):
 
     task: Task[t.Any]
     "asyncio Task of the Job"
-    aborted: bool
-    "Did the task abort?"
+    aborted: t.Optional[str]
+    "If this task has been aborted, this is the reason"
 
 
 class QueueInfo(t.TypedDict):
