@@ -315,7 +315,25 @@ class Queue:
             for job_id, job_bytes in zip(job_ids, await self.redis.mget(job_ids)):
                 job = self.deserialize(job_bytes)
 
-                if not job:
+                if job:
+                    # in rare cases a sweep may occur between a dequeue and actual processing.
+                    # in that case, the job status is still set to queued, but only because it hasn't
+                    # had its status updated yet. try refreshing after a short sleep to pick up the latest status.
+                    if job.status == Status.QUEUED:
+                        await asyncio.sleep(0.1)
+                        await job.refresh()
+                        stuck = job.status == Status.QUEUED
+                    else:
+                        stuck = job.status != Status.ACTIVE or job.stuck
+
+                    if stuck:
+                        swept.append(job_id)
+                        await job.finish(Status.ABORTED, error="swept")
+                        logger.info(
+                            "Sweeping job %s",
+                            job.info(logger.isEnabledFor(logging.DEBUG)),
+                        )
+                else:
                     swept.append(job_id)
 
                     async with self.redis.pipeline(transaction=True) as pipe:
@@ -325,12 +343,7 @@ class Queue:
                             .execute()
                         )
                     logger.info("Sweeping missing job %s", job_id)
-                elif job.status != Status.ACTIVE or job.stuck:
-                    swept.append(job_id)
-                    await job.finish(Status.ABORTED, error="swept")
-                    logger.info(
-                        "Sweeping job %s", job.info(logger.isEnabledFor(logging.DEBUG))
-                    )
+
         return swept
 
     async def listen(
