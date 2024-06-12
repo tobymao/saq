@@ -248,7 +248,7 @@ routes = Object.keys(routes)
   .sort(function(a, b){ return b.length - a.length; })
   .map(function(path) {
     return {
-      path: new RegExp("^" + path.replace(/:[^\s/]+/g, "([\\w-]+)") + "$"),
+      path: new RegExp("^" + path.replace(/:[^\\s/]+/g, "([^\\/]+)") + "$"),
       view: routes[path].view,
       data: routes[path].data,
     };
