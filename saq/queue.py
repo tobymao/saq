@@ -295,7 +295,7 @@ class Queue:
             args=[lock, seconds(now())],
         )
 
-    async def sweep(self, lock: int = 60, abort: int = 5) -> list[t.Any]:
+    async def sweep(self, lock: int = 60, abort: float = 5.0) -> list[t.Any]:
         if not self._cleanup_script:
             self._cleanup_script = self.redis.register_script(
                 """

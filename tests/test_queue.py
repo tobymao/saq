@@ -309,7 +309,7 @@ class TestQueue(unittest.IsolatedAsyncioTestCase):
 
         mock_time.time.return_value = 3
         self.assertEqual(await self.count("active"), 6)
-        swept = await self.queue.sweep(abort=0.1)
+        swept = await self.queue.sweep(abort=0.01)
         self.assertEqual(
             set(swept),
             {
