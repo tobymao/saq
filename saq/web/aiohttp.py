@@ -11,6 +11,7 @@ import typing as t
 
 from aiohttp import web
 
+from saq.queue import Queue
 from saq.web.common import STATIC_PATH, job_dict, render
 
 if t.TYPE_CHECKING:
@@ -21,8 +22,10 @@ if t.TYPE_CHECKING:
     from aiohttp.web_response import Response
 
     from saq.job import Job
-    from saq.queue import Queue
     from saq.types import QueueInfo
+
+
+QUEUES_KEY = web.AppKey("queues", t.Dict[str, Queue])
 
 
 async def queues_(request: Request) -> Response:
@@ -66,11 +69,11 @@ async def health(request: Request) -> Response:
 
 
 async def _get_all_info(request: Request) -> list[QueueInfo]:
-    return [await q.info() for q in request.app["queues"].values()]
+    return [await q.info() for q in request.app[QUEUES_KEY].values()]
 
 
 def _get_queue(request: Request, queue_name: str) -> Queue:
-    return request.app["queues"][queue_name]
+    return request.app[QUEUES_KEY][queue_name]
 
 
 async def _get_job(request: Request) -> Job:
@@ -97,7 +100,7 @@ async def exceptions(request: Request, handler: Handler) -> StreamResponse:
 
 
 async def shutdown(app: Application) -> None:
-    for queue in app.get("queues", {}).values():
+    for queue in app.get(QUEUES_KEY, {}).values():
         await queue.disconnect()
 
 
@@ -112,7 +115,7 @@ def create_app(queues: list[Queue]) -> Application:
         middlewares.append(BasicAuthMiddleware(username=user, password=password))
 
     app = web.Application(middlewares=middlewares)
-    app["queues"] = {q.name: q for q in queues}
+    app[QUEUES_KEY] = {q.name: q for q in queues}
 
     app.add_routes(
         [

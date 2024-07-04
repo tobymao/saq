@@ -238,6 +238,10 @@ class Job:
             or (self.heartbeat and seconds(current - self.touched) > self.heartbeat)
         )
 
+    @property
+    def retryable(self) -> bool:
+        return self.retries > self.attempts
+
     def next_retry_delay(self) -> float:
         if self.retry_backoff is not False:
             max_delay = None if self.retry_backoff is True else self.retry_backoff

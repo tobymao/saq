@@ -272,10 +272,10 @@ class Worker:
             if job:
                 error = traceback.format_exc()
 
-                if job.attempts >= job.retries:
-                    await job.finish(Status.FAILED, error=error)
-                else:
+                if job.retryable:
                     await job.retry(error)
+                else:
+                    await job.finish(Status.FAILED, error=error)
         finally:
             if context:
                 if job is not None:

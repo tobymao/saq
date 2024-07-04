@@ -17,7 +17,9 @@ class TestStarletteWeb(TestAiohttpWeb):
         pass
 
     async def get_test_client(self) -> t.Any:
-        return httpx.AsyncClient(app=self.app, base_url="http://test")
+        return httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=self.app), base_url="http://test"
+        )
 
     def status_code(self, resp: t.Any) -> int:
         return resp.status_code

@@ -328,11 +328,15 @@ class Queue:
 
                     if stuck:
                         swept.append(job_id)
-                        await job.finish(Status.ABORTED, error="swept")
+                        await self.abort(job, error="swept")
+
                         logger.info(
                             "Sweeping job %s",
                             job.info(logger.isEnabledFor(logging.DEBUG)),
                         )
+
+                        if job.retryable:
+                            await self.retry(job, error="swept")
                 else:
                     swept.append(job_id)
 
@@ -417,10 +421,11 @@ class Queue:
                 )
 
             if dequeued:
-                await job.finish(Status.ABORTED, error=error)
                 await self.redis.delete(job.abort_id)
             else:
                 await self.redis.lrem(self._active, 0, job.id)
+
+            await job.finish(Status.ABORTED, error=error)
 
     async def retry(self, job: Job, error: str | None) -> None:
         job_id = job.id
