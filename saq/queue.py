@@ -338,7 +338,7 @@ class Queue:
                         if job.retryable:
                             try:
                                 await job.refresh(abort)
-                            except TimeoutError:
+                            except asyncio.TimeoutError:
                                 logger.info("Could not abort job %s", job_id)
                             finally:
                                 await self.retry(job, error="swept")
