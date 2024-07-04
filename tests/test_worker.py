@@ -62,6 +62,7 @@ class TestWorker(unittest.IsolatedAsyncioTestCase):
 
     async def asyncTearDown(self) -> None:
         await cleanup_queue(self.queue)
+        await self.worker.stop()
 
     async def enqueue(self, function: str, **kwargs: t.Any) -> Job:
         job = await self.queue.enqueue(function, **kwargs)
@@ -345,3 +346,16 @@ class TestWorker(unittest.IsolatedAsyncioTestCase):
         correlation_ids = await self.queue.apply("recurse", n=2)
         self.assertEqual(len(correlation_ids), 3)
         self.assertTrue(all(cid == correlation_ids[0] for cid in correlation_ids[1:]))
+
+    async def test_sweep_abort(self) -> None:
+        state = {"counter": 0}
+
+        async def handler(_ctx):
+            await asyncio.sleep(3)
+            state["counter"] += 1
+
+        self.worker = Worker(self.queue, functions=[("handler", handler)], timers={"sweep": 1})
+        asyncio.create_task(self.worker.start())
+        await self.queue.enqueue("handler", heartbeat=1, retries=2)
+        await asyncio.sleep(6)
+        assert state["counter"] == 0

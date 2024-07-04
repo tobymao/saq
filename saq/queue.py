@@ -295,7 +295,7 @@ class Queue:
             args=[lock, seconds(now())],
         )
 
-    async def sweep(self, lock: int = 60) -> list[t.Any]:
+    async def sweep(self, lock: int = 60, abort: int = 5) -> list[t.Any]:
         if not self._cleanup_script:
             self._cleanup_script = self.redis.register_script(
                 """
@@ -336,7 +336,14 @@ class Queue:
                         )
 
                         if job.retryable:
-                            await self.retry(job, error="swept")
+                            try:
+                                await job.refresh(abort)
+                            except TimeoutError:
+                                logger.info("Could not abort job %s", job_id)
+                            finally:
+                                await self.retry(job, error="swept")
+                        else:
+                            await job.finish(Status.ABORTED, error="swept")
                 else:
                     swept.append(job_id)
 
@@ -421,11 +428,10 @@ class Queue:
                 )
 
             if dequeued:
+                await job.finish(Status.ABORTED, error=error)
                 await self.redis.delete(job.abort_id)
             else:
                 await self.redis.lrem(self._active, 0, job.id)
-
-            await job.finish(Status.ABORTED, error=error)
 
     async def retry(self, job: Job, error: str | None) -> None:
         job_id = job.id
