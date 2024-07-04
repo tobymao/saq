@@ -354,7 +354,9 @@ class TestWorker(unittest.IsolatedAsyncioTestCase):
             await asyncio.sleep(3)
             state["counter"] += 1
 
-        self.worker = Worker(self.queue, functions=[("handler", handler)], timers={"sweep": 1})
+        self.worker = Worker(
+            self.queue, functions=[("handler", handler)], timers={"sweep": 1}
+        )
         asyncio.create_task(self.worker.start())
         await self.queue.enqueue("handler", heartbeat=1, retries=2)
         await asyncio.sleep(6)
