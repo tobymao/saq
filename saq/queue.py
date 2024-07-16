@@ -161,7 +161,7 @@ class Queue:
     async def version(self) -> VersionTuple:
         if self._version is None:
             info = await self.redis.info()
-            self._version = tuple(int(i) for i in info["redis_version"].split("."))
+            self._version = tuple(int(i) for i in str(info["redis_version"]).split("."))
         return self._version
 
     async def info(
