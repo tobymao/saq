@@ -31,7 +31,6 @@ if t.TYPE_CHECKING:
         LoadType,
         QueueInfo,
         QueueStats,
-        VersionTuple,
     )
 
 
@@ -53,7 +52,6 @@ class JobError(Exception):
 class Queue(ABC):
     """An abstract base class for queues"""
 
-    @abstractmethod
     def __init__(
         self,
         name: str,
@@ -66,7 +64,6 @@ class Queue(ABC):
         self.failed = 0
         self.retried = 0
         self.aborted = 0
-        self._version: VersionTuple | None = None
         self._dump = dump or json.dumps
         self._load = load or json.loads
         self._before_enqueues: dict[int, BeforeEnqueueType] = {}
@@ -77,10 +74,6 @@ class Queue(ABC):
 
     @abstractmethod
     async def disconnect(self) -> None:
-        pass
-
-    @abstractmethod
-    async def version(self) -> VersionTuple:
         pass
 
     @abstractmethod

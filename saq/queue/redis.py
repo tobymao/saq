@@ -72,6 +72,7 @@ class RedisQueue(Queue):
 
         self.redis = redis
         self.uuid: str = uuid1()
+        self._version: VersionTuple | None = None
         self._schedule_script: AsyncScript | None = None
         self._enqueue_script: AsyncScript | None = None
         self._cleanup_script: AsyncScript | None = None
