@@ -218,7 +218,7 @@ class Worker:
         if not jobs:
             return
 
-        aborted = await self.queue.redis.mget(job.abort_id for job in jobs)
+        aborted = await self.queue.get_many(job.abort_id for job in jobs)
 
         for job, abort in zip(jobs, aborted):
             if not abort:
@@ -232,7 +232,7 @@ class Worker:
                 task.cancel()
                 await asyncio.gather(task, return_exceptions=True)
 
-            await self.queue.redis.delete(job.abort_id)
+            await self.queue.delete(job.abort_id)
             logger.info("Aborting %s", job.id)
 
     async def process(self) -> None:

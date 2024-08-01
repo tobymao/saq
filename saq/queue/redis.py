@@ -1,36 +1,31 @@
 """
-Queues
+Redis Queue
 """
 
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import time
 import typing as t
 from collections import defaultdict
-from contextlib import asynccontextmanager
 
 from redis import asyncio as aioredis
 
 from saq.job import (
-    TERMINAL_STATUSES,
-    UNSUCCESSFUL_TERMINAL_STATUSES,
     Job,
     Status,
-    get_default_job_key,
 )
+from saq.queue.base import Queue, logger
 from saq.utils import millis, now, seconds, uuid1
 
 if t.TYPE_CHECKING:
-    from collections.abc import AsyncIterator, Iterable, Sequence
+    from collections.abc import Iterable
 
     from redis.asyncio.client import Redis, PubSub
     from redis.commands.core import AsyncScript
 
     from saq.types import (
-        BeforeEnqueueType,
         CountKind,
         DumpType,
         ListenCallback,
@@ -43,27 +38,10 @@ if t.TYPE_CHECKING:
     # PubSubMultiplexer Queue
     Q = asyncio.Queue[dict]
 
-logger = logging.getLogger("saq")
-
 ID_PREFIX = "saq:job:"
 
 
-class JobError(Exception):
-    """
-    Basic Job error
-    """
-
-    def __init__(self, job: Job) -> None:
-        super().__init__(
-            f"Job {job.id} {job.status}\n\nThe above job failed with the following error:\n\n{job.error}"
-        )
-        self.job = job
-
-
-QueueT = t.TypeVar("QueueT", bound="Queue")
-
-
-class Queue:
+class RedisQueue(Queue):
     """
     Queue is used to interact with redis.
 
@@ -78,7 +56,7 @@ class Queue:
     """
 
     @classmethod
-    def from_url(cls: type[QueueT], url: str, **kwargs: t.Any) -> QueueT:
+    def from_url(cls: type[RedisQueue], url: str, **kwargs: t.Any) -> RedisQueue:
         """Create a queue with a redis url a name."""
         return cls(aioredis.from_url(url), **kwargs)
 
@@ -90,14 +68,10 @@ class Queue:
         load: LoadType | None = None,
         max_concurrent_ops: int = 20,
     ) -> None:
+        super().__init__(name=name, dump=dump, load=load)
+
         self.redis = redis
-        self.name = name
         self.uuid: str = uuid1()
-        self.started: int = now()
-        self.complete = 0
-        self.failed = 0
-        self.retried = 0
-        self.aborted = 0
         self._version: VersionTuple | None = None
         self._schedule_script: AsyncScript | None = None
         self._enqueue_script: AsyncScript | None = None
@@ -108,9 +82,6 @@ class Queue:
         self._schedule = self.namespace("schedule")
         self._sweep = self.namespace("sweep")
         self._stats = self.namespace("stats")
-        self._dump = dump or json.dumps
-        self._load = load or json.loads
-        self._before_enqueues: dict[int, BeforeEnqueueType] = {}
         self._op_sem = asyncio.Semaphore(max_concurrent_ops)
         self._pubsub = PubSubMultiplexer(
             redis.pubsub(), prefix=f"{ID_PREFIX}{self.name}"
@@ -119,36 +90,14 @@ class Queue:
     def __repr__(self) -> str:
         return f"{self.__class__.__name__}<redis={self.redis}, name='{self.name}'>"
 
-    def register_before_enqueue(self, callback: BeforeEnqueueType) -> None:
-        self._before_enqueues[id(callback)] = callback
-
-    def unregister_before_enqueue(self, callback: BeforeEnqueueType) -> None:
-        self._before_enqueues.pop(id(callback), None)
-
     def job_id(self, job_key: str) -> str:
         return f"{ID_PREFIX}{self.name}:{job_key}"
 
     def job_key_from_id(self, job_id: str) -> str:
         return job_id[len(f"{ID_PREFIX}{self.name}:") :]
 
-    async def _before_enqueue(self, job: Job) -> None:
-        for cb in self._before_enqueues.values():
-            await cb(job)
-
     def namespace(self, key: str) -> str:
         return ":".join(["saq", self.name, key])
-
-    def serialize(self, job: Job) -> str:
-        return self._dump(job.to_dict())
-
-    def deserialize(self, job_bytes: bytes | None) -> Job | None:
-        if not job_bytes:
-            return None
-
-        job_dict = self._load(job_bytes)
-        if job_dict.pop("queue") != self.name:
-            raise ValueError(f"Job {job_dict} fetched by wrong queue: {self.name}")
-        return Job(**job_dict, queue=self)
 
     async def disconnect(self) -> None:
         await self._pubsub.close()
@@ -357,49 +306,6 @@ class Queue:
 
         return swept
 
-    async def listen(
-        self,
-        job_keys: Iterable[str],
-        callback: ListenCallback,
-        timeout: float | None = 10,
-    ) -> None:
-        """
-        Listen to updates on jobs.
-
-        Args:
-            job_keys: sequence of job keys
-            callback: callback function, if it returns truthy, break
-            timeout: if timeout is truthy, wait for timeout seconds
-        """
-        job_ids = [self.job_id(job_key) for job_key in job_keys]
-        if not job_ids:
-            return
-
-        queue = await self._pubsub.subscribe(*job_ids)
-
-        async def listen() -> None:
-            while True:
-                message = await queue.get()
-                queue.task_done()
-                job_id = message["channel"].decode("utf-8")
-                job_key = self.job_key_from_id(job_id)
-                status = Status[message["data"].decode("utf-8").upper()]
-                if asyncio.iscoroutinefunction(callback):
-                    stop = await callback(job_key, status)
-                else:
-                    stop = callback(job_key, status)
-
-                if stop:
-                    break
-
-        try:
-            if timeout:
-                await asyncio.wait_for(listen(), timeout)
-            else:
-                await listen()
-        finally:
-            await self._pubsub.unsubscribe(queue)
-
     async def notify(self, job: Job) -> None:
         await self.redis.publish(job.id, job.status)
 
@@ -583,156 +489,54 @@ class Queue:
         logger.info("Enqueuing %s", job.info(logger.isEnabledFor(logging.DEBUG)))
         return job
 
-    async def apply(
-        self, job_or_func: str, timeout: float | None = None, **kwargs: t.Any
-    ) -> t.Any:
-        """
-        Enqueue a job and wait for its result.
-
-        If the job is successful, this returns its result.
-        If the job is unsuccessful, this raises a JobError.
-
-        Example:
-            .. code-block::
-
-                try:
-                    assert await queue.apply("add", a=1, b=2) == 3
-                except JobError:
-                    print("job failed")
-
-        Args:
-            job_or_func: Same as Queue.enqueue
-            timeout: If provided, how long to wait for result, else infinite (default None)
-            kwargs: Same as Queue.enqueue
-        """
-        results = await self.map(job_or_func, timeout=timeout, iter_kwargs=[kwargs])
-        if results:
-            return results[0]
-        return None
-
-    async def map(
+    async def listen(
         self,
-        job_or_func: str | Job,
-        iter_kwargs: Sequence[dict[str, t.Any]],
-        timeout: float | None = None,
-        return_exceptions: bool = False,
-        **kwargs: t.Any,
-    ) -> list[t.Any]:
+        job_keys: Iterable[str],
+        callback: ListenCallback,
+        timeout: float | None = 10,
+    ) -> None:
         """
-        Enqueue multiple jobs and collect all of their results.
-
-        Example:
-            .. code-block::
-
-                try:
-                    assert await queue.map(
-                        "add",
-                        [
-                            {"a": 1, "b": 2},
-                            {"a": 3, "b": 4},
-                        ]
-                    ) == [3, 7]
-                except JobError:
-                    print("any of the jobs failed")
+        Listen to updates on jobs.
 
         Args:
-            job_or_func: Same as Queue.enqueue
-            iter_kwargs: Enqueue a job for each item in this sequence. Each item is the same
-                as kwargs for Queue.enqueue.
-            timeout: Total seconds to wait for all jobs to complete. If None (default) or 0, wait forever.
-            return_exceptions: If False (default), an exception is immediately raised as soon as any jobs
-                fail. Other jobs won't be cancelled and will continue to run.
-                If True, exceptions are treated the same as successful results and aggregated in the result list.
-            kwargs: Default kwargs for all jobs. These will be overridden by those in iter_kwargs.
+            job_keys: sequence of job keys
+            callback: callback function, if it returns truthy, break
+            timeout: if timeout is truthy, wait for timeout seconds
         """
-        iter_kwargs = [
-            {
-                "timeout": timeout,
-                "key": kwargs.get("key", "") or get_default_job_key(),
-                **kwargs,
-                **kw,
-            }
-            for kw in iter_kwargs
-        ]
-        job_keys = [key["key"] for key in iter_kwargs]
-        pending_job_keys = set(job_keys)
+        job_ids = [self.job_id(job_key) for job_key in job_keys]
+        if not job_ids:
+            return
 
-        async def callback(job_key: str, status: Status) -> bool:
-            if status in TERMINAL_STATUSES:
-                pending_job_keys.discard(job_key)
+        queue = await self._pubsub.subscribe(*job_ids)
 
-            if status in UNSUCCESSFUL_TERMINAL_STATUSES and not return_exceptions:
-                return True
+        async def listen() -> None:
+            while True:
+                message = await queue.get()
+                queue.task_done()
+                job_id = message["channel"].decode("utf-8")
+                job_key = self.job_key_from_id(job_id)
+                status = Status[message["data"].decode("utf-8").upper()]
+                if asyncio.iscoroutinefunction(callback):
+                    stop = await callback(job_key, status)
+                else:
+                    stop = callback(job_key, status)
 
-            if not pending_job_keys:
-                return True
-
-            return False
-
-        # Start listening before we enqueue the jobs.
-        # This ensures we don't miss any updates.
-        task = asyncio.create_task(
-            self.listen(pending_job_keys, callback, timeout=None)
-        )
+                if stop:
+                    break
 
         try:
-            await asyncio.gather(
-                *[self.enqueue(job_or_func, **kw) for kw in iter_kwargs]
-            )
-        except:
-            task.cancel()
-            raise
-
-        await asyncio.wait_for(task, timeout=timeout)
-
-        jobs: list[Job | None]
-        jobs = await asyncio.gather(*[self.job(job_key) for job_key in job_keys])
-
-        results: list[t.Any] = []
-        for job in jobs:
-            if job is None:
-                continue
-            if job.status in UNSUCCESSFUL_TERMINAL_STATUSES:
-                exc = JobError(job)
-                if not return_exceptions:
-                    raise exc
-                results.append(exc)
+            if timeout:
+                await asyncio.wait_for(listen(), timeout)
             else:
-                results.append(job.result)
-        return results
-
-    @asynccontextmanager
-    async def batch(self) -> AsyncIterator[None]:
-        """
-        Context manager to batch enqueue jobs.
-
-        This tracks all jobs enqueued within the context manager scope and ensures that
-        all are aborted if any exception is raised.
-
-        Example:
-            .. code-block::
-
-                async with queue.batch():
-                    await queue.enqueue("test")  # This will get cancelled
-                    raise asyncio.CancelledError
-        """
-        children = set()
-
-        async def track_child(job: Job) -> None:
-            children.add(job)
-
-        self.register_before_enqueue(track_child)
-
-        try:
-            yield
-        except:
-            await asyncio.gather(
-                *[self.abort(child, "cancelled") for child in children],
-                return_exceptions=True,
-            )
-            raise
+                await listen()
         finally:
-            self.unregister_before_enqueue(track_child)
+            await self._pubsub.unsubscribe(queue)
+
+    async def get_many(self, keys: Iterable[str]) -> list[bytes | None]:
+        return await self.redis.mget(keys)
+
+    async def delete(self, key: str) -> None:
+        await self.redis.delete(key)
 
 
 class PubSubMultiplexer:
