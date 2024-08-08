@@ -127,6 +127,8 @@ class Worker:
         )
 
         try:
+            await self.queue.connect()
+
             self.event = asyncio.Event()
             loop = asyncio.get_running_loop()
 
