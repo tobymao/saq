@@ -36,11 +36,13 @@ setup(
     ],
     extras_require={
         "hiredis": ["redis[hiredis]>=4.2.0"],
+        "postgres": ["psycopg[pool]"],
         "web": ["aiohttp", "aiohttp_basicauth"],
         "dev": [
             "black",
             "coverage",
             "mypy",
+            "psycopg[pool]",
             "pylint",
             "types-croniter",
             "types-redis",
