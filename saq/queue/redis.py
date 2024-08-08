@@ -340,13 +340,8 @@ class RedisQueue(Queue):
                 await self.redis.lrem(self._active, 0, job.id)
 
     async def retry(self, job: Job, error: str | None) -> None:
+        await super().retry(job, error)
         job_id = job.id
-        job.status = Status.QUEUED
-        job.error = error
-        job.completed = 0
-        job.started = 0
-        job.progress = 0
-        job.touched = now()
         next_retry_delay = job.next_retry_delay()
 
         async with self.redis.pipeline(transaction=True) as pipe:
@@ -371,14 +366,8 @@ class RedisQueue(Queue):
         result: t.Any = None,
         error: str | None = None,
     ) -> None:
+        await super().finish(job, status, result=result, error=error)
         job_id = job.id
-        job.status = status
-        job.result = result
-        job.error = error
-        job.completed = now()
-
-        if status == Status.COMPLETE:
-            job.progress = 1.0
 
         async with self.redis.pipeline(transaction=True) as pipe:
             pipe = pipe.lrem(self._active, 1, job_id).zrem(self._incomplete, job_id)
@@ -439,24 +428,7 @@ class RedisQueue(Queue):
         Returns:
             If the job has already been enqueued, this returns None, else Job
         """
-        job_kwargs: dict[str, t.Any] = {}
-
-        for k, v in kwargs.items():
-            if k in Job.__dataclass_fields__:  # pylint: disable=no-member
-                job_kwargs[k] = v
-            else:
-                job_kwargs.setdefault("kwargs", {})[k] = v
-
-        if isinstance(job_or_func, str):
-            job = Job(function=job_or_func, **job_kwargs)
-        else:
-            job = job_or_func
-
-            for k, v in job_kwargs.items():
-                setattr(job, k, v)
-
-        if job.queue and job.queue.name != self.name:
-            raise ValueError(f"Job {job} registered to a different queue")
+        job = self._create_job_for_enqueue(job_or_func, **kwargs)
 
         if not self._enqueue_script:
             self._enqueue_script = self.redis.register_script(
@@ -471,10 +443,6 @@ class RedisQueue(Queue):
                 end
                 """
             )
-
-        job.queue = self
-        job.queued = now()
-        job.status = Status.QUEUED
 
         await self._before_enqueue(job)
 

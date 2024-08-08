@@ -125,7 +125,12 @@ class Queue(ABC):
 
     @abstractmethod
     async def retry(self, job: Job, error: str | None) -> None:
-        pass
+        job.status = Status.QUEUED
+        job.error = error
+        job.completed = 0
+        job.started = 0
+        job.progress = 0
+        job.touched = now()
 
     @abstractmethod
     async def finish(
@@ -136,7 +141,13 @@ class Queue(ABC):
         result: t.Any = None,
         error: str | None = None,
     ) -> None:
-        pass
+        job.status = status
+        job.result = result
+        job.error = error
+        job.completed = now()
+
+        if status == Status.COMPLETE:
+            job.progress = 1.0
 
     @abstractmethod
     async def dequeue(self, timeout: float = 0) -> Job | None:
@@ -157,9 +168,20 @@ class Queue(ABC):
     @staticmethod
     def from_url(url: str, **kwargs: t.Any) -> Queue:
         """Create a queue with a redis url a name."""
-        from saq.queue.redis import RedisQueue
+        if url.startswith("redis"):
+            from saq.queue.redis import RedisQueue
 
-        return RedisQueue.from_url(url, **kwargs)
+            return RedisQueue.from_url(url, **kwargs)
+
+        if url.startswith("postgres"):
+            from saq.queue.postgres import PostgresQueue
+
+            return PostgresQueue.from_url(url, **kwargs)
+
+        raise ValueError("URL is not valid")
+
+    async def connect(self) -> None:
+        pass
 
     def register_before_enqueue(self, callback: BeforeEnqueueType) -> None:
         self._before_enqueues[id(callback)] = callback
@@ -333,3 +355,26 @@ class Queue(ABC):
     async def _before_enqueue(self, job: Job) -> None:
         for cb in self._before_enqueues.values():
             await cb(job)
+
+    def _create_job_for_enqueue(self, job_or_func: str | Job, **kwargs: t.Any) -> Job:
+        job_kwargs: dict[str, t.Any] = {}
+
+        for k, v in kwargs.items():
+            if k in Job.__dataclass_fields__:  # pylint: disable=no-member
+                job_kwargs[k] = v
+            else:
+                job_kwargs.setdefault("kwargs", {})[k] = v
+
+        if isinstance(job_or_func, str):
+            job = Job(function=job_or_func, **job_kwargs)
+        else:
+            job = job_or_func
+
+        if job.queue and job.queue.name != self.name:
+            raise ValueError(f"Job {job} registered to a different queue")
+
+        job.queue = self
+        job.queued = now()
+        job.status = Status.QUEUED
+
+        return job
