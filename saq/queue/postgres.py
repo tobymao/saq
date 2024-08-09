@@ -158,11 +158,12 @@ class PostgresQueue(Queue):
         async with self.pool.connection() as conn:
             await conn.set_autocommit(True)
             for key in job_keys:
-                await conn.execute(f"LISTEN {self._escape_channel_name(key)}")
+                await conn.execute(f'LISTEN "{key}"')
             gen = conn.notifies(timeout=timeout or None)
             async for notify in gen:
-                key = self._unescape_channel_name(notify.channel)
-                status = Status[notify.payload.upper()]
+                payload = self._load(notify.payload)
+                key = payload["key"]
+                status = Status[payload["status"].upper()]
                 if asyncio.iscoroutinefunction(callback):
                     stop = await callback(key, status)
                 else:
@@ -173,9 +174,8 @@ class PostgresQueue(Queue):
 
     async def notify(self, job: Job) -> None:
         async with self.pool.connection() as conn:
-            await conn.execute(
-                f"NOTIFY {self._escape_channel_name(job.key)}, '{job.status}'"
-            )
+            payload = self._dump({"key": job.key, "status": job.status})
+            await conn.execute(f"NOTIFY \"{job.key}\", '{payload}'")
 
     async def update(self, job: Job) -> None:
         job.touched = now()
@@ -336,9 +336,3 @@ class PostgresQueue(Queue):
                 """,
                 {"key": key},
             )
-
-    def _escape_channel_name(self, key: str) -> str:
-        return f"channel_{key.replace('-', '_')}"
-
-    def _unescape_channel_name(self, channel: str) -> str:
-        return channel.removeprefix("channel_").replace("_", "-")
