@@ -31,7 +31,7 @@ if t.TYPE_CHECKING:
 
 try:
     from psycopg.types.json import Jsonb
-    from psycopg_pool import AsyncNullConnectionPool, AsyncConnectionPool
+    from psycopg_pool import AsyncConnectionPool
 except ModuleNotFoundError as e:
     raise MissingDependencyError(
         "Missing dependencies for Postgres. Install them with `pip install saq[postgres]`."
@@ -61,15 +61,17 @@ class PostgresQueue(Queue):
         name: name of the queue (default "default")
         dump: lambda that takes a dictionary and outputs bytes (default `json.dumps`)
         load: lambda that takes str or bytes and outputs a python dictionary (default `json.loads`)
-        max_size: maximum pool size. (default 5)
-            If greater than 0, this limits the maximum number of connections of the connection pool.
-            Otherwise, the pool will have no limit.
+        min_size: minimum pool size. (default 4)
+            The minimum number of Postgres connections.
+        max_size: maximum pool size. (default 10)
+            If greater than 0, this limits the maximum number of connections to Postgres.
+            Otherwise, maintain `min_size` number of connections.
     """
 
     @classmethod
     def from_url(cls: type[PostgresQueue], url: str, **kwargs: t.Any) -> PostgresQueue:
         """Create a queue from a postgres url."""
-        return cls(AsyncNullConnectionPool(url, open=False), **kwargs)
+        return cls(AsyncConnectionPool(url, open=False), **kwargs)
 
     def __init__(
         self,
@@ -77,16 +79,18 @@ class PostgresQueue(Queue):
         name: str = "default",
         dump: DumpType | None = None,
         load: LoadType | None = None,
-        max_size: int = 5,
+        min_size: int = 4,
+        max_size: int = 10,
     ) -> None:
         super().__init__(name=name, dump=dump, load=load)
 
         self.pool = pool
+        self.min_size = min_size
         self.max_size = max_size
 
     async def connect(self) -> None:
         await self.pool.open()
-        await self.pool.resize(min_size=0, max_size=self.max_size)
+        await self.pool.resize(min_size=self.min_size, max_size=self.max_size)
         async with self.pool.connection() as conn, conn.cursor() as cursor:
             await cursor.execute(CREATE_JOBS_TABLE)
 
