@@ -10,14 +10,20 @@ import time
 import typing as t
 from collections import defaultdict
 
-from redis import asyncio as aioredis
-
+from saq.errors import MissingDependencyError
 from saq.job import (
     Job,
     Status,
 )
 from saq.queue.base import Queue, logger
 from saq.utils import millis, now, seconds, uuid1
+
+try:
+    from redis import asyncio as aioredis
+except ModuleNotFoundError as e:
+    raise MissingDependencyError(
+        "Missing dependencies for Redis. Install them with `pip install saq[redis]`."
+    ) from e
 
 if t.TYPE_CHECKING:
     from collections.abc import Iterable

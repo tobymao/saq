@@ -31,12 +31,12 @@ setup(
         saq=saq.__main__:main
     """,
     install_requires=[
-        "redis>=4.2,<6.0",
         "croniter>=0.3.18",
     ],
     extras_require={
         "hiredis": ["redis[hiredis]>=4.2.0"],
         "postgres": ["psycopg[pool]"],
+        "redis": ["redis>=4.2,<6.0"],
         "web": ["aiohttp", "aiohttp_basicauth"],
         "dev": [
             "black",
@@ -44,6 +44,7 @@ setup(
             "mypy",
             "psycopg[pool]",
             "pylint",
+            "redis>=4.2,<6.0",
             "types-croniter",
             "types-redis",
             "types-setuptools",

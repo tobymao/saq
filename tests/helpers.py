@@ -1,6 +1,7 @@
 import typing as t
 
-from saq.queue import Queue, RedisQueue
+from saq.queue import Queue
+from saq.queue.redis import RedisQueue
 
 
 def create_queue(**kwargs: t.Any) -> RedisQueue:

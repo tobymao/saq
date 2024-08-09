@@ -9,9 +9,7 @@ import logging
 import time
 import typing as t
 
-from psycopg.types.json import Jsonb
-from psycopg_pool import AsyncNullConnectionPool, AsyncConnectionPool
-
+from saq.errors import MissingDependencyError
 from saq.job import (
     Job,
     Status,
@@ -31,6 +29,14 @@ if t.TYPE_CHECKING:
         QueueStats,
     )
 
+try:
+    from psycopg.types.json import Jsonb
+    from psycopg_pool import AsyncNullConnectionPool, AsyncConnectionPool
+except ModuleNotFoundError as e:
+    raise MissingDependencyError(
+        "Missing dependencies for Postgres. Install them with `pip install saq[postgres]`."
+    ) from e
+
 JOBS_TABLE = "saq_jobs"
 
 CREATE_JOBS_TABLE = """
@@ -48,7 +54,7 @@ CREATE TABLE IF NOT EXISTS saq_jobs (
 
 class PostgresQueue(Queue):
     """
-    Queue is used to interact with redis.
+    Queue is used to interact with Postgres.
 
     Args:
         pool: instance of psycopg_pool.AsyncConnectionPool
