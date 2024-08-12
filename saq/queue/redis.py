@@ -358,7 +358,7 @@ class RedisQueue(Queue):
                 await self.redis.lrem(self._active, 0, job.id)
 
     async def retry(self, job: Job, error: str | None) -> None:
-        await super().retry(job, error)
+        self._update_job_for_retry(job, error)
         job_id = job.id
         next_retry_delay = job.next_retry_delay()
 
@@ -384,7 +384,7 @@ class RedisQueue(Queue):
         result: t.Any = None,
         error: str | None = None,
     ) -> None:
-        await super().finish(job, status, result=result, error=error)
+        self._update_job_for_finish(job, status, result=result, error=error)
         job_id = job.id
 
         async with self.redis.pipeline(transaction=True) as pipe:

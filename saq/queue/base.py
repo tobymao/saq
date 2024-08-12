@@ -125,12 +125,7 @@ class Queue(ABC):
 
     @abstractmethod
     async def retry(self, job: Job, error: str | None) -> None:
-        job.status = Status.QUEUED
-        job.error = error
-        job.completed = 0
-        job.started = 0
-        job.progress = 0
-        job.touched = now()
+        pass
 
     @abstractmethod
     async def finish(
@@ -141,13 +136,7 @@ class Queue(ABC):
         result: t.Any = None,
         error: str | None = None,
     ) -> None:
-        job.status = status
-        job.result = result
-        job.error = error
-        job.completed = now()
-
-        if status == Status.COMPLETE:
-            job.progress = 1.0
+        pass
 
     @abstractmethod
     async def dequeue(self, timeout: float = 0) -> Job | None:
@@ -366,3 +355,26 @@ class Queue(ABC):
         job.status = Status.QUEUED
 
         return job
+
+    def _update_job_for_retry(self, job: Job, error: str | None) -> None:
+        job.status = Status.QUEUED
+        job.error = error
+        job.completed = 0
+        job.started = 0
+        job.progress = 0
+        job.touched = now()
+
+    def _update_job_for_finish(
+        self,
+        job: Job,
+        status: Status,
+        result: t.Any = None,
+        error: str | None = None,
+    ) -> None:
+        job.status = status
+        job.result = result
+        job.error = error
+        job.completed = now()
+
+        if status == Status.COMPLETE:
+            job.progress = 1.0

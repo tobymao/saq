@@ -220,7 +220,7 @@ class PostgresQueue(Queue):
         await job.finish(Status.ABORTED, error=error)
 
     async def retry(self, job: Job, error: str | None) -> None:
-        await super().retry(job, error)
+        self._update_job_for_retry(job, error)
         next_retry_delay = job.next_retry_delay()
         if next_retry_delay:
             scheduled = time.time() + next_retry_delay
@@ -253,7 +253,7 @@ class PostgresQueue(Queue):
         result: t.Any = None,
         error: str | None = None,
     ) -> None:
-        await super().finish(job, status, result=result, error=error)
+        self._update_job_for_finish(job, status, result=result, error=error)
         key = job.key
 
         if job.ttl >= 0:
