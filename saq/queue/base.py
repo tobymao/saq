@@ -189,18 +189,6 @@ class Queue(ABC):
     def unregister_before_enqueue(self, callback: BeforeEnqueueType) -> None:
         self._before_enqueues.pop(id(callback), None)
 
-    def serialize(self, job: Job) -> str:
-        return self._dump(job.to_dict())
-
-    def deserialize(self, job_bytes: bytes | None) -> Job | None:
-        if not job_bytes:
-            return None
-
-        job_dict = self._load(job_bytes)
-        if job_dict.pop("queue") != self.name:
-            raise ValueError(f"Job {job_dict} fetched by wrong queue: {self.name}")
-        return Job(**job_dict, queue=self)
-
     async def apply(
         self, job_or_func: str, timeout: float | None = None, **kwargs: t.Any
     ) -> t.Any:

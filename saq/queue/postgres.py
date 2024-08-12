@@ -30,7 +30,7 @@ if t.TYPE_CHECKING:
     )
 
 try:
-    from psycopg.types.json import Jsonb
+    from psycopg.types import json
     from psycopg_pool import AsyncConnectionPool
 except ModuleNotFoundError as e:
     raise MissingDependencyError(
@@ -88,6 +88,11 @@ class PostgresQueue(Queue):
         self.min_size = min_size
         self.max_size = max_size
 
+        if dump:
+            json.set_json_dumps(dump)
+        if load:
+            json.set_json_loads(load)
+
     async def connect(self) -> None:
         await self.pool.open()
         await self.pool.resize(min_size=self.min_size, max_size=self.max_size)
@@ -96,6 +101,14 @@ class PostgresQueue(Queue):
 
     def job_id(self, job_key: str) -> str:
         return job_key
+
+    def serialize(self, job: Job) -> json.Jsonb:
+        return json.Jsonb(job.to_dict())
+
+    def deserialize(self, job_dict: dict[t.Any, t.Any]) -> Job | None:
+        if job_dict.pop("queue") != self.name:
+            raise ValueError(f"Job {job_dict} fetched by wrong queue: {self.name}")
+        return Job(**job_dict, queue=self)
 
     async def disconnect(self) -> None:
         await self.pool.close()
@@ -200,12 +213,7 @@ class PostgresQueue(Queue):
             )
             job = await cursor.fetchone()
             if job:
-                job_dict = job[0]
-                if job_dict.pop("queue") != self.name:
-                    raise ValueError(
-                        f"Job {job_dict} fetched by wrong queue: {self.name}"
-                    )
-                return Job(**job_dict, queue=self)
+                return self.deserialize(job[0])
         return None
 
     async def abort(self, job: Job, error: str, ttl: float = 5) -> None:
@@ -302,11 +310,12 @@ class PostgresQueue(Queue):
                 VALUES (%(key)s, %(function)s, %(job)s, %(queue)s, %(status)s, %(scheduled)s)
                 ON CONFLICT (key) DO UPDATE
                 SET function = %(function)s, job = %(job)s, queue = %(queue)s, status = %(status)s, scheduled = %(scheduled)s
+                WHERE {JOBS_TABLE}.status != 'queued'
                 """,
                 {
                     "key": job.key,
                     "function": job.function,
-                    "job": Jsonb(self.serialize(job)),
+                    "job": self.serialize(job),
                     "queue": self.name,
                     "status": job.status,
                     "scheduled": job.scheduled,
