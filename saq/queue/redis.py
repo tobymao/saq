@@ -262,68 +262,6 @@ class RedisQueue(Queue):
             args=[lock, seconds(now())],
         )
 
-    async def sweep(self, lock: int = 60, abort: float = 5.0) -> list[t.Any]:
-        if not self._cleanup_script:
-            self._cleanup_script = self.redis.register_script(
-                """
-                if redis.call('EXISTS', KEYS[1]) == 0 then
-                    redis.call('SETEX', KEYS[1], ARGV[1], 1)
-                    return redis.call('LRANGE', KEYS[2], 0, -1)
-                end
-                """
-            )
-
-        job_ids = await self._cleanup_script(
-            keys=[self._sweep, self._active], args=[lock], client=self.redis
-        )
-
-        swept = []
-        if job_ids:
-            for job_id, job_bytes in zip(job_ids, await self.redis.mget(job_ids)):
-                job = self.deserialize(job_bytes)
-
-                if job:
-                    # in rare cases a sweep may occur between a dequeue and actual processing.
-                    # in that case, the job status is still set to queued, but only because it hasn't
-                    # had its status updated yet. try refreshing after a short sleep to pick up the latest status.
-                    if job.status == Status.QUEUED:
-                        await asyncio.sleep(0.1)
-                        await job.refresh()
-                        stuck = job.status == Status.QUEUED
-                    else:
-                        stuck = job.status != Status.ACTIVE or job.stuck
-
-                    if stuck:
-                        swept.append(job_id)
-                        await self.abort(job, error="swept")
-
-                        logger.info(
-                            "Sweeping job %s",
-                            job.info(logger.isEnabledFor(logging.DEBUG)),
-                        )
-
-                        if job.retryable:
-                            try:
-                                await job.refresh(abort)
-                            except asyncio.TimeoutError:
-                                logger.info("Could not abort job %s", job_id)
-                            finally:
-                                await self.retry(job, error="swept")
-                        else:
-                            await job.finish(Status.ABORTED, error="swept")
-                else:
-                    swept.append(job_id)
-
-                    async with self.redis.pipeline(transaction=True) as pipe:
-                        await (
-                            pipe.lrem(self._active, 0, job_id)
-                            .zrem(self._incomplete, job_id)
-                            .execute()
-                        )
-                    logger.info("Sweeping missing job %s", job_id)
-
-        return swept
-
     async def notify(self, job: Job) -> None:
         await self.redis.publish(job.id, job.status)
 
@@ -518,11 +456,39 @@ class RedisQueue(Queue):
         finally:
             await self._pubsub.unsubscribe(queue)
 
-    async def get_many(self, keys: Iterable[str]) -> list[bytes | None]:
-        return await self.redis.mget(keys)
+    async def get_abort_errors(self, jobs: Iterable[Job]) -> list[bytes | None]:
+        return await self.redis.mget(job.abort_id for job in jobs)
 
-    async def delete(self, key: str) -> None:
-        await self.redis.delete(key)
+    async def finish_abort(self, job: Job) -> None:
+        await self.redis.delete(job.abort_id)
+
+    async def get_jobs_by_ids(self, job_ids: Iterable[str]) -> list[Job | None]:
+        return [
+            self.deserialize(job_bytes) for job_bytes in await self.redis.mget(job_ids)
+        ]
+
+    async def _get_active_jobs_for_sweep(self, lock: int) -> list[str]:
+        if not self._cleanup_script:
+            self._cleanup_script = self.redis.register_script(
+                """
+                if redis.call('EXISTS', KEYS[1]) == 0 then
+                    redis.call('SETEX', KEYS[1], ARGV[1], 1)
+                    return redis.call('LRANGE', KEYS[2], 0, -1)
+                end
+                """
+            )
+
+        return await self._cleanup_script(
+            keys=[self._sweep, self._active], args=[lock], client=self.redis
+        )
+
+    async def _sweep_job(self, job_id: str) -> None:
+        async with self.redis.pipeline(transaction=True) as pipe:
+            await (
+                pipe.lrem(self._active, 0, job_id)
+                .zrem(self._incomplete, job_id)
+                .execute()
+            )
 
 
 class PubSubMultiplexer:

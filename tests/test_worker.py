@@ -8,9 +8,11 @@ import unittest
 from unittest import mock
 
 from saq.job import CronJob, Job, Status
+from saq.queue import Queue
+from saq.queue.redis import RedisQueue
 from saq.utils import uuid1
 from saq.worker import Worker
-from tests.helpers import cleanup_queue, create_queue
+from tests.helpers import cleanup_queue, create_queue, create_postgres_queue
 
 if t.TYPE_CHECKING:
     from unittest.mock import MagicMock
@@ -56,9 +58,11 @@ functions: list[Function] = [noop, sleeper, error, sync_echo_ctx, recurse]
 
 
 class TestWorker(unittest.IsolatedAsyncioTestCase):
-    def setUp(self) -> None:
-        self.queue = create_queue()
-        self.worker = Worker(self.queue, functions=functions)
+    queue: Queue
+    worker: Worker
+
+    async def asyncSetUp(self) -> None:
+        self.skipTest("Skipping base test case")
 
     async def asyncTearDown(self) -> None:
         await cleanup_queue(self.queue)
@@ -274,12 +278,17 @@ class TestWorker(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await self.queue.count("incomplete"), 1)
 
         mock_time.time.return_value = 60
-        # pylint: disable=protected-access
-        await self.queue.redis.delete(self.queue._schedule)
+        if isinstance(self.queue, RedisQueue):
+            # pylint: disable=protected-access
+            await self.queue.redis.delete(self.queue._schedule)
         await worker.schedule()
         self.assertEqual(await self.queue.count("queued"), 1)
         self.assertEqual(await self.queue.count("incomplete"), 1)
-        mock_logger.info.assert_any_call("Scheduled %s", [b"saq:job:default:cron:cron"])
+        # Remove if statement when schedule is implemented for Postgres queue
+        if isinstance(self.queue, RedisQueue):
+            mock_logger.info.assert_any_call(
+                "Scheduled %s", [b"saq:job:default:cron:cron"]
+            )
 
     @mock.patch("saq.worker.logger")
     async def test_abort(self, mock_logger: MagicMock) -> None:
@@ -360,4 +369,16 @@ class TestWorker(unittest.IsolatedAsyncioTestCase):
         asyncio.create_task(self.worker.start())
         await self.queue.enqueue("handler", heartbeat=1, retries=2)
         await asyncio.sleep(6)
-        assert state["counter"] == 0
+        self.assertEqual(state["counter"], 0)
+
+
+class TestWorkerRedisQueue(TestWorker):
+    async def asyncSetUp(self) -> None:
+        self.queue = create_queue()
+        self.worker = Worker(self.queue, functions=functions)
+
+
+class TestWorkerPostgresQueue(TestWorker):
+    async def asyncSetUp(self) -> None:
+        self.queue = await create_postgres_queue()
+        self.worker = Worker(self.queue, functions=functions)

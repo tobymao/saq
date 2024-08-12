@@ -16,7 +16,7 @@ from saq.job import (
 )
 from saq.queue.base import Queue, logger
 from saq.queue.postgres_ddl import CREATE_JOBS_TABLE
-from saq.utils import now
+from saq.utils import now, seconds
 
 if t.TYPE_CHECKING:
     from collections.abc import Iterable
@@ -127,32 +127,46 @@ class PostgresQueue(Queue):
         }
 
     async def count(self, kind: CountKind) -> int:
-        status = None
-        if kind == "queued":
-            status = [Status.QUEUED]
-        if kind == "active":
-            status = [Status.ACTIVE]
-        if kind == "incomplete":
-            status = [Status.NEW, Status.DEFERRED, Status.QUEUED, Status.ACTIVE]
-
-        if status:
-            async with self.pool.connection() as conn, conn.cursor() as cursor:
+        async with self.pool.connection() as conn, conn.cursor() as cursor:
+            if kind == "queued":
                 await cursor.execute(
                     f"""
                     SELECT count(*) FROM {self.jobs_table}
-                    WHERE status IN %(status)s
+                    WHERE status = %(status)s AND %(now)s >= scheduled
                     """,
-                    {"status": status},
+                    {"status": Status.QUEUED, "now": seconds(now())},
                 )
-                result = await cursor.fetchone()
-                assert result
-                return result[0]
-        raise ValueError("Can't count unknown type {kind}")
+            elif kind == "active":
+                await cursor.execute(
+                    f"""
+                    SELECT count(*) FROM {JOBS_TABLE}
+                    WHERE status = %(status)s
+                    """,
+                    {"status": Status.ACTIVE},
+                )
+            elif kind == "incomplete":
+                await cursor.execute(
+                    f"""
+                    SELECT count(*) FROM {JOBS_TABLE}
+                    WHERE status = ANY(%(statuses)s)
+                    """,
+                    {
+                        "statuses": [
+                            Status.NEW,
+                            Status.DEFERRED,
+                            Status.QUEUED,
+                            Status.ACTIVE,
+                        ]
+                    },
+                )
+            else:
+                raise ValueError("Can't count unknown type {kind}")
+
+            result = await cursor.fetchone()
+            assert result
+            return result[0]
 
     async def schedule(self, lock: int = 1) -> t.Any: ...
-
-    async def sweep(self, lock: int = 60, abort: float = 5.0) -> list[t.Any]:
-        return []
 
     async def listen(
         self,
@@ -187,10 +201,10 @@ class PostgresQueue(Queue):
         async with self.pool.connection() as conn, conn.cursor() as cursor:
             await cursor.execute(
                 f"""
-                    UPDATE {self.jobs_table} SET job = %(job)s
+                    UPDATE {self.jobs_table} SET job = %(job)s, status = %(status)s
                     WHERE key = %(key)s
                     """,
-                {"job": self.serialize(job), "key": job.key},
+                {"job": self.serialize(job), "status": job.status, "key": job.key},
             )
         await self.notify(job)
 
@@ -209,7 +223,12 @@ class PostgresQueue(Queue):
         return None
 
     async def abort(self, job: Job, error: str, ttl: float = 5) -> None:
-        await job.finish(Status.ABORTED, error=error)
+
+        job.error = error
+        job.status = Status.ABORTING
+
+        await self.update(job)
+        asyncio.create_task(self.delete(job, status=Status.ABORTED, delay=ttl))
 
     async def retry(self, job: Job, error: str | None) -> None:
         self._update_job_for_retry(job, error)
@@ -248,8 +267,8 @@ class PostgresQueue(Queue):
         self._update_job_for_finish(job, status, result=result, error=error)
         key = job.key
 
-        if job.ttl >= 0:
-            async with self.pool.connection() as conn, conn.cursor() as cursor:
+        async with self.pool.connection() as conn, conn.cursor() as cursor:
+            if job.ttl >= 0:
                 await cursor.execute(
                     f"""
                     UPDATE {self.jobs_table} SET status = %(status)s, job = %(job)s
@@ -257,8 +276,16 @@ class PostgresQueue(Queue):
                     """,
                     {"status": status, "job": self.serialize(job), "key": key},
                 )
-        else:
-            await self.delete(key)
+                if job.ttl > 0:
+                    asyncio.create_task(self.delete(job, delay=job.ttl))
+            else:
+                await cursor.execute(
+                    f"""
+                    DELETE FROM {self.jobs_table}
+                    WHERE key = %(key)s
+                    """,
+                    {"key": key},
+                )
 
         if status == Status.COMPLETE:
             self.complete += 1
@@ -277,13 +304,18 @@ class PostgresQueue(Queue):
                 UPDATE {self.jobs_table} SET status = %(active)s
                 WHERE key = (
                   SELECT key FROM {self.jobs_table}
-                  WHERE status = %(queued)s AND queue = %(queue)s and EXTRACT(EPOCH FROM now()) >= scheduled
+                  WHERE status = %(queued)s AND queue = %(queue)s and %(now)s >= scheduled
                   FOR UPDATE SKIP LOCKED
                   LIMIT 1
                 )
                 RETURNING job
                 """,
-                {"active": Status.ACTIVE, "queued": Status.QUEUED, "queue": self.name},
+                {
+                    "active": Status.ACTIVE,
+                    "queued": Status.QUEUED,
+                    "queue": self.name,
+                    "now": seconds(now()),
+                },
             )
             job = await cursor.fetchone()
             if job:
@@ -302,7 +334,7 @@ class PostgresQueue(Queue):
                 VALUES (%(key)s, %(function)s, %(job)s, %(queue)s, %(status)s, %(scheduled)s)
                 ON CONFLICT (key) DO UPDATE
                 SET function = %(function)s, job = %(job)s, queue = %(queue)s, status = %(status)s, scheduled = %(scheduled)s
-                WHERE {self.jobs_table}.status != 'queued'
+                WHERE {self.jobs_table}.status NOT IN ('queued', 'aborting')
                 """,
                 {
                     "key": job.key,
@@ -311,29 +343,86 @@ class PostgresQueue(Queue):
                     "queue": self.name,
                     "status": job.status,
                     "scheduled": job.scheduled,
+                    "now": seconds(now()),
                 },
             )
 
         logger.info("Enqueuing %s", job.info(logger.isEnabledFor(logging.DEBUG)))
         return job
 
-    async def get_many(self, keys: Iterable[str]) -> list[bytes | None]:
-        async with self.pool.connection() as conn, conn.cursor() as cursor:
-            await cursor.execute(
-                f"""
-                SELECT job FROM {self.jobs_table}
-                WHERE key in %(keys)s
-                """,
-                {"keys": keys},
-            )
-            return [row[0] for row in await cursor.fetchmany()]
+    async def delete(
+        self, job: Job, status: Status | None = None, delay: float = 0
+    ) -> None:
+        if delay:
+            await asyncio.sleep(delay)
 
-    async def delete(self, key: str) -> None:
         async with self.pool.connection() as conn, conn.cursor() as cursor:
             await cursor.execute(
-                f"""
+                (
+                    f"""
                 DELETE FROM {self.jobs_table}
                 WHERE key = %(key)s
-                """,
-                {"key": key},
+                """
+                    + f"AND status = '{status}'"
+                    if status
+                    else ""
+                ),
+                {"key": job.key},
             )
+
+    async def get_abort_errors(self, jobs: Iterable[Job]) -> list[bytes | None]:
+        async with self.pool.connection() as conn, conn.cursor() as cursor:
+            await cursor.execute(
+                f"""
+                SELECT key, job->'error'
+                FROM {self.jobs_table}
+                WHERE key = ANY(%(keys)s)
+                """,
+                {"keys": [job.key for job in jobs]},
+            )
+            results: dict[str, str | None] = dict(await cursor.fetchmany())
+        errors = []
+        for job in jobs:
+            error = results.get(job.key)
+            errors.append(error.encode("utf-8") if error else None)
+        return errors
+
+    async def finish_abort(self, job: Job) -> None:
+        job.status = Status.ABORTED
+        await self.update(job)
+
+    async def get_jobs_by_ids(self, job_ids: Iterable[str]) -> list[Job | None]:
+        async with self.pool.connection() as conn, conn.cursor() as cursor:
+            await cursor.execute(
+                f"""
+                SELECT key, job
+                FROM {self.jobs_table}
+                WHERE key = ANY(%(keys)s)
+                """,
+                {"keys": list(job_ids)},
+            )
+            results = await cursor.fetchmany()
+        jobs_dict = {key: self.deserialize(job_dict) for key, job_dict in results}
+        return [jobs_dict.get(job_id) for job_id in job_ids]
+
+    async def _get_active_jobs_for_sweep(self, lock: int) -> list[str]:
+        async with self.pool.connection() as conn, conn.cursor() as cursor:
+            await cursor.execute(
+                f"""
+                SELECT pg_try_advisory_lock({lock});
+                """
+            )
+            if not await cursor.fetchone():
+                return []
+
+            await cursor.execute(
+                f"""
+                SELECT job->'key'
+                FROM {self.jobs_table}
+                WHERE status = 'active'
+                """
+            )
+            return [job[0] for job in await cursor.fetchmany()]
+
+    async def _sweep_job(self, job_id: str) -> None:
+        pass
