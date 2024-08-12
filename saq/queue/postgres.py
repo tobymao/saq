@@ -15,6 +15,7 @@ from saq.job import (
     Status,
 )
 from saq.queue.base import Queue, logger
+from saq.queue.postgres_ddl import CREATE_JOBS_TABLE
 from saq.utils import now
 
 if t.TYPE_CHECKING:
@@ -39,18 +40,6 @@ except ModuleNotFoundError as e:
 
 JOBS_TABLE = "saq_jobs"
 
-CREATE_JOBS_TABLE = """
-CREATE TABLE IF NOT EXISTS saq_jobs (
-    key TEXT PRIMARY KEY,
-    queued BIGINT NOT NULL DEFAULT EXTRACT(EPOCH FROM now()),
-    function TEXT,
-    job JSONB,
-    queue TEXT,
-    status TEXT,
-    scheduled BIGINT
-);
-"""
-
 
 class PostgresQueue(Queue):
     """
@@ -59,6 +48,7 @@ class PostgresQueue(Queue):
     Args:
         pool: instance of psycopg_pool.AsyncConnectionPool
         name: name of the queue (default "default")
+        joabs_table: name of the Postgres table SAQ will write jobs to (default "saq_jobs")
         dump: lambda that takes a dictionary and outputs bytes (default `json.dumps`)
         load: lambda that takes str or bytes and outputs a python dictionary (default `json.loads`)
         min_size: minimum pool size. (default 4)
@@ -77,6 +67,7 @@ class PostgresQueue(Queue):
         self,
         pool: AsyncConnectionPool,
         name: str = "default",
+        jobs_table: str = JOBS_TABLE,
         dump: DumpType | None = None,
         load: LoadType | None = None,
         min_size: int = 4,
@@ -84,6 +75,7 @@ class PostgresQueue(Queue):
     ) -> None:
         super().__init__(name=name, dump=dump, load=load)
 
+        self.jobs_table = jobs_table
         self.pool = pool
         self.min_size = min_size
         self.max_size = max_size
@@ -97,7 +89,7 @@ class PostgresQueue(Queue):
         await self.pool.open()
         await self.pool.resize(min_size=self.min_size, max_size=self.max_size)
         async with self.pool.connection() as conn, conn.cursor() as cursor:
-            await cursor.execute(CREATE_JOBS_TABLE)
+            await cursor.execute(CREATE_JOBS_TABLE.format(jobs_table=self.jobs_table))
 
     def job_id(self, job_key: str) -> str:
         return job_key
@@ -147,7 +139,7 @@ class PostgresQueue(Queue):
             async with self.pool.connection() as conn, conn.cursor() as cursor:
                 await cursor.execute(
                     f"""
-                    SELECT count(*) FROM {JOBS_TABLE}
+                    SELECT count(*) FROM {self.jobs_table}
                     WHERE status IN %(status)s
                     """,
                     {"status": status},
@@ -195,7 +187,7 @@ class PostgresQueue(Queue):
         async with self.pool.connection() as conn, conn.cursor() as cursor:
             await cursor.execute(
                 f"""
-                    UPDATE {JOBS_TABLE} SET job = %(job)s
+                    UPDATE {self.jobs_table} SET job = %(job)s
                     WHERE key = %(key)s
                     """,
                 {"job": self.serialize(job), "key": job.key},
@@ -206,7 +198,7 @@ class PostgresQueue(Queue):
         async with self.pool.connection() as conn, conn.cursor() as cursor:
             await cursor.execute(
                 f"""
-                SELECT job FROM {JOBS_TABLE}
+                SELECT job FROM {self.jobs_table}
                 WHERE key = %(key)s
                 """,
                 {"key": job_key},
@@ -230,7 +222,7 @@ class PostgresQueue(Queue):
         async with self.pool.connection() as conn, conn.cursor() as cursor:
             await cursor.execute(
                 f"""
-                UPDATE {JOBS_TABLE} SET status = %(status)s, job = %(job)s, scheduled = %(scheduled)s
+                UPDATE {self.jobs_table} SET status = %(status)s, job = %(job)s, scheduled = %(scheduled)s
                 WHERE key = %(key)s
                 """,
                 {
@@ -260,7 +252,7 @@ class PostgresQueue(Queue):
             async with self.pool.connection() as conn, conn.cursor() as cursor:
                 await cursor.execute(
                     f"""
-                    UPDATE {JOBS_TABLE} SET status = %(status)s, job = %(job)s
+                    UPDATE {self.jobs_table} SET status = %(status)s, job = %(job)s
                     WHERE key = %(key)s
                     """,
                     {"status": status, "job": self.serialize(job), "key": key},
@@ -282,9 +274,9 @@ class PostgresQueue(Queue):
         async with self.pool.connection() as conn, conn.cursor() as cursor:
             await cursor.execute(
                 f"""
-                UPDATE {JOBS_TABLE} SET status = %(active)s
+                UPDATE {self.jobs_table} SET status = %(active)s
                 WHERE key = (
-                  SELECT key FROM {JOBS_TABLE}
+                  SELECT key FROM {self.jobs_table}
                   WHERE status = %(queued)s AND queue = %(queue)s and EXTRACT(EPOCH FROM now()) >= scheduled
                   FOR UPDATE SKIP LOCKED
                   LIMIT 1
@@ -306,11 +298,11 @@ class PostgresQueue(Queue):
         async with self.pool.connection() as conn, conn.cursor() as cursor:
             await cursor.execute(
                 f"""
-                INSERT INTO {JOBS_TABLE} (key, function, job, queue, status, scheduled)
+                INSERT INTO {self.jobs_table} (key, function, job, queue, status, scheduled)
                 VALUES (%(key)s, %(function)s, %(job)s, %(queue)s, %(status)s, %(scheduled)s)
                 ON CONFLICT (key) DO UPDATE
                 SET function = %(function)s, job = %(job)s, queue = %(queue)s, status = %(status)s, scheduled = %(scheduled)s
-                WHERE {JOBS_TABLE}.status != 'queued'
+                WHERE {self.jobs_table}.status != 'queued'
                 """,
                 {
                     "key": job.key,
@@ -329,7 +321,7 @@ class PostgresQueue(Queue):
         async with self.pool.connection() as conn, conn.cursor() as cursor:
             await cursor.execute(
                 f"""
-                SELECT job FROM {JOBS_TABLE}
+                SELECT job FROM {self.jobs_table}
                 WHERE key in %(keys)s
                 """,
                 {"keys": keys},
@@ -340,7 +332,7 @@ class PostgresQueue(Queue):
         async with self.pool.connection() as conn, conn.cursor() as cursor:
             await cursor.execute(
                 f"""
-                DELETE FROM {JOBS_TABLE}
+                DELETE FROM {self.jobs_table}
                 WHERE key = %(key)s
                 """,
                 {"key": key},
