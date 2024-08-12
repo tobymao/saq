@@ -13,7 +13,7 @@ def create_queue(**kwargs: t.Any) -> RedisQueue:
 async def create_postgres_queue(**kwargs: t.Any) -> PostgresQueue:
     queue = t.cast(
         PostgresQueue,
-        Queue.from_url("postgres://postgres:mysecretpassword@localhost", **kwargs),
+        Queue.from_url("postgres://postgres@localhost", **kwargs),
     )
     await queue.connect()
     return queue
