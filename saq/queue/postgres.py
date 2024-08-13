@@ -16,7 +16,7 @@ from saq.job import (
     Status,
 )
 from saq.queue.base import Queue, logger
-from saq.queue.postgres_ddl import CREATE_JOBS_TABLE
+from saq.queue.postgres_ddl import CREATE_JOBS_DEQUEUE_INDEX, CREATE_JOBS_TABLE
 from saq.utils import now, seconds
 
 if t.TYPE_CHECKING:
@@ -94,6 +94,9 @@ class PostgresQueue(Queue):
         await self.pool.resize(min_size=self.min_size, max_size=self.max_size)
         async with self.pool.connection() as conn, conn.cursor() as cursor:
             await cursor.execute(CREATE_JOBS_TABLE.format(jobs_table=self.jobs_table))
+            await cursor.execute(
+                CREATE_JOBS_DEQUEUE_INDEX.format(jobs_table=self.jobs_table)
+            )
 
     def job_id(self, job_key: str) -> str:
         return job_key
