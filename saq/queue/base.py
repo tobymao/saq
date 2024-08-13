@@ -95,6 +95,10 @@ class Queue(ABC):
         pass
 
     @abstractmethod
+    async def sweep(self, lock: int = 60, abort: float = 5.0) -> list[t.Any]:
+        pass
+
+    @abstractmethod
     async def listen(
         self,
         job_keys: Iterable[str],
@@ -150,18 +154,6 @@ class Queue(ABC):
     async def finish_abort(self, job: Job) -> None:
         pass
 
-    @abstractmethod
-    async def get_jobs_by_ids(self, job_ids: Iterable[str]) -> list[Job | None]:
-        pass
-
-    @abstractmethod
-    async def _get_active_jobs_for_sweep(self, lock: int) -> list[str]:
-        pass
-
-    @abstractmethod
-    async def _sweep_job(self, job_id: str) -> None:
-        pass
-
     @staticmethod
     def from_url(url: str, **kwargs: t.Any) -> Queue:
         """Create a queue with a redis url a name."""
@@ -185,49 +177,6 @@ class Queue(ABC):
 
     def unregister_before_enqueue(self, callback: BeforeEnqueueType) -> None:
         self._before_enqueues.pop(id(callback), None)
-
-    async def sweep(self, lock: int = 60, abort: float = 5.0) -> list[t.Any]:
-        job_ids = await self._get_active_jobs_for_sweep(lock)
-
-        swept = []
-        if job_ids:
-            for job_id, job in zip(job_ids, await self.get_jobs_by_ids(job_ids)):
-                if job:
-                    # in rare cases a sweep may occur between a dequeue and actual processing.
-                    # in that case, the job status is still set to queued, but only because it hasn't
-                    # had its status updated yet. try refreshing after a short sleep to pick up the latest status.
-                    if job.status == Status.QUEUED:
-                        await asyncio.sleep(0.1)
-                        await job.refresh()
-                        stuck = job.status == Status.QUEUED
-                    else:
-                        stuck = job.status != Status.ACTIVE or job.stuck
-
-                    if stuck:
-                        swept.append(job_id)
-                        await self.abort(job, error="swept")
-
-                        logger.info(
-                            "Sweeping job %s",
-                            job.info(logger.isEnabledFor(logging.DEBUG)),
-                        )
-
-                        if job.retryable:
-                            try:
-                                await job.refresh(abort)
-                            except asyncio.TimeoutError:
-                                logger.info("Could not abort job %s", job_id)
-                            finally:
-                                await self.retry(job, error="swept")
-                        else:
-                            await job.finish(Status.ABORTED, error="swept")
-                else:
-                    swept.append(job_id)
-
-                    await self._sweep_job(job_id)
-                    logger.info("Sweeping missing job %s", job_id)
-
-        return swept
 
     async def apply(
         self, job_or_func: str, timeout: float | None = None, **kwargs: t.Any

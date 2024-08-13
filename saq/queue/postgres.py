@@ -168,6 +168,10 @@ class PostgresQueue(Queue):
 
     async def schedule(self, lock: int = 1) -> t.Any: ...
 
+    async def sweep(self, lock: int = 60, abort: float = 5.0) -> list[t.Any]:
+        """Not applicable to Postgres queue"""
+        return []
+
     async def listen(
         self,
         job_keys: Iterable[str],
@@ -301,18 +305,17 @@ class PostgresQueue(Queue):
         async with self.pool.connection() as conn, conn.cursor() as cursor:
             await cursor.execute(
                 f"""
-                UPDATE {self.jobs_table} SET status = %(active)s
+                UPDATE {self.jobs_table} SET status = 'active'
                 WHERE key = (
-                  SELECT key FROM {self.jobs_table}
-                  WHERE status = %(queued)s AND queue = %(queue)s and %(now)s >= scheduled
+                  SELECT key
+                  FROM {self.jobs_table}
+                  WHERE status = 'queued' AND queue = %(queue)s AND %(now)s >= scheduled
                   FOR UPDATE SKIP LOCKED
                   LIMIT 1
                 )
                 RETURNING job
                 """,
                 {
-                    "active": Status.ACTIVE,
-                    "queued": Status.QUEUED,
                     "queue": self.name,
                     "now": seconds(now()),
                 },
@@ -330,22 +333,24 @@ class PostgresQueue(Queue):
         async with self.pool.connection() as conn, conn.cursor() as cursor:
             await cursor.execute(
                 f"""
-                INSERT INTO {self.jobs_table} (key, function, job, queue, status, scheduled)
-                VALUES (%(key)s, %(function)s, %(job)s, %(queue)s, %(status)s, %(scheduled)s)
+                INSERT INTO {self.jobs_table} (key, job, queue, status, scheduled)
+                VALUES (%(key)s, %(job)s, %(queue)s, %(status)s, %(scheduled)s)
                 ON CONFLICT (key) DO UPDATE
-                SET function = %(function)s, job = %(job)s, queue = %(queue)s, status = %(status)s, scheduled = %(scheduled)s
+                SET job = %(job)s, queue = %(queue)s, status = %(status)s, scheduled = %(scheduled)s
                 WHERE {self.jobs_table}.status NOT IN ('queued', 'aborting')
+                RETURNING job
                 """,
                 {
                     "key": job.key,
-                    "function": job.function,
                     "job": self.serialize(job),
                     "queue": self.name,
                     "status": job.status,
                     "scheduled": job.scheduled,
-                    "now": seconds(now()),
                 },
             )
+
+            if not await cursor.fetchone():
+                return None
 
         logger.info("Enqueuing %s", job.info(logger.isEnabledFor(logging.DEBUG)))
         return job
@@ -390,39 +395,3 @@ class PostgresQueue(Queue):
     async def finish_abort(self, job: Job) -> None:
         job.status = Status.ABORTED
         await self.update(job)
-
-    async def get_jobs_by_ids(self, job_ids: Iterable[str]) -> list[Job | None]:
-        async with self.pool.connection() as conn, conn.cursor() as cursor:
-            await cursor.execute(
-                f"""
-                SELECT key, job
-                FROM {self.jobs_table}
-                WHERE key = ANY(%(keys)s)
-                """,
-                {"keys": list(job_ids)},
-            )
-            results = await cursor.fetchmany()
-        jobs_dict = {key: self.deserialize(job_dict) for key, job_dict in results}
-        return [jobs_dict.get(job_id) for job_id in job_ids]
-
-    async def _get_active_jobs_for_sweep(self, lock: int) -> list[str]:
-        async with self.pool.connection() as conn, conn.cursor() as cursor:
-            await cursor.execute(
-                f"""
-                SELECT pg_try_advisory_lock({lock});
-                """
-            )
-            if not await cursor.fetchone():
-                return []
-
-            await cursor.execute(
-                f"""
-                SELECT job->'key'
-                FROM {self.jobs_table}
-                WHERE status = 'active'
-                """
-            )
-            return [job[0] for job in await cursor.fetchmany()]
-
-    async def _sweep_job(self, job_id: str) -> None:
-        pass
