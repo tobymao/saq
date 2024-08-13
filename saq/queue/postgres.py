@@ -8,6 +8,7 @@ import asyncio
 import logging
 import time
 import typing as t
+from contextlib import asynccontextmanager
 
 from saq.errors import MissingDependencyError
 from saq.job import (
@@ -31,6 +32,7 @@ if t.TYPE_CHECKING:
     )
 
 try:
+    from psycopg import AsyncConnection
     from psycopg.types import json
     from psycopg_pool import AsyncConnectionPool
 except ModuleNotFoundError as e:
@@ -84,6 +86,8 @@ class PostgresQueue(Queue):
             json.set_json_dumps(dump)
         if load:
             json.set_json_loads(load)
+
+        self.connections: dict[str, AsyncConnection] = {}
 
     async def connect(self) -> None:
         await self.pool.open()
@@ -196,14 +200,14 @@ class PostgresQueue(Queue):
                     await gen.aclose()
 
     async def notify(self, job: Job) -> None:
-        async with self.pool.connection() as conn:
+        async with self._get_connection(job.key) as conn:
             payload = self._dump({"key": job.key, "status": job.status})
             await conn.execute(f"NOTIFY \"{job.key}\", '{payload}'")
 
     async def update(self, job: Job) -> None:
         job.touched = now()
-        async with self.pool.connection() as conn, conn.cursor() as cursor:
-            await cursor.execute(
+        async with self._get_connection(job.key) as conn:
+            await conn.execute(
                 f"""
                     UPDATE {self.jobs_table} SET job = %(job)s, status = %(status)s
                     WHERE key = %(key)s
@@ -213,7 +217,7 @@ class PostgresQueue(Queue):
         await self.notify(job)
 
     async def job(self, job_key: str) -> Job | None:
-        async with self.pool.connection() as conn, conn.cursor() as cursor:
+        async with self._get_connection(job_key) as conn, conn.cursor() as cursor:
             await cursor.execute(
                 f"""
                 SELECT job FROM {self.jobs_table}
@@ -242,8 +246,8 @@ class PostgresQueue(Queue):
         else:
             scheduled = job.scheduled
 
-        async with self.pool.connection() as conn, conn.cursor() as cursor:
-            await cursor.execute(
+        async with self._get_connection(job.key) as conn:
+            await conn.execute(
                 f"""
                 UPDATE {self.jobs_table} SET status = %(status)s, job = %(job)s, scheduled = %(scheduled)s
                 WHERE key = %(key)s
@@ -271,7 +275,8 @@ class PostgresQueue(Queue):
         self._update_job_for_finish(job, status, result=result, error=error)
         key = job.key
 
-        async with self.pool.connection() as conn, conn.cursor() as cursor:
+        conn = self.connections.pop(key)
+        async with conn.cursor() as cursor:
             if job.ttl >= 0:
                 await cursor.execute(
                     f"""
@@ -290,6 +295,16 @@ class PostgresQueue(Queue):
                     """,
                     {"key": key},
                 )
+        await conn.execute(
+            f"""
+            SELECT pg_advisory_unlock(lock_id)
+            FROM {self.jobs_table}
+            WHERE key = %(key)s
+            """,
+            {"key": key},
+        )
+        await conn.commit()
+        await self.pool.putconn(conn)
 
         if status == Status.COMPLETE:
             self.complete += 1
@@ -302,14 +317,20 @@ class PostgresQueue(Queue):
         logger.info("Finished %s", job.info(logger.isEnabledFor(logging.DEBUG)))
 
     async def dequeue(self, timeout: float = 0) -> Job | None:
-        async with self.pool.connection() as conn, conn.cursor() as cursor:
+        # Timeout of 0 means timeout immediately
+        job = None
+        conn = await self.pool.getconn(timeout=timeout or None)
+        async with conn.cursor() as cursor:
             await cursor.execute(
                 f"""
                 UPDATE {self.jobs_table} SET status = 'active'
                 WHERE key = (
                   SELECT key
                   FROM {self.jobs_table}
-                  WHERE status = 'queued' AND queue = %(queue)s AND %(now)s >= scheduled
+                  WHERE status = 'queued'
+                    AND queue = %(queue)s
+                    AND %(now)s >= scheduled
+                    AND pg_try_advisory_lock(lock_id)
                   FOR UPDATE SKIP LOCKED
                   LIMIT 1
                 )
@@ -320,9 +341,14 @@ class PostgresQueue(Queue):
                     "now": seconds(now()),
                 },
             )
-            job = await cursor.fetchone()
+            result = await cursor.fetchone()
+        if result:
+            job = self.deserialize(result[0])
             if job:
-                return self.deserialize(job[0])
+                self.connections[job.key] = conn
+                return job
+        await self.pool.putconn(conn)
+        await asyncio.sleep(0.1)
         return None
 
     async def enqueue(self, job_or_func: str | Job, **kwargs: t.Any) -> Job | None:
@@ -395,3 +421,17 @@ class PostgresQueue(Queue):
     async def finish_abort(self, job: Job) -> None:
         job.status = Status.ABORTED
         await self.update(job)
+
+    @asynccontextmanager
+    async def _get_connection(
+        self, key: str | None = None
+    ) -> t.AsyncGenerator[AsyncConnection]:
+        if key in self.connections:
+            conn = self.connections[key]
+            try:
+                yield conn
+            finally:
+                await conn.commit()
+        else:
+            async with self.pool.connection() as conn:
+                yield conn
