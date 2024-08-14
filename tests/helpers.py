@@ -22,10 +22,10 @@ async def create_postgres_queue(**kwargs: t.Any) -> PostgresQueue:
 async def cleanup_queue(queue: Queue) -> None:
     if isinstance(queue, RedisQueue):
         await queue.redis.flushdb()
-        await queue.disconnect()
     elif isinstance(queue, PostgresQueue):
         async with queue.pool.connection() as conn:
             await conn.execute("DROP SCHEMA public CASCADE")
             await conn.execute("CREATE SCHEMA public")
             await conn.execute("GRANT ALL ON SCHEMA public TO postgres")
             await conn.execute("GRANT ALL ON SCHEMA public TO public")
+    await queue.disconnect()
