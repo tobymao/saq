@@ -16,7 +16,7 @@ from saq.job import (
     Status,
 )
 from saq.queue.base import Queue, logger
-from saq.utils import millis, now, seconds, uuid1
+from saq.utils import millis, now, seconds
 
 try:
     from redis import asyncio as aioredis
@@ -77,7 +77,6 @@ class RedisQueue(Queue):
         super().__init__(name=name, dump=dump, load=load)
 
         self.redis = redis
-        self.uuid: str = uuid1()
         self._version: VersionTuple | None = None
         self._schedule_script: AsyncScript | None = None
         self._enqueue_script: AsyncScript | None = None

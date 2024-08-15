@@ -18,7 +18,7 @@ from saq.job import (
     Status,
     get_default_job_key,
 )
-from saq.utils import now
+from saq.utils import now, uuid1
 
 if t.TYPE_CHECKING:
     from collections.abc import AsyncIterator, Iterable, Sequence
@@ -59,6 +59,7 @@ class Queue(ABC):
         load: LoadType | None,
     ) -> None:
         self.name = name
+        self.uuid: str = uuid1()
         self.started: int = now()
         self.complete = 0
         self.failed = 0
