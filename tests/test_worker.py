@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import contextvars
 import logging
+import time
 import typing as t
 import unittest
 from unittest import mock
@@ -12,7 +13,7 @@ from saq.queue import Queue
 from saq.queue.redis import RedisQueue
 from saq.utils import uuid1
 from saq.worker import Worker
-from tests.helpers import cleanup_queue, create_queue  # create_postgres_queue
+from tests.helpers import cleanup_queue, create_queue, create_postgres_queue
 
 if t.TYPE_CHECKING:
     from unittest.mock import MagicMock
@@ -65,8 +66,8 @@ class TestWorker(unittest.IsolatedAsyncioTestCase):
         self.skipTest("Skipping base test case")
 
     async def asyncTearDown(self) -> None:
-        await cleanup_queue(self.queue)
         await self.worker.stop()
+        await cleanup_queue(self.queue)
 
     async def enqueue(self, function: str, **kwargs: t.Any) -> Job:
         job = await self.queue.enqueue(function, **kwargs)
@@ -380,6 +381,37 @@ class TestWorkerRedisQueue(TestWorker):
 
 class TestWorkerPostgresQueue(TestWorker):
     async def asyncSetUp(self) -> None:
-        # self.queue = await create_postgres_queue()
-        # self.worker = Worker(self.queue, functions=functions)
-        self.skipTest("Skipping Postgres test case")
+        self.queue = await create_postgres_queue()
+        self.worker = Worker(self.queue, functions=functions)
+
+    @mock.patch("saq.utils.time")
+    async def test_schedule(self, mock_time: MagicMock) -> None:
+        self.skipTest("Not implemented")
+
+    async def test_sweep_abort(self) -> None:
+        self.skipTest("Not implemented")
+
+    @mock.patch("saq.worker.logger")
+    @mock.patch("saq.utils.time")
+    async def test_cron(self, mock_time: MagicMock, mock_logger: MagicMock) -> None:
+        with self.assertRaises(ValueError):
+            Worker(
+                self.queue,
+                functions=functions,
+                cron_jobs=[CronJob(cron, cron="x")],
+            )
+
+        worker = Worker(
+            self.queue,
+            functions=functions,
+            cron_jobs=[CronJob(cron, cron="* * * * *")],
+        )
+        self.assertEqual(await self.queue.count("queued"), 0)
+        self.assertEqual(await self.queue.count("incomplete"), 0)
+        await worker.schedule()
+        self.assertEqual(await self.queue.count("queued"), 0)
+        self.assertEqual(await self.queue.count("incomplete"), 1)
+
+        mock_time.time.return_value = time.time() + 60
+        self.assertEqual(await self.queue.count("queued"), 1)
+        self.assertEqual(await self.queue.count("incomplete"), 1)
