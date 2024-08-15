@@ -463,3 +463,31 @@ class TestPostgresQueue(TestQueue):
         self.assertEqual(job.id, "1")
         self.assertIsNone(await self.queue.enqueue("test", key="1"))
         self.assertIsNone(await self.queue.enqueue(job))
+
+    async def test_abort(self) -> None:
+        job = await self.enqueue("test", retries=2)
+        self.assertEqual(await self.count("queued"), 1)
+        self.assertEqual(await self.count("incomplete"), 1)
+        await self.queue.abort(job, "test")
+        self.assertEqual(await self.count("queued"), 0)
+        self.assertEqual(await self.count("incomplete"), 0)
+
+        job = await self.enqueue("test", retries=2)
+        await self.dequeue()
+        self.assertEqual(await self.count("queued"), 0)
+        self.assertEqual(await self.count("incomplete"), 1)
+        self.assertEqual(await self.count("active"), 1)
+        await self.queue.abort(job, "test")
+        self.assertEqual(await self.count("queued"), 0)
+        self.assertEqual(await self.count("incomplete"), 0)
+        self.assertEqual(await self.count("active"), 0)
+        async with self.queue.pool.connection() as conn, conn.cursor() as cursor:
+            await cursor.execute(
+                f"""
+                SELECT status
+                FROM {self.queue.jobs_table}
+                WHERE key = %s
+                """,
+                (job.key,),
+            )
+            self.assertEqual(await cursor.fetchone(), (Status.ABORTING,))

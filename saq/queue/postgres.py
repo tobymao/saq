@@ -232,7 +232,6 @@ class PostgresQueue(Queue):
         return None
 
     async def abort(self, job: Job, error: str, ttl: float = 5) -> None:
-
         job.error = error
         job.status = Status.ABORTING
 
@@ -416,8 +415,7 @@ class PostgresQueue(Queue):
         return errors
 
     async def finish_abort(self, job: Job) -> None:
-        job.status = Status.ABORTED
-        await self.update(job)
+        """Noop"""
 
     @asynccontextmanager
     async def _get_connection(
