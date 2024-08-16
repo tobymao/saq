@@ -59,6 +59,9 @@ class PostgresQueue(Queue):
         max_size: maximum pool size. (default 20)
             If greater than 0, this limits the maximum number of connections to Postgres.
             Otherwise, maintain `min_size` number of connections.
+        poll_interval: how often to poll for jobs. (default 1)
+            If 0, the queue will not poll for jobs and will only rely on notifications from the server.
+            This mean cron jobs will not be picked up in a timely fashion.
     """
 
     @classmethod
@@ -75,6 +78,7 @@ class PostgresQueue(Queue):
         load: LoadType | None = None,
         min_size: int = 4,
         max_size: int = 20,
+        poll_interval: int = 1,
     ) -> None:
         super().__init__(name=name, dump=dump, load=load)
 
@@ -82,6 +86,7 @@ class PostgresQueue(Queue):
         self.pool = pool
         self.min_size = min_size
         self.max_size = max_size
+        self.poll_interval = poll_interval
 
         if dump:
             json.set_json_dumps(dump)
@@ -89,6 +94,7 @@ class PostgresQueue(Queue):
             json.set_json_loads(load)
 
         self.connections: dict[str, AsyncConnection] = {}
+        self.cond = asyncio.Condition()
 
     async def connect(self) -> None:
         await self.pool.open()
@@ -97,6 +103,12 @@ class PostgresQueue(Queue):
             await cursor.execute(CREATE_JOBS_TABLE.format(jobs_table=self.jobs_table))
             await cursor.execute(
                 CREATE_JOBS_DEQUEUE_INDEX.format(jobs_table=self.jobs_table)
+            )
+
+        self.listen_for_enqueues_task = asyncio.create_task(self.listen_for_enqueues())
+        if self.poll_interval > 0:
+            self.dequeue_timer_task = asyncio.create_task(
+                self.dequeue_timer(self.poll_interval)
             )
 
     def job_id(self, job_key: str) -> str:
@@ -111,7 +123,11 @@ class PostgresQueue(Queue):
         return Job(**job_dict, queue=self)
 
     async def disconnect(self) -> None:
+        for conn in self.connections.values():
+            await self.pool.putconn(conn)
         await self.pool.close()
+        self.listen_for_enqueues_task.cancel()
+        self.dequeue_timer_task.cancel()
 
     async def info(
         self, jobs: bool = False, offset: int = 0, limit: int = 10
@@ -213,9 +229,12 @@ class PostgresQueue(Queue):
                     await gen.aclose()
 
     async def notify(self, job: Job) -> None:
-        async with self._get_connection(job.key) as conn:
-            payload = self._dump({"key": job.key, "status": job.status})
-            await conn.execute(f"NOTIFY \"{job.key}\", '{payload}'")
+        payload = self._dump({"key": job.key, "status": job.status})
+        await self._notify(job.key, payload)
+
+    async def _notify(self, channel: str, payload: t.Any) -> None:
+        async with self.pool.connection() as conn:
+            await conn.execute(f"NOTIFY \"{channel}\", '{payload}'")
 
     async def update(self, job: Job) -> None:
         job.touched = now()
@@ -323,43 +342,10 @@ class PostgresQueue(Queue):
         logger.info("Finished %s", job.info(logger.isEnabledFor(logging.DEBUG)))
 
     async def dequeue(self, timeout: float = 0) -> Job | None:
-        # Timeout of 0 means timeout immediately
-        result = None
-        conn = await self.pool.getconn(timeout=timeout or None)
-        async with conn.cursor() as cursor, conn.transaction():
-            while True:
-                await cursor.execute(
-                    f"""
-                    UPDATE {self.jobs_table} SET status = 'active'
-                    WHERE key = (
-                      SELECT key
-                      FROM {self.jobs_table}
-                      WHERE status = 'queued'
-                        AND queue = %(queue)s
-                        AND %(now)s >= scheduled
-                      FOR UPDATE SKIP LOCKED
-                      LIMIT 1
-                    ) AND pg_try_advisory_lock(lock_id)
-                    RETURNING job
-                    """,
-                    {
-                        "queue": self.name,
-                        "now": math.ceil(seconds(now())),
-                    },
-                )
-                result = await cursor.fetchone()
-                if result:
-                    break
-                await asyncio.sleep(0.05)
-        if result:
-            job = self.deserialize(result[0])
-            if job:
-                self.connections[job.key] = conn
-                return job
-        await conn.rollback()
-        await self.pool.putconn(conn)
-        await asyncio.sleep(0.1)
-        return None
+        try:
+            return await asyncio.wait_for(self.wait_for_job(), timeout or None)
+        except asyncio.exceptions.TimeoutError:
+            return None
 
     async def enqueue(self, job_or_func: str | Job, **kwargs: t.Any) -> Job | None:
         job = self._create_job_for_enqueue(job_or_func, **kwargs)
@@ -388,6 +374,7 @@ class PostgresQueue(Queue):
             if not await cursor.fetchone():
                 return None
 
+        await self._notify("saq:enqueue", job.key)
         logger.info("Enqueuing %s", job.info(logger.isEnabledFor(logging.DEBUG)))
         return job
 
@@ -410,6 +397,71 @@ class PostgresQueue(Queue):
 
     async def finish_abort(self, job: Job) -> None:
         """Noop"""
+
+    async def dequeue_timer(self, poll_interval: int) -> None:
+        """Wakes up a single dequeue task every `poll_interval` seconds."""
+        while True:
+            async with self.cond:
+                self.cond.notify(1)
+            await asyncio.sleep(poll_interval)
+
+    async def wait_for_job(self) -> Job:
+        """Wait on `self.cond` to dequeue.
+
+        Retries indefinitely until a job is available.
+        """
+        job = None
+        while True:
+            async with self.cond:
+                await self.cond.wait()
+            job = await self._dequeue()
+            if job:
+                break
+        return job
+
+    async def listen_for_enqueues(self, timeout: float | None = None) -> None:
+        """Wakes up a single dequeue task when a Postgres enqueue notification is received."""
+        async with self.pool.connection() as conn:
+            await conn.execute('LISTEN "saq:enqueue"')
+            await conn.commit()
+            gen = conn.notifies(timeout=timeout)
+            async for _ in gen:
+                async with self.cond:
+                    self.cond.notify(1)
+
+    async def _dequeue(self) -> Job | None:
+        result = None
+        conn = await self.pool.getconn()
+        async with conn.cursor() as cursor, conn.transaction():
+            await cursor.execute(
+                f"""
+                WITH locked_job AS (
+                  SELECT key, lock_id
+                  FROM {self.jobs_table}
+                  WHERE status = 'queued'
+                    AND queue = %(queue)s
+                    AND %(now)s >= scheduled
+                  FOR UPDATE SKIP LOCKED
+                  LIMIT 1
+                )
+                UPDATE {self.jobs_table} SET status = 'active'
+                FROM locked_job
+                WHERE {self.jobs_table}.key = locked_job.key AND pg_try_advisory_lock(locked_job.lock_id)
+                RETURNING job
+                """,
+                {
+                    "queue": self.name,
+                    "now": math.ceil(seconds(now())),
+                },
+            )
+            result = await cursor.fetchone()
+        if result:
+            job = self.deserialize(result[0])
+            if job:
+                self.connections[job.key] = conn
+                return job
+        await self.pool.putconn(conn)
+        return None
 
     @asynccontextmanager
     async def _get_connection(

@@ -422,9 +422,6 @@ class TestPostgresQueue(TestQueue):
     async def asyncSetUp(self) -> None:
         self.queue: PostgresQueue = await create_postgres_queue()
 
-    async def test_dequeue_timeout(self) -> None:
-        self.skipTest("Not implemented")
-
     async def test_job_key(self) -> None:
         self.skipTest("Not implemented")
 
