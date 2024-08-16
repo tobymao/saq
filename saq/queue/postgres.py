@@ -180,7 +180,7 @@ class PostgresQueue(Queue):
             await cursor.execute(
                 f"""
                 DELETE FROM {self.jobs_table}
-                WHERE status IN ('aborted', 'completed', 'failed')
+                WHERE status IN ('aborted', 'complete', 'failed')
                   AND %(now)s >= ttl
                 RETURNING key
                 """,

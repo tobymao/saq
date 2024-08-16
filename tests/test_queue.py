@@ -491,3 +491,12 @@ class TestPostgresQueue(TestQueue):
                 (job.key,),
             )
             self.assertEqual(await cursor.fetchone(), (Status.ABORTING,))
+
+    async def test_sweep(self) -> None:
+        job = await self.enqueue("test", ttl=1)
+        job = await self.dequeue()
+        await self.queue.finish(job, Status.COMPLETE)
+        await asyncio.sleep(1)
+        await self.queue.sweep()
+        with self.assertRaisesRegex(RuntimeError, "doesn't exist"):
+            await job.refresh()
