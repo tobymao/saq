@@ -142,14 +142,14 @@ class PostgresQueue(Queue):
                     SELECT count(*) FROM {self.jobs_table}
                     WHERE status = 'queued'
                       AND queue = %(queue)s
-                      AND %(now)s >= (queued + scheduled)
+                      AND %(now)s >= scheduled
                     """,
                     {"queue": self.name, "now": math.ceil(seconds(now()))},
                 )
             elif kind == "active":
                 await cursor.execute(
                     f"""
-                    SELECT count(*) FROM {JOBS_TABLE}
+                    SELECT count(*) FROM {self.jobs_table}
                     WHERE status = 'active'
                       AND queue = %(queue)s
                     """,
@@ -158,7 +158,7 @@ class PostgresQueue(Queue):
             elif kind == "incomplete":
                 await cursor.execute(
                     f"""
-                    SELECT count(*) FROM {JOBS_TABLE}
+                    SELECT count(*) FROM {self.jobs_table}
                     WHERE status IN ('new', 'deferred', 'queued', 'active')
                       AND queue = %(queue)s
                     """,
@@ -174,8 +174,20 @@ class PostgresQueue(Queue):
     async def schedule(self, lock: int = 1) -> t.Any: ...
 
     async def sweep(self, lock: int = 60, abort: float = 5.0) -> list[t.Any]:
-        """Not applicable to Postgres queue"""
-        return []
+        """Delete jobs past their TTL from the jobs table"""
+        swept = []
+        async with self.pool.connection() as conn, conn.cursor() as cursor:
+            await cursor.execute(
+                f"""
+                DELETE FROM {self.jobs_table}
+                WHERE status IN ('aborted', 'completed', 'failed')
+                  AND %(now)s >= ttl
+                RETURNING key
+                """,
+                {"now": math.ceil(seconds(now()))},
+            )
+            swept = [key[0] for key in await cursor.fetchall()]
+        return swept
 
     async def listen(
         self,
@@ -234,9 +246,9 @@ class PostgresQueue(Queue):
     async def abort(self, job: Job, error: str, ttl: float = 5) -> None:
         job.error = error
         job.status = Status.ABORTING
+        job.ttl = int(seconds(now()) + ttl)
 
         await self.update(job)
-        asyncio.create_task(self.delete(job, status=Status.ABORTED, delay=ttl))
 
     async def retry(self, job: Job, error: str | None) -> None:
         self._update_job_for_retry(job, error)
@@ -280,13 +292,16 @@ class PostgresQueue(Queue):
             if job.ttl >= 0:
                 await cursor.execute(
                     f"""
-                    UPDATE {self.jobs_table} SET status = %(status)s, job = %(job)s
+                    UPDATE {self.jobs_table} SET status = %(status)s, job = %(job)s, ttl = %(ttl)s
                     WHERE key = %(key)s
                     """,
-                    {"status": status, "job": self.serialize(job), "key": key},
+                    {
+                        "status": status,
+                        "job": self.serialize(job),
+                        "key": key,
+                        "ttl": seconds(now()) + job.ttl,
+                    },
                 )
-                if job.ttl > 0:
-                    asyncio.create_task(self.delete(job, delay=job.ttl))
             else:
                 await cursor.execute(
                     f"""
@@ -311,7 +326,7 @@ class PostgresQueue(Queue):
         # Timeout of 0 means timeout immediately
         result = None
         conn = await self.pool.getconn(timeout=timeout or None)
-        async with conn.cursor() as cursor:
+        async with conn.cursor() as cursor, conn.transaction():
             while True:
                 await cursor.execute(
                     f"""
@@ -321,7 +336,7 @@ class PostgresQueue(Queue):
                       FROM {self.jobs_table}
                       WHERE status = 'queued'
                         AND queue = %(queue)s
-                        AND %(now)s >= (queued + scheduled)
+                        AND %(now)s >= scheduled
                       FOR UPDATE SKIP LOCKED
                       LIMIT 1
                     ) AND pg_try_advisory_lock(lock_id)
@@ -339,7 +354,6 @@ class PostgresQueue(Queue):
         if result:
             job = self.deserialize(result[0])
             if job:
-                await conn.commit()
                 self.connections[job.key] = conn
                 return job
         await conn.rollback()
@@ -376,26 +390,6 @@ class PostgresQueue(Queue):
 
         logger.info("Enqueuing %s", job.info(logger.isEnabledFor(logging.DEBUG)))
         return job
-
-    async def delete(
-        self, job: Job, status: Status | None = None, delay: float = 0
-    ) -> None:
-        if delay:
-            await asyncio.sleep(delay)
-
-        async with self._get_connection(job.key) as conn, conn.cursor() as cursor:
-            await cursor.execute(
-                (
-                    f"""
-                DELETE FROM {self.jobs_table}
-                WHERE key = %(key)s
-                """
-                    + f"AND status = '{status}'"
-                    if status
-                    else ""
-                ),
-                {"key": job.key},
-            )
 
     async def get_abort_errors(self, jobs: Iterable[Job]) -> list[bytes | None]:
         async with self.pool.connection() as conn, conn.cursor() as cursor:
