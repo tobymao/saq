@@ -191,7 +191,6 @@ class PostgresQueue(Queue):
 
     async def sweep(self, lock: int = 60, abort: float = 5.0) -> list[t.Any]:
         """Delete jobs past their TTL from the jobs table"""
-        swept = []
         async with self.pool.connection() as conn, conn.cursor() as cursor:
             await cursor.execute(
                 f"""
@@ -202,7 +201,25 @@ class PostgresQueue(Queue):
                 """,
                 {"now": math.ceil(seconds(now()))},
             )
-            swept = [key[0] for key in await cursor.fetchall()]
+            await cursor.execute(
+                f"""
+                SELECT job
+                FROM {self.jobs_table} LEFT OUTER JOIN pg_locks ON lock_id = objid
+                WHERE status = 'active'
+                  AND objid IS NULL
+                """
+            )
+            results = await cursor.fetchall()
+        swept = []
+        for result in results:
+            job = self.deserialize(result[0])
+            if not job:
+                continue
+            swept.append(job.key)
+            if job.retryable:
+                await self.retry(job, error="swept")
+            else:
+                await job.finish(Status.ABORTED, error="swept")
         return swept
 
     async def listen(
@@ -441,8 +458,9 @@ class PostgresQueue(Queue):
                   WHERE status = 'queued'
                     AND queue = %(queue)s
                     AND %(now)s >= scheduled
-                  FOR UPDATE SKIP LOCKED
+                  ORDER BY scheduled
                   LIMIT 1
+                  FOR UPDATE SKIP LOCKED
                 )
                 UPDATE {self.jobs_table} SET status = 'active'
                 FROM locked_job
@@ -480,6 +498,9 @@ class PostgresQueue(Queue):
                 yield conn
 
     async def _release_job(self, key: str) -> None:
+        if key not in self.connections:
+            return
+
         conn = self.connections.pop(key)
         await conn.execute(
             f"""
