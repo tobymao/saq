@@ -299,7 +299,7 @@ class PostgresQueue(Queue):
         if next_retry_delay:
             scheduled = time.time() + next_retry_delay
         else:
-            scheduled = job.scheduled
+            scheduled = job.scheduled or seconds(now())
 
         async with self._get_connection(job.key) as conn:
             await conn.execute(
@@ -391,7 +391,7 @@ class PostgresQueue(Queue):
                     "job": self.serialize(job),
                     "queue": self.name,
                     "status": job.status,
-                    "scheduled": job.scheduled,
+                    "scheduled": job.scheduled or seconds(now()),
                 },
             )
 
@@ -434,8 +434,8 @@ class PostgresQueue(Queue):
 
         Retries indefinitely until a job is available.
         """
-        job = None
-        while True:
+        job = await self._dequeue()
+        while not job:
             async with self.cond:
                 await self.cond.wait()
             job = await self._dequeue()
