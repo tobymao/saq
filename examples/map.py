@@ -24,6 +24,12 @@ settings = {
     "functions": [square, sum_of_squares],
     "concurrency": 100,
 }
+# or
+# settings = SettingsDict(
+#     queue=queue,
+#     functions=[square, sum_of_squares],
+#     concurrency=100,
+# )
 
 
 async def enqueue():

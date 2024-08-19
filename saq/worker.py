@@ -31,6 +31,7 @@ if t.TYPE_CHECKING:
         JobTaskContext,
         PartialTimersDict,
         ReceivesContext,
+        SettingsDict,
         TimersDict,
     )
 
@@ -310,7 +311,7 @@ def ensure_coroutine_function(func: Callable) -> Callable[..., Coroutine]:
     return wrapped
 
 
-def import_settings(settings: str) -> dict[str, t.Any]:
+def import_settings(settings: str) -> SettingsDict:
     import importlib
 
     # given a.b.c, parses out a.b as the module path and c as the variable

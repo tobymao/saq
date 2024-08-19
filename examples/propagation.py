@@ -36,6 +36,13 @@ settings = {
     "concurrency": 100,
     "before_process": before_process,
 }
+# or
+# settings = SettingsDict(
+#     queue=queue,
+#     functions=[recurse],
+#     concurrency=100,
+#     before_process"=before_process,
+# )
 
 
 class LoggingContextFilter(logging.Filter):
