@@ -24,6 +24,12 @@ settings = {
     "concurrency": 100,
     "cron_jobs": [CronJob(cron_job, cron="* * * * * */5")],
 }
+# or
+# settings = SettingsDict(
+#     functions=[sleeper, adder],
+#     concurrency=100,
+#     cron_jobs=[CronJob(cron_job, cron="* * * * * */5")],
+# }
 
 
 async def enqueue(func, **kwargs):

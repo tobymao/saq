@@ -5,11 +5,13 @@ Types
 from __future__ import annotations
 
 import typing as t
+from collections.abc import Collection
+
 
 if t.TYPE_CHECKING:
     from asyncio import Task
 
-    from saq.job import Job, Status
+    from saq.job import CronJob, Job, Status
     from saq.worker import Worker
     from saq.queue import Queue
     from typing_extensions import Required
@@ -95,6 +97,23 @@ class PartialTimersDict(TimersDict, total=False):
     """
     For argument to `Worker`, all keys are not required
     """
+
+
+class SettingsDict(t.TypedDict, total=False):
+    """
+    Settings
+    """
+
+    queue: Queue
+    functions: Required[Collection[Function | tuple[str, Function]]]
+    concurrency: int
+    cron_jobs: Collection[CronJob]
+    startup: ReceivesContext
+    shutdown: ReceivesContext
+    before_process: ReceivesContext
+    after_process: ReceivesContext
+    timers: PartialTimersDict
+    dequeue_timeout: float
 
 
 BeforeEnqueueType = t.Callable[["Job"], t.Awaitable[t.Any]]
