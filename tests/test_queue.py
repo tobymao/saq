@@ -425,12 +425,6 @@ class TestPostgresQueue(TestQueue):
     async def test_job_key(self) -> None:
         self.skipTest("Not implemented")
 
-    async def test_map(self) -> None:
-        self.skipTest("WIP")
-
-    async def test_apply(self) -> None:
-        self.skipTest("WIP")
-
     async def test_delay(self) -> None:
         self.skipTest("WIP")
 

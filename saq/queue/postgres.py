@@ -132,12 +132,16 @@ class PostgresQueue(Queue):
     async def info(
         self, jobs: bool = False, offset: int = 0, limit: int = 10
     ) -> QueueInfo:
+        queued = await self.count("queued")
+        active = await self.count("active")
+        incomplete = await self.count("incomplete")
+
         return {
             "workers": {},
             "name": self.name,
-            "queued": 0,
-            "active": 0,
-            "scheduled": 0,
+            "queued": queued,
+            "active": active,
+            "scheduled": incomplete - queued - active,
             "jobs": [],
         }
 
@@ -228,6 +232,9 @@ class PostgresQueue(Queue):
         callback: ListenCallback,
         timeout: float | None = 10,
     ) -> None:
+        if not job_keys:
+            return
+
         async with self.pool.connection() as conn:
             for key in job_keys:
                 await conn.execute(f'LISTEN "{key}"')
