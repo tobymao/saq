@@ -420,7 +420,7 @@ class PostgresQueue(Queue):
         return errors
 
     async def finish_abort(self, job: Job) -> None:
-        """Noop"""
+        await job.finish(Status.ABORTED, error=job.error)
 
     async def dequeue_timer(self, poll_interval: int) -> None:
         """Wakes up a single dequeue task every `poll_interval` seconds."""

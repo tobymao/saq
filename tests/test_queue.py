@@ -188,7 +188,7 @@ class TestQueue(unittest.IsolatedAsyncioTestCase):
             await self.enqueue("test")
             job = await self.dequeue()
             await job.retry(None)
-            await job.abort("test")
+            await job.finish(Status.ABORTED)
             await job.finish(Status.FAILED)
             await job.finish(Status.COMPLETE)
         stats = await self.queue.stats()
@@ -424,9 +424,6 @@ class TestPostgresQueue(TestQueue):
 
     async def test_job_key(self) -> None:
         self.skipTest("Not implemented")
-
-    async def test_stats(self) -> None:
-        self.skipTest("WIP")
 
     async def test_info(self) -> None:
         self.skipTest("WIP")
