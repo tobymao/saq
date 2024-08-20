@@ -379,3 +379,11 @@ class Queue(ABC):
 
         if status == Status.COMPLETE:
             job.progress = 1.0
+
+    def _update_stats(self, status: Status) -> None:
+        if status == Status.COMPLETE:
+            self.complete += 1
+        elif status == Status.FAILED:
+            self.failed += 1
+        elif status == Status.ABORTED:
+            self.aborted += 1

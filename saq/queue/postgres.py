@@ -355,12 +355,7 @@ class PostgresQueue(Queue):
                 )
         await self._release_job(key)
 
-        if status == Status.COMPLETE:
-            self.complete += 1
-        elif status == Status.FAILED:
-            self.failed += 1
-        elif status == Status.ABORTED:
-            self.aborted += 1
+        self._update_stats(status)
 
         await self.notify(job)
         logger.info("Finished %s", job.info(logger.isEnabledFor(logging.DEBUG)))
