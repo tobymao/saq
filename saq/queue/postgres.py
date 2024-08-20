@@ -274,17 +274,29 @@ class PostgresQueue(Queue):
         async with self.pool.connection() as conn:
             await conn.execute(f"NOTIFY \"{channel}\", '{payload}'")
 
-    async def update(self, job: Job) -> None:
+    async def update(
+        self, job: Job, status: Status | None = None, scheduled: int | None = None
+    ) -> None:
+        if status:
+            job.status = status
+        if scheduled:
+            job.scheduled = scheduled
         job.touched = now()
+
         async with self._get_connection(job.key) as conn:
             await conn.execute(
                 SQL(
                     """
-                    UPDATE {jobs_table} SET job = %(job)s, status = %(status)s
+                    UPDATE {jobs_table} SET job = %(job)s, status = %(status)s, scheduled = %(scheduled)s
                     WHERE key = %(key)s
                     """
                 ).format(jobs_table=self.jobs_table),
-                {"job": self.serialize(job), "status": job.status, "key": job.key},
+                {
+                    "job": self.serialize(job),
+                    "status": job.status,
+                    "key": job.key,
+                    "scheduled": job.scheduled,
+                },
             )
         await self.notify(job)
 
@@ -319,21 +331,7 @@ class PostgresQueue(Queue):
         else:
             scheduled = job.scheduled or seconds(now())
 
-        async with self._get_connection(job.key) as conn:
-            await conn.execute(
-                SQL(
-                    """
-                UPDATE {jobs_table} SET status = %(status)s, job = %(job)s, scheduled = %(scheduled)s
-                WHERE key = %(key)s
-                """
-                ).format(jobs_table=self.jobs_table),
-                {
-                    "status": job.status,
-                    "job": self.serialize(job),
-                    "scheduled": scheduled,
-                    "key": job.key,
-                },
-            )
+        await self.update(job, scheduled=int(scheduled))
         await self._release_job(job.key)
 
         self.retried += 1
@@ -385,8 +383,21 @@ class PostgresQueue(Queue):
         logger.info("Finished %s", job.info(logger.isEnabledFor(logging.DEBUG)))
 
     async def dequeue(self, timeout: float = 0) -> Job | None:
+        """Wait on `self.cond` to dequeue.
+
+        Retries indefinitely until a job is available or times out.
+        """
+
+        async def wait_for_job() -> Job:
+            job = await self._dequeue()
+            while not job:
+                async with self.cond:
+                    await self.cond.wait()
+                job = await self._dequeue()
+            return job
+
         try:
-            return await asyncio.wait_for(self.wait_for_job(), timeout or None)
+            return await asyncio.wait_for(wait_for_job(), timeout or None)
         except asyncio.exceptions.TimeoutError:
             return None
 
@@ -451,20 +462,6 @@ class PostgresQueue(Queue):
             async with self.cond:
                 self.cond.notify(1)
             await asyncio.sleep(poll_interval)
-
-    async def wait_for_job(self) -> Job:
-        """Wait on `self.cond` to dequeue.
-
-        Retries indefinitely until a job is available.
-        """
-        job = await self._dequeue()
-        while not job:
-            async with self.cond:
-                await self.cond.wait()
-            job = await self._dequeue()
-            if job:
-                break
-        return job
 
     async def listen_for_enqueues(self, timeout: float | None = None) -> None:
         """Wakes up a single dequeue task when a Postgres enqueue notification is received."""
