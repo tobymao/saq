@@ -42,6 +42,7 @@ except ModuleNotFoundError as e:
         "Missing dependencies for Postgres. Install them with `pip install saq[postgres]`."
     ) from e
 
+ENQUEUE_CHANNEL = "saq:enqueue"
 JOBS_TABLE = "saq_jobs"
 
 
@@ -418,7 +419,7 @@ class PostgresQueue(Queue):
             if not await cursor.fetchone():
                 return None
 
-        await self._notify("saq:enqueue", job.key)
+        await self._notify(ENQUEUE_CHANNEL, job.key)
         logger.info("Enqueuing %s", job.info(logger.isEnabledFor(logging.DEBUG)))
         return job
 
@@ -468,7 +469,7 @@ class PostgresQueue(Queue):
     async def listen_for_enqueues(self, timeout: float | None = None) -> None:
         """Wakes up a single dequeue task when a Postgres enqueue notification is received."""
         async with self.pool.connection() as conn:
-            await conn.execute('LISTEN "saq:enqueue"')
+            await conn.execute(f'LISTEN "{ENQUEUE_CHANNEL}"')
             await conn.commit()
             gen = conn.notifies(timeout=timeout)
             async for _ in gen:
