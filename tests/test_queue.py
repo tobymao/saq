@@ -7,6 +7,8 @@ import typing as t
 import unittest
 from unittest import mock
 
+from psycopg.sql import SQL
+
 from saq.job import Job, Status
 from saq.queue import JobError, Queue
 from saq.queue.postgres import PostgresQueue
@@ -465,11 +467,13 @@ class TestPostgresQueue(TestQueue):
         self.assertEqual(await self.count("active"), 0)
         async with self.queue.pool.connection() as conn, conn.cursor() as cursor:
             await cursor.execute(
-                f"""
+                SQL(
+                    """
                 SELECT status
-                FROM {self.queue.jobs_table}
+                FROM {}
                 WHERE key = %s
-                """,
+                """
+                ).format(self.queue.jobs_table),
                 (job.key,),
             )
             self.assertEqual(await cursor.fetchone(), (Status.ABORTING,))
