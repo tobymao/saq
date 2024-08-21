@@ -237,6 +237,7 @@ class PostgresQueue(Queue):
                 FROM {jobs_table} LEFT OUTER JOIN pg_locks ON lock_key = objid
                 WHERE status = 'active'
                   AND objid IS NULL
+                FOR UPDATE SKIP LOCKED
                 """
                 ).format(jobs_table=self.jobs_table)
             )
