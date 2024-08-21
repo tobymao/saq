@@ -442,7 +442,8 @@ class PostgresQueue(Queue):
             if not await cursor.fetchone():
                 return None
 
-        await self._notify(ENQUEUE_CHANNEL, job.key)
+            await cursor.execute(f"NOTIFY \"{ENQUEUE_CHANNEL}\", '{job.key}'")
+
         logger.info("Enqueuing %s", job.info(logger.isEnabledFor(logging.DEBUG)))
         return job
 
