@@ -221,7 +221,7 @@ class PostgresQueue(Queue):
                 SQL(
                     """
                 SELECT job
-                FROM {jobs_table} LEFT OUTER JOIN pg_locks ON lock_id = objid
+                FROM {jobs_table} LEFT OUTER JOIN pg_locks ON lock_key = objid
                 WHERE status = 'active'
                   AND objid IS NULL
                 """
@@ -481,7 +481,7 @@ class PostgresQueue(Queue):
                 SQL(
                     """
                 WITH locked_job AS (
-                  SELECT key, lock_id
+                  SELECT key, lock_key
                   FROM {jobs_table}
                   WHERE status = 'queued'
                     AND queue = %(queue)s
@@ -492,7 +492,7 @@ class PostgresQueue(Queue):
                 )
                 UPDATE {jobs_table} SET status = 'active'
                 FROM locked_job
-                WHERE {jobs_table}.key = locked_job.key AND pg_try_advisory_lock(locked_job.lock_id)
+                WHERE {jobs_table}.key = locked_job.key AND pg_try_advisory_lock(locked_job.lock_key)
                 RETURNING job
                 """
                 ).format(jobs_table=self.jobs_table),
@@ -534,7 +534,7 @@ class PostgresQueue(Queue):
         await conn.execute(
             SQL(
                 """
-            SELECT pg_advisory_unlock(lock_id)
+            SELECT pg_advisory_unlock(lock_key)
             FROM {jobs_table}
             WHERE key = %(key)s
             """
