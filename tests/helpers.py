@@ -5,8 +5,9 @@ from saq.queue.postgres import PostgresQueue
 from saq.queue.redis import RedisQueue
 
 
-def create_queue(**kwargs: t.Any) -> RedisQueue:
+async def create_redis_queue(**kwargs: t.Any) -> RedisQueue:
     queue = t.cast(RedisQueue, Queue.from_url("redis://localhost:6379", **kwargs))
+    await queue.connect()
     return queue
 
 

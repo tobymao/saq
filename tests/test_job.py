@@ -6,15 +6,15 @@ import unittest
 from unittest import mock
 
 from saq.job import Job, Status
-from tests.helpers import cleanup_queue, create_queue
+from tests.helpers import cleanup_queue, create_redis_queue
 
 if t.TYPE_CHECKING:
     from unittest.mock import MagicMock
 
 
 class TestJob(unittest.IsolatedAsyncioTestCase):
-    def setUp(self) -> None:
-        self.queue = create_queue()
+    async def asyncSetUp(self) -> None:
+        self.queue = await create_redis_queue()
         self.job = Job("func", queue=self.queue)
 
     async def asyncTearDown(self) -> None:
@@ -45,7 +45,7 @@ class TestJob(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(queued, self.job.queued)
 
         with self.assertRaises(ValueError):
-            await self.job.enqueue(create_queue(name="queue2"))
+            await self.job.enqueue(await create_redis_queue(name="queue2"))
 
     async def test_finish(self) -> None:
         await self.job.finish(Status.COMPLETE, result={})

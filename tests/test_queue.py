@@ -15,7 +15,7 @@ from saq.queue.postgres import PostgresQueue
 from saq.queue.redis import RedisQueue
 from saq.utils import uuid1
 from saq.worker import Worker
-from tests.helpers import cleanup_queue, create_postgres_queue, create_queue
+from tests.helpers import cleanup_queue, create_postgres_queue, create_redis_queue
 
 if t.TYPE_CHECKING:
     from unittest.mock import MagicMock
@@ -36,6 +36,7 @@ functions: list[Function] = [echo, error]
 
 class TestQueue(unittest.IsolatedAsyncioTestCase):
     queue: Queue
+    create_queue: t.Callable
 
     async def asyncSetUp(self) -> None:
         self.skipTest("Skipping base test case")
@@ -104,7 +105,7 @@ class TestQueue(unittest.IsolatedAsyncioTestCase):
         await cleanup_queue(
             self.queue  # pylint: disable=access-member-before-definition
         )
-        self.queue = create_queue()
+        self.queue = await self.create_queue()
         job = await self.enqueue("test")
         job_second = await self.enqueue("test_second")
         self.assertEqual(await self.count("queued"), 2)
@@ -201,7 +202,7 @@ class TestQueue(unittest.IsolatedAsyncioTestCase):
         self.assertGreater(stats["uptime"], 0)
 
     async def test_info(self) -> None:
-        queue2 = create_queue(name=self.queue.name)
+        queue2 = await self.create_queue(name=self.queue.name)
         self.addAsyncCleanup(cleanup_queue, queue2)
         worker = Worker(self.queue, functions=functions)
         info = await self.queue.info(jobs=True)
@@ -318,8 +319,10 @@ class TestQueue(unittest.IsolatedAsyncioTestCase):
 
 
 class TestRedisQueue(TestQueue):
+    create_queue = staticmethod(create_redis_queue)
+
     async def asyncSetUp(self) -> None:
-        self.queue: RedisQueue = create_queue()
+        self.queue: RedisQueue = await self.create_queue()
 
     async def test_enqueue_scheduled(self) -> None:
         scheduled = time.time() + 10
@@ -421,18 +424,17 @@ class TestRedisQueue(TestQueue):
 
 
 class TestPostgresQueue(TestQueue):
+    create_queue = staticmethod(create_postgres_queue)
+
     async def asyncSetUp(self) -> None:
-        self.queue: PostgresQueue = await create_postgres_queue()
+        self.queue: PostgresQueue = await self.create_queue()
 
     async def test_job_key(self) -> None:
         self.skipTest("Not implemented")
 
-    async def test_info(self) -> None:
-        self.skipTest("WIP")
-
     @mock.patch("saq.utils.time")
     async def test_schedule(self, mock_time: MagicMock) -> None:
-        self.skipTest("WIP")
+        self.skipTest("Not implemented")
 
     async def test_batch(self) -> None:
         with contextlib.suppress(ValueError):

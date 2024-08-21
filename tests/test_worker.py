@@ -13,7 +13,7 @@ from saq.queue import Queue
 from saq.queue.redis import RedisQueue
 from saq.utils import uuid1
 from saq.worker import Worker
-from tests.helpers import cleanup_queue, create_queue, create_postgres_queue
+from tests.helpers import cleanup_queue, create_redis_queue, create_postgres_queue
 
 if t.TYPE_CHECKING:
     from unittest.mock import MagicMock
@@ -61,6 +61,7 @@ functions: list[Function] = [noop, sleeper, error, sync_echo_ctx, recurse]
 class TestWorker(unittest.IsolatedAsyncioTestCase):
     queue: Queue
     worker: Worker
+    create_queue: t.Callable
 
     async def asyncSetUp(self) -> None:
         self.skipTest("Skipping base test case")
@@ -163,7 +164,7 @@ class TestWorker(unittest.IsolatedAsyncioTestCase):
 
     def test_stop(self) -> None:
         loop = asyncio.new_event_loop()
-        queue = create_queue()
+        queue = loop.run_until_complete(self.create_queue())
         worker = Worker(queue, functions=functions)
         job = loop.run_until_complete(queue.enqueue("sleeper"))
         assert job is not None
@@ -374,14 +375,18 @@ class TestWorker(unittest.IsolatedAsyncioTestCase):
 
 
 class TestWorkerRedisQueue(TestWorker):
+    create_queue = staticmethod(create_redis_queue)
+
     async def asyncSetUp(self) -> None:
-        self.queue = create_queue()
+        self.queue = await self.create_queue()
         self.worker = Worker(self.queue, functions=functions)
 
 
 class TestWorkerPostgresQueue(TestWorker):
+    create_queue = staticmethod(create_postgres_queue)
+
     async def asyncSetUp(self) -> None:
-        self.queue = await create_postgres_queue()
+        self.queue = await self.create_queue()
         self.worker = Worker(self.queue, functions=functions)
 
     @mock.patch("saq.utils.time")
