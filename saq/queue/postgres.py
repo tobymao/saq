@@ -141,17 +141,46 @@ class PostgresQueue(Queue):
     async def info(
         self, jobs: bool = False, offset: int = 0, limit: int = 10
     ) -> QueueInfo:
+        async with self.pool.connection() as conn, conn.cursor() as cursor:
+            await cursor.execute(
+                SQL(
+                    """
+                SELECT worker_id, stats FROM {stats_table}
+                WHERE %(now)s <= ttl
+                """
+                ).format(stats_table=self.stats_table),
+                {"now": seconds(now())},
+            )
+            results = await cursor.fetchall()
+        workers: dict[str, dict[str, t.Any]] = dict(results)
+
         queued = await self.count("queued")
         active = await self.count("active")
         incomplete = await self.count("incomplete")
 
+        if jobs:
+            async with self.pool.connection() as conn, conn.cursor() as cursor:
+                await cursor.execute(
+                    SQL(
+                        """
+                    SELECT job FROM {jobs_table}
+                    WHERE status IN ('new', 'deferred', 'queued', 'active')
+                    """
+                    ).format(jobs_table=self.jobs_table),
+                )
+                results = await cursor.fetchall()
+            deserialized_jobs = (self.deserialize(result[0]) for result in results)
+            jobs_info = [job.to_dict() for job in deserialized_jobs if job]
+        else:
+            jobs_info = []
+
         return {
-            "workers": {},
+            "workers": workers,
             "name": self.name,
             "queued": queued,
             "active": active,
             "scheduled": incomplete - queued - active,
-            "jobs": [],
+            "jobs": jobs_info,
         }
 
     async def stats(self, ttl: int = 60) -> QueueStats:
