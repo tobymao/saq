@@ -14,3 +14,8 @@ CREATE TABLE IF NOT EXISTS {jobs_table} (
 CREATE_JOBS_DEQUEUE_INDEX = """
 CREATE INDEX IF NOT EXISTS saq_jobs_dequeue_idx ON {jobs_table} (status, queue, scheduled)
 """
+
+DDL_STATEMENTS = [
+    CREATE_JOBS_TABLE,
+    CREATE_JOBS_DEQUEUE_INDEX,
+]

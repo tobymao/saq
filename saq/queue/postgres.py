@@ -17,7 +17,7 @@ from saq.job import (
     Status,
 )
 from saq.queue.base import Queue, logger
-from saq.queue.postgres_ddl import CREATE_JOBS_DEQUEUE_INDEX, CREATE_JOBS_TABLE
+from saq.queue.postgres_ddl import DDL_STATEMENTS
 from saq.utils import now, seconds
 
 if t.TYPE_CHECKING:
@@ -103,12 +103,8 @@ class PostgresQueue(Queue):
         await self.pool.open()
         await self.pool.resize(min_size=self.min_size, max_size=self.max_size)
         async with self.pool.connection() as conn, conn.cursor() as cursor:
-            await cursor.execute(
-                SQL(CREATE_JOBS_TABLE).format(jobs_table=self.jobs_table)
-            )
-            await cursor.execute(
-                SQL(CREATE_JOBS_DEQUEUE_INDEX).format(jobs_table=self.jobs_table)
-            )
+            for statement in DDL_STATEMENTS:
+                await cursor.execute(SQL(statement).format(jobs_table=self.jobs_table))
 
         self.listen_for_enqueues_task = asyncio.create_task(self.listen_for_enqueues())
         if self.poll_interval > 0:
@@ -332,7 +328,7 @@ class PostgresQueue(Queue):
     async def abort(self, job: Job, error: str, ttl: float = 5) -> None:
         job.error = error
         job.status = Status.ABORTING
-        job.ttl = int(seconds(now()) + ttl)
+        job.ttl = int(seconds(now()) + ttl) + 1
 
         await self.update(job)
 
