@@ -203,13 +203,7 @@ class RedisQueue(Queue):
             ttl: Time-to-live of stats saved in Redis
         """
         current = now()
-        stats: QueueStats = {
-            "complete": self.complete,
-            "failed": self.failed,
-            "retried": self.retried,
-            "aborted": self.aborted,
-            "uptime": current - self.started,
-        }
+        stats = self._get_stats()
         async with self.redis.pipeline(transaction=True) as pipe:
             key = self.namespace(f"stats:{self.uuid}")
             await (

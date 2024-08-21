@@ -380,6 +380,15 @@ class Queue(ABC):
         if status == Status.COMPLETE:
             job.progress = 1.0
 
+    def _get_stats(self) -> QueueStats:
+        return {
+            "complete": self.complete,
+            "failed": self.failed,
+            "retried": self.retried,
+            "aborted": self.aborted,
+            "uptime": now() - self.started,
+        }
+
     def _update_stats(self, status: Status) -> None:
         if status == Status.COMPLETE:
             self.complete += 1

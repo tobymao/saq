@@ -45,6 +45,7 @@ except ModuleNotFoundError as e:
 SWEEP_LOCK_KEY = (1, 1)
 ENQUEUE_CHANNEL = "saq:enqueue"
 JOBS_TABLE = "saq_jobs"
+STATS_TABLE = "saq_stats"
 
 
 class PostgresQueue(Queue):
@@ -55,6 +56,7 @@ class PostgresQueue(Queue):
         pool: instance of psycopg_pool.AsyncConnectionPool
         name: name of the queue (default "default")
         jobs_table: name of the Postgres table SAQ will write jobs to (default "saq_jobs")
+        stats_table: name of the Postgres table SAQ will write stats to (default "saq_stats")
         dump: lambda that takes a dictionary and outputs bytes (default `json.dumps`)
         load: lambda that takes str or bytes and outputs a python dictionary (default `json.loads`)
         min_size: minimum pool size. (default 4)
@@ -77,6 +79,7 @@ class PostgresQueue(Queue):
         pool: AsyncConnectionPool,
         name: str = "default",
         jobs_table: str = JOBS_TABLE,
+        stats_table: str = STATS_TABLE,
         dump: DumpType | None = None,
         load: LoadType | None = None,
         min_size: int = 4,
@@ -86,6 +89,7 @@ class PostgresQueue(Queue):
         super().__init__(name=name, dump=dump, load=load)
 
         self.jobs_table = Identifier(jobs_table)
+        self.stats_table = Identifier(stats_table)
         self.pool = pool
         self.min_size = min_size
         self.max_size = max_size
@@ -104,7 +108,11 @@ class PostgresQueue(Queue):
         await self.pool.resize(min_size=self.min_size, max_size=self.max_size)
         async with self.pool.connection() as conn, conn.cursor() as cursor:
             for statement in DDL_STATEMENTS:
-                await cursor.execute(SQL(statement).format(jobs_table=self.jobs_table))
+                await cursor.execute(
+                    SQL(statement).format(
+                        jobs_table=self.jobs_table, stats_table=self.stats_table
+                    )
+                )
 
         self.listen_for_enqueues_task = asyncio.create_task(self.listen_for_enqueues())
         if self.poll_interval > 0:
@@ -147,13 +155,24 @@ class PostgresQueue(Queue):
         }
 
     async def stats(self, ttl: int = 60) -> QueueStats:
-        return {
-            "complete": self.complete,
-            "failed": self.failed,
-            "retried": self.retried,
-            "aborted": self.aborted,
-            "uptime": now() - self.started,
-        }
+        stats = self._get_stats()
+        async with self.pool.connection() as conn:
+            await conn.execute(
+                SQL(
+                    """
+                INSERT INTO {stats_table} (worker_id, stats, ttl)
+                VALUES (%(worker_id)s, %(stats)s, %(ttl)s)
+                ON CONFLICT (worker_id) DO UPDATE
+                SET stats = %(stats)s, ttl = %(ttl)s
+                """
+                ).format(stats_table=self.stats_table),
+                {
+                    "worker_id": self.uuid,
+                    "stats": self._dump(stats),
+                    "ttl": seconds(now()) + ttl,
+                },
+            )
+        return stats
 
     async def count(self, kind: CountKind) -> int:
         async with self.pool.connection() as conn, conn.cursor() as cursor:
