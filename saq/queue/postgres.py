@@ -42,6 +42,7 @@ except ModuleNotFoundError as e:
         "Missing dependencies for Postgres. Install them with `pip install saq[postgres]`."
     ) from e
 
+SWEEP_LOCK_KEY = (1, 1)
 ENQUEUE_CHANNEL = "saq:enqueue"
 JOBS_TABLE = "saq_jobs"
 
@@ -205,7 +206,19 @@ class PostgresQueue(Queue):
 
     async def sweep(self, lock: int = 60, abort: float = 5.0) -> list[t.Any]:
         """Delete jobs past their TTL from the jobs table"""
+        swept = []
+
         async with self.pool.connection() as conn, conn.cursor() as cursor:
+            await cursor.execute(
+                """
+            SELECT pg_try_advisory_xact_lock(%(classid)s, %(objid)s)
+            """,
+                {"classid": SWEEP_LOCK_KEY[0], "objid": SWEEP_LOCK_KEY[1]},
+            )
+            result = await cursor.fetchone()
+            if result and not result[0]:
+                # Could not acquire the sweep lock so another worker must already be sweeping
+                return []
             await cursor.execute(
                 SQL(
                     """
@@ -228,16 +241,15 @@ class PostgresQueue(Queue):
                 ).format(jobs_table=self.jobs_table)
             )
             results = await cursor.fetchall()
-        swept = []
-        for result in results:
-            job = self.deserialize(result[0])
-            if not job:
-                continue
-            swept.append(job.key)
-            if job.retryable:
-                await self.retry(job, error="swept")
-            else:
-                await job.finish(Status.ABORTED, error="swept")
+            for result in results:
+                job = self.deserialize(result[0])
+                if not job:
+                    continue
+                swept.append(job.key)
+                if job.retryable:
+                    await self.retry(job, error="swept")
+                else:
+                    await job.finish(Status.ABORTED, error="swept")
         return swept
 
     async def listen(
