@@ -100,10 +100,16 @@ class PostgresQueue(Queue):
         if load:
             json.set_json_loads(load)
 
-        self.connections: dict[str, AsyncConnection] = {}
         self.cond = asyncio.Condition()
+        self.queue: asyncio.Queue = asyncio.Queue()
+        self.waiting = 0  # Internal counter of worker tasks waiting for dequeue
+        self._connected = False
+        self.connection_lock = asyncio.Lock()
 
     async def connect(self) -> None:
+        if self._connected:
+            return
+
         await self.pool.open()
         await self.pool.resize(min_size=self.min_size, max_size=self.max_size)
         async with self.pool.connection() as conn, conn.cursor() as cursor:
@@ -113,12 +119,16 @@ class PostgresQueue(Queue):
                         jobs_table=self.jobs_table, stats_table=self.stats_table
                     )
                 )
+        # Reserve a connection for dequeue and advisory locks
+        self.connection = await self.pool.getconn()
 
+        self.wait_for_job_task = asyncio.create_task(self.wait_for_job())
         self.listen_for_enqueues_task = asyncio.create_task(self.listen_for_enqueues())
         if self.poll_interval > 0:
             self.dequeue_timer_task = asyncio.create_task(
                 self.dequeue_timer(self.poll_interval)
             )
+        self._connected = True
 
     def job_id(self, job_key: str) -> str:
         return job_key
@@ -132,9 +142,9 @@ class PostgresQueue(Queue):
         return Job(**job_dict, queue=self)
 
     async def disconnect(self) -> None:
-        for conn in self.connections.values():
-            await self.pool.putconn(conn)
+        await self.pool.putconn(self.connection)
         await self.pool.close()
+        self.wait_for_job_task.cancel()
         self.listen_for_enqueues_task.cancel()
         self.dequeue_timer_task.cancel()
 
@@ -340,7 +350,7 @@ class PostgresQueue(Queue):
             job.scheduled = scheduled
         job.touched = now()
 
-        async with self._get_connection(job.key) as conn:
+        async with self.pool.connection() as conn:
             await conn.execute(
                 SQL(
                     """
@@ -358,7 +368,7 @@ class PostgresQueue(Queue):
         await self.notify(job)
 
     async def job(self, job_key: str) -> Job | None:
-        async with self._get_connection(job_key) as conn, conn.cursor() as cursor:
+        async with self.pool.connection() as conn, conn.cursor() as cursor:
             await cursor.execute(
                 SQL(
                     """
@@ -406,7 +416,7 @@ class PostgresQueue(Queue):
         self._update_job_for_finish(job, status, result=result, error=error)
         key = job.key
 
-        async with self._get_connection(key) as conn, conn.cursor() as cursor:
+        async with self.pool.connection() as conn, conn.cursor() as cursor:
             if job.ttl >= 0:
                 await cursor.execute(
                     SQL(
@@ -444,19 +454,24 @@ class PostgresQueue(Queue):
 
         Retries indefinitely until a job is available or times out.
         """
-
-        async def wait_for_job() -> Job:
-            job = await self._dequeue()
-            while not job:
-                async with self.cond:
-                    await self.cond.wait()
-                job = await self._dequeue()
-            return job
+        self.waiting += 1
+        async with self.cond:
+            self.cond.notify(1)
 
         try:
-            return await asyncio.wait_for(wait_for_job(), timeout or None)
+            return await asyncio.wait_for(self.queue.get(), timeout or None)
         except asyncio.exceptions.TimeoutError:
             return None
+        finally:
+            self.waiting -= 1
+
+    async def wait_for_job(self) -> None:
+        while True:
+            async with self.cond:
+                await self.cond.wait()
+
+            for job in await self._dequeue():
+                await self.queue.put(job)
 
     async def enqueue(self, job_or_func: str | Job, **kwargs: t.Any) -> Job | None:
         job = self._create_job_for_enqueue(job_or_func, **kwargs)
@@ -531,10 +546,11 @@ class PostgresQueue(Queue):
                 async with self.cond:
                     self.cond.notify(1)
 
-    async def _dequeue(self) -> Job | None:
-        result = None
-        conn = await self.pool.getconn()
-        async with conn.cursor() as cursor, conn.transaction():
+    async def _dequeue(self) -> list[Job]:
+        if not self.waiting:
+            return []
+        jobs = []
+        async with self._get_connection() as conn, conn.cursor() as cursor, conn.transaction():
             await cursor.execute(
                 SQL(
                     """
@@ -545,7 +561,7 @@ class PostgresQueue(Queue):
                     AND queue = %(queue)s
                     AND %(now)s >= scheduled
                   ORDER BY scheduled
-                  LIMIT 1
+                  LIMIT %(limit)s
                   FOR UPDATE SKIP LOCKED
                 )
                 UPDATE {jobs_table} SET status = 'active'
@@ -557,47 +573,31 @@ class PostgresQueue(Queue):
                 {
                     "queue": self.name,
                     "now": math.ceil(seconds(now())),
+                    "limit": self.waiting,
                 },
             )
-            result = await cursor.fetchone()
-        if result:
+            results = await cursor.fetchall()
+        for result in results:
             job = self.deserialize(result[0])
             if job:
-                self.connections[job.key] = conn
-                return job
-        await self.pool.putconn(conn)
-        return None
+                jobs.append(job)
+        return jobs
 
     @asynccontextmanager
-    async def _get_connection(
-        self, key: str | None = None
-    ) -> t.AsyncGenerator[AsyncConnection]:
-        if key in self.connections:
-            conn = self.connections[key]
-            try:
-                yield conn
-            except Exception:
-                await conn.rollback()
-            else:
-                await conn.commit()
-        else:
-            async with self.pool.connection() as conn:
-                yield conn
+    async def _get_connection(self) -> t.AsyncGenerator[AsyncConnection]:
+        async with self.connection_lock:
+            yield self.connection
 
     async def _release_job(self, key: str) -> None:
-        if key not in self.connections:
-            return
-
-        conn = self.connections.pop(key)
-        await conn.execute(
-            SQL(
+        async with self._get_connection() as conn:
+            await conn.execute(
+                SQL(
+                    """
+                SELECT pg_advisory_unlock(lock_key)
+                FROM {jobs_table}
+                WHERE key = %(key)s
                 """
-            SELECT pg_advisory_unlock(lock_key)
-            FROM {jobs_table}
-            WHERE key = %(key)s
-            """
-            ).format(jobs_table=self.jobs_table),
-            {"key": key},
-        )
-        await conn.commit()
-        await self.pool.putconn(conn)
+                ).format(jobs_table=self.jobs_table),
+                {"key": key},
+            )
+            await self.connection.commit()
