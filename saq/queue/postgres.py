@@ -147,7 +147,8 @@ class PostgresQueue(Queue):
         await self.pool.close()
         self.wait_for_job_task.cancel()
         self.listen_for_enqueues_task.cancel()
-        self.dequeue_timer_task.cancel()
+        if hasattr(self, "dequeue_timer_task"):
+            self.dequeue_timer_task.cancel()
 
     async def info(
         self, jobs: bool = False, offset: int = 0, limit: int = 10
@@ -334,12 +335,16 @@ class PostgresQueue(Queue):
                 if stop:
                     await gen.aclose()
 
-    async def notify(self, job: Job) -> None:
+    async def notify(self, job: Job, connection: AsyncConnection | None = None) -> None:
         payload = self._dump({"key": job.key, "status": job.status})
-        await self._notify(job.key, payload)
+        await self._notify(job.key, payload, connection)
 
-    async def _notify(self, channel: str, payload: t.Any) -> None:
-        async with self.pool.connection() as conn:
+    async def _notify(
+        self, channel: str, payload: t.Any, connection: AsyncConnection | None = None
+    ) -> None:
+        async with (
+            self.nullcontext(connection) if connection else self.pool.connection()
+        ) as conn:
             await conn.execute(f"NOTIFY \"{channel}\", '{payload}'")
 
     async def update(
@@ -366,7 +371,7 @@ class PostgresQueue(Queue):
                     "scheduled": job.scheduled,
                 },
             )
-        await self.notify(job)
+            await self.notify(job, conn)
 
     async def job(self, job_key: str) -> Job | None:
         async with self.pool.connection() as conn, conn.cursor() as cursor:
@@ -486,8 +491,8 @@ class PostgresQueue(Queue):
                 INSERT INTO {jobs_table} (key, job, queue, status, scheduled)
                 VALUES (%(key)s, %(job)s, %(queue)s, %(status)s, %(scheduled)s)
                 ON CONFLICT (key) DO UPDATE
-                SET job = %(job)s, queue = %(queue)s, status = %(status)s, scheduled = %(scheduled)s
-                WHERE {jobs_table}.status NOT IN ('queued', 'aborting')
+                SET job = %(job)s, queue = %(queue)s, status = %(status)s, scheduled = %(scheduled)s, ttl = null
+                WHERE {jobs_table}.status IN ('aborted', 'complete', 'failed')
                 RETURNING job
                 """
                 ).format(jobs_table=self.jobs_table),
@@ -503,7 +508,7 @@ class PostgresQueue(Queue):
             if not await cursor.fetchone():
                 return None
 
-            await cursor.execute(f"NOTIFY \"{ENQUEUE_CHANNEL}\", '{job.key}'")
+            await self._notify(ENQUEUE_CHANNEL, job.key, conn)
 
         logger.info("Enqueuing %s", job.info(logger.isEnabledFor(logging.DEBUG)))
         return job
@@ -588,6 +593,16 @@ class PostgresQueue(Queue):
     async def _get_connection(self) -> t.AsyncGenerator[AsyncConnection]:
         async with self.connection_lock:
             yield self.connection
+
+    @asynccontextmanager
+    async def nullcontext(
+        self, enter_result: t.Any | None = None
+    ) -> t.AsyncGenerator[t.Any]:
+        """Async version of contextlib.nullcontext
+
+        Async support has been added to contextlib.nullcontext in Python 3.10.
+        """
+        yield enter_result
 
     async def _release_job(self, key: str) -> None:
         self.released.append(key)
