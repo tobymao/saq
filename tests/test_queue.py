@@ -11,8 +11,6 @@ from psycopg.sql import SQL
 
 from saq.job import Job, Status
 from saq.queue import JobError, Queue
-from saq.queue.postgres import PostgresQueue
-from saq.queue.redis import RedisQueue
 from saq.utils import uuid1
 from saq.worker import Worker
 from tests.helpers import cleanup_queue, create_postgres_queue, create_redis_queue
@@ -20,6 +18,8 @@ from tests.helpers import cleanup_queue, create_postgres_queue, create_redis_que
 if t.TYPE_CHECKING:
     from unittest.mock import MagicMock
 
+    from saq.queue.postgres import PostgresQueue
+    from saq.queue.redis import RedisQueue
     from saq.types import Context, CountKind, Function
 
 
@@ -319,9 +319,8 @@ class TestQueue(unittest.IsolatedAsyncioTestCase):
 
 
 class TestRedisQueue(TestQueue):
-    create_queue = staticmethod(create_redis_queue)
-
     async def asyncSetUp(self) -> None:
+        self.create_queue = create_redis_queue
         self.queue: RedisQueue = await self.create_queue()
 
     async def test_enqueue_scheduled(self) -> None:
@@ -424,9 +423,8 @@ class TestRedisQueue(TestQueue):
 
 
 class TestPostgresQueue(TestQueue):
-    create_queue = staticmethod(create_postgres_queue)
-
     async def asyncSetUp(self) -> None:
+        self.create_queue = create_postgres_queue
         self.queue: PostgresQueue = await self.create_queue()
 
     async def test_job_key(self) -> None:

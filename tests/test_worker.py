@@ -375,17 +375,16 @@ class TestWorker(unittest.IsolatedAsyncioTestCase):
 
 
 class TestWorkerRedisQueue(TestWorker):
-    create_queue = staticmethod(create_redis_queue)
 
     async def asyncSetUp(self) -> None:
+        self.create_queue = create_redis_queue
         self.queue = await self.create_queue()
         self.worker = Worker(self.queue, functions=functions)
 
 
 class TestWorkerPostgresQueue(TestWorker):
-    create_queue = staticmethod(create_postgres_queue)
-
     async def asyncSetUp(self) -> None:
+        self.create_queue = create_postgres_queue
         self.queue = await self.create_queue()
         self.worker = Worker(self.queue, functions=functions)
 
