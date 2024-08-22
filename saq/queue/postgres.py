@@ -105,6 +105,7 @@ class PostgresQueue(Queue):
         self.waiting = 0  # Internal counter of worker tasks waiting for dequeue
         self._connected = False
         self.connection_lock = asyncio.Lock()
+        self.released: list[str] = []
 
     async def connect(self) -> None:
         if self._connected:
@@ -589,15 +590,19 @@ class PostgresQueue(Queue):
             yield self.connection
 
     async def _release_job(self, key: str) -> None:
+        self.released.append(key)
+        if self.connection_lock.locked():
+            return
         async with self._get_connection() as conn:
             await conn.execute(
                 SQL(
                     """
                 SELECT pg_advisory_unlock(lock_key)
                 FROM {jobs_table}
-                WHERE key = %(key)s
+                WHERE key = ANY(%(keys)s)
                 """
                 ).format(jobs_table=self.jobs_table),
-                {"key": key},
+                {"keys": self.released},
             )
             await self.connection.commit()
+        self.released.clear()
