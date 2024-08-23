@@ -361,7 +361,6 @@ class PostgresQueue(Queue):
         async with (
             self.nullcontext(connection) if connection else self.pool.connection()
         ) as conn:
-            print("Sending notification", channel, payload)
             await conn.execute(
                 SQL("NOTIFY {channel}, {payload}").format(
                     channel=Identifier(channel), payload=payload
@@ -449,7 +448,6 @@ class PostgresQueue(Queue):
         result: t.Any = None,
         error: str | None = None,
     ) -> None:
-        print("Finish start")
         self._update_job_for_finish(job, status, result=result, error=error)
         key = job.key
 

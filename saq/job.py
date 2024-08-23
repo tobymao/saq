@@ -297,7 +297,6 @@ class Job:
             until_complete (float | None): None or Numeric seconds. if None (default), don't wait,
                 else wait seconds until the job is complete or the interval has been reached. 0 means wait forever
         """
-        print("Refresh start")
         job = await self.get_queue().job(self.key)
 
         if not job:
@@ -308,10 +307,8 @@ class Job:
         if until_complete is not None and not self.completed:
 
             async def callback(_id: str, status: Status) -> bool:
-                print("Refresh listen callback", status)
                 return status in TERMINAL_STATUSES
 
-            print("Start refresh listen")
             await self.get_queue().listen([self.key], callback, until_complete)
             await self.refresh()
 

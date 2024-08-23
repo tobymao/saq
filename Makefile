@@ -25,7 +25,7 @@ deps_docs:
 
 test:
 	@python -m coverage erase
-	python -m coverage run -m unittest tests.test_job.TestJobPostgresQueue.test_refresh
+	python -m coverage run -m unittest
 	@python -m coverage report
 
 lint:
