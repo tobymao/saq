@@ -152,6 +152,7 @@ class TestJobPostgresQueue(TestJob):
         print("*" * 100)
         self.assertEqual(self.job.status, Status.QUEUED)
         task = asyncio.create_task(self.job.refresh(1))
+        await asyncio.sleep(0)
         await self.job.finish(Status.COMPLETE)
         await task
         self.assertEqual(self.job.status, Status.COMPLETE)
