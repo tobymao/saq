@@ -479,10 +479,49 @@ class TestPostgresQueue(TestQueue):
             self.assertEqual(await cursor.fetchone(), (Status.ABORTING,))
 
     async def test_sweep(self) -> None:
-        job = await self.enqueue("test", ttl=1)
-        job = await self.dequeue()
-        await self.queue.finish(job, Status.COMPLETE)
+        job1 = await self.enqueue("test", ttl=1)
+        job2 = await self.enqueue("test", ttl=60)
+        await self.queue.finish(job1, Status.COMPLETE)
+        await self.queue.finish(job2, Status.COMPLETE)
         await asyncio.sleep(1)
+
         await self.queue.sweep()
         with self.assertRaisesRegex(RuntimeError, "doesn't exist"):
-            await job.refresh()
+            await job1.refresh()
+        await job2.refresh()
+        self.assertEqual(job2.status, Status.COMPLETE)
+
+    async def test_sweep_stats(self) -> None:
+        # Stats are deleted
+        await self.queue.stats(ttl=1)
+        await asyncio.sleep(1)
+        await self.queue.sweep()
+        async with self.queue.pool.connection() as conn, conn.cursor() as cursor:
+            await cursor.execute(
+                SQL(
+                    """
+                SELECT stats
+                FROM {}
+                WHERE worker_id = %s
+                """
+                ).format(self.queue.stats_table),
+                (self.queue.uuid,),
+            )
+            self.assertIsNone(await cursor.fetchone())
+
+        # Stats are not deleted
+        await self.queue.stats(ttl=60)
+        await asyncio.sleep(1)
+        await self.queue.sweep()
+        async with self.queue.pool.connection() as conn, conn.cursor() as cursor:
+            await cursor.execute(
+                SQL(
+                    """
+                SELECT stats
+                FROM {}
+                WHERE worker_id = %s
+                """
+                ).format(self.queue.stats_table),
+                (self.queue.uuid,),
+            )
+            self.assertIsNotNone(await cursor.fetchone())

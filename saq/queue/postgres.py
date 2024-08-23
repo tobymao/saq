@@ -275,17 +275,28 @@ class PostgresQueue(Queue):
             if result and not result[0]:
                 # Could not acquire the sweep lock so another worker must already be sweeping
                 return []
+            # Delete expired jobs
             await cursor.execute(
                 SQL(
                     """
                 DELETE FROM {jobs_table}
                 WHERE status IN ('aborted', 'complete', 'failed')
                   AND %(now)s >= ttl
-                RETURNING key
                 """
                 ).format(jobs_table=self.jobs_table),
                 {"now": math.ceil(seconds(now()))},
             )
+            # Delete expired stats
+            await cursor.execute(
+                SQL(
+                    """
+                DELETE FROM {stats_table}
+                WHERE %(now)s >= ttl
+                """
+                ).format(stats_table=self.stats_table),
+                {"now": math.ceil(seconds(now()))},
+            )
+            # Retry or mark orphaned jobs as aborted
             await cursor.execute(
                 SQL(
                     """
