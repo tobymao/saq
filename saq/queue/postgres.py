@@ -292,7 +292,10 @@ class PostgresQueue(Queue):
                 SELECT job
                 FROM {jobs_table} LEFT OUTER JOIN pg_locks ON lock_key = objid
                 WHERE status = 'active'
+                  AND locktype = 'advisory'
+                  AND classid = 0
                   AND objid IS NULL
+                  AND objsubid = 2 -- key is int pair, not single bigint
                 FOR UPDATE SKIP LOCKED
                 """
                 ).format(jobs_table=self.jobs_table)
@@ -318,22 +321,25 @@ class PostgresQueue(Queue):
         if not job_keys:
             return
 
-        async with self.pool.connection() as conn:
-            for key in job_keys:
-                await conn.execute(f'LISTEN "{key}"')
-            await conn.commit()
-            gen = conn.notifies(timeout=timeout or None)
-            async for notify in gen:
-                payload = self._load(notify.payload)
-                key = payload["key"]
-                status = Status[payload["status"].upper()]
-                if asyncio.iscoroutinefunction(callback):
-                    stop = await callback(key, status)
-                else:
-                    stop = callback(key, status)
+        async def _listen() -> None:
+            async with self.pool.connection() as conn:
+                for key in job_keys:
+                    await conn.execute(f'LISTEN "{key}"')
+                await conn.commit()
+                gen = conn.notifies()
+                async for notify in gen:
+                    payload = self._load(notify.payload)
+                    key = payload["key"]
+                    status = Status[payload["status"].upper()]
+                    if asyncio.iscoroutinefunction(callback):
+                        stop = await callback(key, status)
+                    else:
+                        stop = callback(key, status)
 
-                if stop:
-                    await gen.aclose()
+                    if stop:
+                        await gen.aclose()
+
+        await asyncio.wait_for(_listen(), timeout or None)
 
     async def notify(self, job: Job, connection: AsyncConnection | None = None) -> None:
         payload = self._dump({"key": job.key, "status": job.status})
@@ -348,7 +354,12 @@ class PostgresQueue(Queue):
             await conn.execute(f"NOTIFY \"{channel}\", '{payload}'")
 
     async def update(
-        self, job: Job, status: Status | None = None, scheduled: int | None = None
+        self,
+        job: Job,
+        status: Status | None = None,
+        scheduled: int | None = None,
+        ttl: float | None = None,
+        connection: AsyncConnection | None = None,
     ) -> None:
         if status:
             job.status = status
@@ -356,11 +367,13 @@ class PostgresQueue(Queue):
             job.scheduled = scheduled
         job.touched = now()
 
-        async with self.pool.connection() as conn:
+        async with (
+            self.nullcontext(connection) if connection else self.pool.connection()
+        ) as conn:
             await conn.execute(
                 SQL(
                     """
-                    UPDATE {jobs_table} SET job = %(job)s, status = %(status)s, scheduled = %(scheduled)s
+                    UPDATE {jobs_table} SET job = %(job)s, status = %(status)s, scheduled = %(scheduled)s, ttl = %(ttl)s
                     WHERE key = %(key)s
                     """
                 ).format(jobs_table=self.jobs_table),
@@ -369,6 +382,7 @@ class PostgresQueue(Queue):
                     "status": job.status,
                     "key": job.key,
                     "scheduled": job.scheduled,
+                    "ttl": ttl,
                 },
             )
             await self.notify(job, conn)
@@ -378,7 +392,8 @@ class PostgresQueue(Queue):
             await cursor.execute(
                 SQL(
                     """
-                SELECT job FROM {jobs_table}
+                SELECT job
+                FROM {jobs_table}
                 WHERE key = %(key)s
                 """
                 ).format(jobs_table=self.jobs_table),
@@ -424,19 +439,8 @@ class PostgresQueue(Queue):
 
         async with self.pool.connection() as conn, conn.cursor() as cursor:
             if job.ttl >= 0:
-                await cursor.execute(
-                    SQL(
-                        """
-                    UPDATE {jobs_table} SET status = %(status)s, job = %(job)s, ttl = %(ttl)s
-                    WHERE key = %(key)s
-                    """
-                    ).format(jobs_table=self.jobs_table),
-                    {
-                        "status": status,
-                        "job": self.serialize(job),
-                        "key": key,
-                        "ttl": seconds(now()) + job.ttl,
-                    },
+                await self.update(
+                    job, status=status, ttl=seconds(now()) + job.ttl, connection=conn
                 )
             else:
                 await cursor.execute(
@@ -448,12 +452,12 @@ class PostgresQueue(Queue):
                     ).format(jobs_table=self.jobs_table),
                     {"key": key},
                 )
-        await self._release_job(key)
+            await self._release_job(key)
 
-        self._update_stats(status)
+            self._update_stats(status)
 
-        await self.notify(job)
-        logger.info("Finished %s", job.info(logger.isEnabledFor(logging.DEBUG)))
+            await self.notify(job, conn)
+            logger.info("Finished %s", job.info(logger.isEnabledFor(logging.DEBUG)))
 
     async def dequeue(self, timeout: float = 0) -> Job | None:
         """Wait on `self.cond` to dequeue.
