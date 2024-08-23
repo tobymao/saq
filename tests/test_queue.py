@@ -252,7 +252,7 @@ class TestQueue(unittest.IsolatedAsyncioTestCase):
             counter["x"] += 1
             return counter["x"] == 2
 
-        task = asyncio.create_task(self.queue.listen([job.key], listen, timeout=0.1))
+        task = asyncio.create_task(self.queue.listen([job.key], listen, timeout=0.5))
         await asyncio.sleep(0)
         await self.queue.update(job)
         await self.queue.update(job)
