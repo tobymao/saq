@@ -150,7 +150,7 @@ class TestJobPostgresQueue(TestJob):
             await asyncio.wait_for(self.job.refresh(0), 0.1)
 
         self.assertEqual(self.job.status, Status.QUEUED)
-        task = asyncio.create_task(self.job.refresh(0))
+        task = asyncio.create_task(self.job.refresh(1))
         await self.job.finish(Status.COMPLETE)
         await task
         self.assertEqual(self.job.status, Status.COMPLETE)
