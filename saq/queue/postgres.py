@@ -300,13 +300,17 @@ class PostgresQueue(Queue):
             await cursor.execute(
                 SQL(
                     """
+                WITH locks AS (
+                  SELECT objid
+                  FROM pg_locks
+                  WHERE locktype = 'advisory'
+                    AND classid = 0
+                    AND objsubid = 2 -- key is int pair, not single bigint
+                )
                 SELECT job
-                FROM {jobs_table} LEFT OUTER JOIN pg_locks ON lock_key = objid
+                FROM {jobs_table} LEFT OUTER JOIN locks ON lock_key = objid
                 WHERE status = 'active'
-                  AND locktype = 'advisory'
-                  AND classid = 0
                   AND objid IS NULL
-                  AND objsubid = 2 -- key is int pair, not single bigint
                 FOR UPDATE SKIP LOCKED
                 """
                 ).format(jobs_table=self.jobs_table)
