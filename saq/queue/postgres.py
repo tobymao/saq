@@ -311,7 +311,6 @@ class PostgresQueue(Queue):
                 FROM {jobs_table} LEFT OUTER JOIN locks ON lock_key = objid
                 WHERE status = 'active'
                   AND objid IS NULL
-                FOR UPDATE SKIP LOCKED
                 """
                 ).format(jobs_table=self.jobs_table)
             )
@@ -472,10 +471,14 @@ class PostgresQueue(Queue):
                 )
                 await self.notify(job, conn)
             await self._release_job(key)
+            try:
+                self.queue.task_done()
+            except ValueError:
+                # Error because task_done() called too many times, which happens in unit tests
+                pass
 
             self._update_stats(status)
             logger.info("Finished %s", job.info(logger.isEnabledFor(logging.DEBUG)))
-        self.queue.task_done()
 
     async def dequeue(self, timeout: float = 0) -> Job | None:
         """Wait on `self.cond` to dequeue.
@@ -514,7 +517,7 @@ class PostgresQueue(Queue):
                 VALUES (%(key)s, %(job)s, %(queue)s, %(status)s, %(scheduled)s)
                 ON CONFLICT (key) DO UPDATE
                 SET job = %(job)s, queue = %(queue)s, status = %(status)s, scheduled = %(scheduled)s, ttl = null
-                WHERE {jobs_table}.status IN ('aborted', 'complete', 'failed')
+                WHERE {jobs_table}.status IN ('aborted', 'complete', 'failed') AND %(scheduled)s > {jobs_table}.scheduled
                 RETURNING job
                 """
                 ).format(jobs_table=self.jobs_table),
