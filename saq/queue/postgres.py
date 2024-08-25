@@ -475,6 +475,7 @@ class PostgresQueue(Queue):
 
             self._update_stats(status)
             logger.info("Finished %s", job.info(logger.isEnabledFor(logging.DEBUG)))
+        self.queue.task_done()
 
     async def dequeue(self, timeout: float = 0) -> Job | None:
         """Wait on `self.cond` to dequeue.
