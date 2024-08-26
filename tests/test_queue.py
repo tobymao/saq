@@ -525,3 +525,24 @@ class TestPostgresQueue(TestQueue):
                 (self.queue.uuid,),
             )
             self.assertIsNotNone(await cursor.fetchone())
+
+    async def test_job_lock(self) -> None:
+        query = SQL(
+            """
+        SELECT count(*)
+        FROM {} JOIN pg_locks ON lock_key = objid
+        WHERE key = %(key)s
+          AND classid = 0
+          AND objsubid = 1 -- key is int pair, not single bigint
+        """
+        ).format(self.queue.jobs_table)
+        job = await self.enqueue("test")
+        await self.dequeue()
+        async with self.queue.pool.connection() as conn, conn.cursor() as cursor:
+            await cursor.execute(query, {"key": job.key})
+            self.assertEqual(await cursor.fetchone(), (1,))
+
+        await self.finish(job, Status.COMPLETE, result=1)
+        async with self.queue.pool.connection() as conn, conn.cursor() as cursor:
+            await cursor.execute(query, {"key": job.key})
+            self.assertEqual(await cursor.fetchone(), (0,))
