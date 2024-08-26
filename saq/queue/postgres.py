@@ -516,7 +516,8 @@ class PostgresQueue(Queue):
                 VALUES (%(key)s, %(job)s, %(queue)s, %(status)s, %(scheduled)s)
                 ON CONFLICT (key) DO UPDATE
                 SET job = %(job)s, queue = %(queue)s, status = %(status)s, scheduled = %(scheduled)s, ttl = null
-                WHERE {jobs_table}.status IN ('aborted', 'complete', 'failed') AND %(scheduled)s > {jobs_table}.scheduled
+                WHERE {jobs_table}.status IN ('aborted', 'complete', 'failed')
+                  AND %(scheduled)s > {jobs_table}.scheduled
                 RETURNING job
                 """
                 ).format(jobs_table=self.jobs_table),
