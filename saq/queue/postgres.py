@@ -103,12 +103,12 @@ class PostgresQueue(Queue):
         self.cond = asyncio.Condition()
         self.queue: asyncio.Queue = asyncio.Queue()
         self.waiting = 0  # Internal counter of worker tasks waiting for dequeue
-        self._connected = False
         self.connection_lock = asyncio.Lock()
         self.released: list[str] = []
 
     async def connect(self) -> None:
-        if self._connected:
+        if getattr(self, "connection", None):
+            # If connection exists, connect() was already called
             return
 
         await self.pool.open()
@@ -129,7 +129,6 @@ class PostgresQueue(Queue):
             self.dequeue_timer_task = asyncio.create_task(
                 self.dequeue_timer(self.poll_interval)
             )
-        self._connected = True
 
     def job_id(self, job_key: str) -> str:
         return job_key
