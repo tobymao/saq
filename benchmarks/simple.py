@@ -78,6 +78,7 @@ def bench_rq():
     with Connection() as connection:
         queue = Queue(connection=connection)
         worker = Worker("default", log_job_description=False)
+        worker.log_result_lifespan = False
 
         def enqueue(func):
             for _ in range(N):
