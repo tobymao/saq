@@ -439,7 +439,6 @@ class PostgresQueue(Queue):
         await self._release_job(job.key)
 
         self.retried += 1
-        await self.notify(job)
         logger.info("Retrying %s", job.info(logger.isEnabledFor(logging.DEBUG)))
 
     async def finish(
@@ -455,9 +454,8 @@ class PostgresQueue(Queue):
 
         async with self.pool.connection() as conn, conn.cursor() as cursor:
             if job.ttl >= 0:
-                await self.update(
-                    job, status=status, ttl=seconds(now()) + job.ttl, connection=conn
-                )
+                ttl = seconds(now()) + job.ttl if job.ttl > 0 else None
+                await self.update(job, status=status, ttl=ttl, connection=conn)
             else:
                 await cursor.execute(
                     SQL(
