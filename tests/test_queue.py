@@ -573,10 +573,10 @@ class TestPostgresQueue(TestQueue):
         SELECT count(*)
         FROM {} JOIN pg_locks ON lock_key = objid
         WHERE key = %(key)s
-          AND classid = 0
-          AND objsubid = 1 -- key is int pair, not single bigint
+          AND classid = {}
+          AND objsubid = 2 -- key is int pair, not single bigint
         """
-        ).format(self.queue.jobs_table)
+        ).format(self.queue.jobs_table, self.queue.job_lock_keyspace)
         job = await self.enqueue("test")
         await self.dequeue()
         async with self.queue.pool.connection() as conn, conn.cursor() as cursor:

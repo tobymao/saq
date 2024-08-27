@@ -42,7 +42,7 @@ except ModuleNotFoundError as e:
         "Missing dependencies for Postgres. Install them with `pip install saq[postgres]`."
     ) from e
 
-SWEEP_LOCK_KEY = (1, 1)
+SWEEP_LOCK_KEY = 0
 ENQUEUE_CHANNEL = "saq:enqueue"
 JOBS_TABLE = "saq_jobs"
 STATS_TABLE = "saq_stats"
@@ -67,6 +67,9 @@ class PostgresQueue(Queue):
         poll_interval: how often to poll for jobs. (default 1)
             If 0, the queue will not poll for jobs and will only rely on notifications from the server.
             This mean cron jobs will not be picked up in a timely fashion.
+        saq_lock_keyspace: The first of two advisory lock keys used by SAQ. (default 0)
+            SAQ uses advisory locks for coordinating tasks between its workers, e.g. sweeping.
+        job_lock_keyspace: The first of two advisory lock keys used for jobs. (default 1)
     """
 
     @classmethod
@@ -85,6 +88,8 @@ class PostgresQueue(Queue):
         min_size: int = 4,
         max_size: int = 20,
         poll_interval: int = 1,
+        saq_lock_keyspace: int = 0,
+        job_lock_keyspace: int = 1,
     ) -> None:
         super().__init__(name=name, dump=dump, load=load)
 
@@ -94,6 +99,8 @@ class PostgresQueue(Queue):
         self.min_size = min_size
         self.max_size = max_size
         self.poll_interval = poll_interval
+        self.saq_lock_keyspace = saq_lock_keyspace
+        self.job_lock_keyspace = job_lock_keyspace
 
         if dump:
             json.set_json_dumps(dump)
@@ -105,6 +112,7 @@ class PostgresQueue(Queue):
         self.waiting = 0  # Internal counter of worker tasks waiting for dequeue
         self.connection_lock = asyncio.Lock()
         self.released: list[str] = []
+        self.has_sweep_lock = False
 
     async def connect(self) -> None:
         if getattr(self, "connection", None):
@@ -148,6 +156,7 @@ class PostgresQueue(Queue):
         self.listen_for_enqueues_task.cancel()
         if hasattr(self, "dequeue_timer_task"):
             self.dequeue_timer_task.cancel()
+        self.has_sweep_lock = False
 
     async def info(
         self, jobs: bool = False, offset: int = 0, limit: int = 10
@@ -260,20 +269,29 @@ class PostgresQueue(Queue):
     async def schedule(self, lock: int = 1) -> t.Any: ...
 
     async def sweep(self, lock: int = 60, abort: float = 5.0) -> list[t.Any]:
-        """Delete jobs past their TTL from the jobs table"""
+        """Delete jobs and stats past their TTL and sweep stuck jobs"""
         swept = []
 
-        async with self.pool.connection() as conn, conn.cursor() as cursor:
-            await cursor.execute(
+        if not self.has_sweep_lock:
+            # Attempt to get the sweep lock and hold on to it
+            async with self._get_connection() as conn, conn.cursor() as cursor, conn.transaction():
+                await cursor.execute(
+                    SQL(
+                        """
+                SELECT pg_try_advisory_lock({key1}, {key2})
                 """
-            SELECT pg_try_advisory_xact_lock(%(classid)s, %(objid)s)
-            """,
-                {"classid": SWEEP_LOCK_KEY[0], "objid": SWEEP_LOCK_KEY[1]},
-            )
-            result = await cursor.fetchone()
+                    ).format(
+                        key1=self.saq_lock_keyspace,
+                        key2=SWEEP_LOCK_KEY,
+                    )
+                )
+                result = await cursor.fetchone()
             if result and not result[0]:
-                # Could not acquire the sweep lock so another worker must already be sweeping
+                # Could not acquire the sweep lock so another worker must already have it
                 return []
+            self.has_sweep_lock = True
+
+        async with self.pool.connection() as conn, conn.cursor() as cursor:
             await cursor.execute(
                 SQL(
                     """
@@ -291,8 +309,8 @@ class PostgresQueue(Queue):
                   SELECT objid
                   FROM pg_locks
                   WHERE locktype = 'advisory'
-                    AND classid = 0
-                    AND objsubid = 1 -- key is single bigint, not int pair
+                    AND classid = {job_lock_keyspace}
+                    AND objsubid = 2 -- key is int pair, not single bigint
                 )
                 SELECT job
                 FROM {jobs_table} LEFT OUTER JOIN locks ON lock_key = objid
@@ -303,6 +321,7 @@ class PostgresQueue(Queue):
                     jobs_table=self.jobs_table,
                     stats_table=self.stats_table,
                     now=math.ceil(seconds(now())),
+                    job_lock_keyspace=self.job_lock_keyspace,
                 )
             )
             # Move cursor past result sets for the first two delete statements
@@ -590,10 +609,14 @@ class PostgresQueue(Queue):
                 )
                 UPDATE {jobs_table} SET status = 'active'
                 FROM locked_job
-                WHERE {jobs_table}.key = locked_job.key AND pg_try_advisory_lock(locked_job.lock_key)
+                WHERE {jobs_table}.key = locked_job.key
+                  AND pg_try_advisory_lock({job_lock_keyspace}, locked_job.lock_key)
                 RETURNING job
                 """
-                ).format(jobs_table=self.jobs_table),
+                ).format(
+                    jobs_table=self.jobs_table,
+                    job_lock_keyspace=self.job_lock_keyspace,
+                ),
                 {
                     "queue": self.name,
                     "now": math.ceil(seconds(now())),
@@ -630,11 +653,14 @@ class PostgresQueue(Queue):
             await conn.execute(
                 SQL(
                     """
-                SELECT pg_advisory_unlock(lock_key)
+                SELECT pg_advisory_unlock({job_lock_keyspace}, lock_key)
                 FROM {jobs_table}
                 WHERE key = ANY(%(keys)s)
                 """
-                ).format(jobs_table=self.jobs_table),
+                ).format(
+                    jobs_table=self.jobs_table,
+                    job_lock_keyspace=self.job_lock_keyspace,
+                ),
                 {"keys": self.released},
             )
             await self.connection.commit()
