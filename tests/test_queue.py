@@ -478,7 +478,48 @@ class TestPostgresQueue(TestQueue):
             )
             self.assertEqual(await cursor.fetchone(), (Status.ABORTING,))
 
-    async def test_sweep(self) -> None:
+    async def test_sweep_stuck(self) -> None:
+        job1 = await self.queue.enqueue("test")
+        assert job1
+        job = await self.dequeue()
+        job.status = Status.ACTIVE
+        job.started = 1000
+        await self.queue.update(job)
+
+        # Enqueue 2 more jobs that will become stuck
+        job2 = await self.queue.enqueue("test", retries=0)
+        assert job2
+        job3 = await self.queue.enqueue("test")
+        assert job3
+
+        another_queue = await self.create_queue()
+        for _ in range(2):
+            job = await another_queue.dequeue()
+            job.status = Status.ACTIVE
+            job.started = 1000
+            await another_queue.update(job)
+
+        # Disconnect another_queue to simulate worker going down
+        await another_queue.disconnect()
+
+        self.assertEqual(await self.count("active"), 3)
+        swept = await self.queue.sweep(abort=0.01)
+        self.assertEqual(
+            set(swept),
+            {
+                job2.id.encode(),
+                job3.id.encode(),
+            },
+        )
+        await job1.refresh()
+        await job2.refresh()
+        await job3.refresh()
+        self.assertEqual(job1.status, Status.ACTIVE)
+        self.assertEqual(job2.status, Status.ABORTED)
+        self.assertEqual(job3.status, Status.QUEUED)
+        self.assertEqual(await self.count("active"), 1)
+
+    async def test_sweep_jobs(self) -> None:
         job1 = await self.enqueue("test", ttl=1)
         job2 = await self.enqueue("test", ttl=60)
         await self.queue.finish(job1, Status.COMPLETE)

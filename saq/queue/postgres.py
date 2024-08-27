@@ -274,51 +274,46 @@ class PostgresQueue(Queue):
             if result and not result[0]:
                 # Could not acquire the sweep lock so another worker must already be sweeping
                 return []
-            # Delete expired jobs
             await cursor.execute(
                 SQL(
                     """
+                -- Delete expired jobs
                 DELETE FROM {jobs_table}
                 WHERE status IN ('aborted', 'complete', 'failed')
-                  AND %(now)s >= ttl
-                """
-                ).format(jobs_table=self.jobs_table),
-                {"now": math.ceil(seconds(now()))},
-            )
-            # Delete expired stats
-            await cursor.execute(
-                SQL(
-                    """
+                  AND {now} >= ttl;
+
+                -- Delete expired stats
                 DELETE FROM {stats_table}
-                WHERE %(now)s >= ttl
-                """
-                ).format(stats_table=self.stats_table),
-                {"now": math.ceil(seconds(now()))},
-            )
-            # Retry or mark orphaned jobs as aborted
-            await cursor.execute(
-                SQL(
-                    """
+                WHERE {now} >= ttl;
+
+                -- Fetch active and aborting jobs without advisory locks
                 WITH locks AS (
                   SELECT objid
                   FROM pg_locks
                   WHERE locktype = 'advisory'
                     AND classid = 0
-                    AND objsubid = 2 -- key is int pair, not single bigint
+                    AND objsubid = 1 -- key is single bigint, not int pair
                 )
                 SELECT job
                 FROM {jobs_table} LEFT OUTER JOIN locks ON lock_key = objid
-                WHERE status = 'active'
-                  AND objid IS NULL
+                WHERE status IN ('active', 'aborting')
+                  AND objid IS NULL;
                 """
-                ).format(jobs_table=self.jobs_table)
+                ).format(
+                    jobs_table=self.jobs_table,
+                    stats_table=self.stats_table,
+                    now=math.ceil(seconds(now())),
+                )
             )
+            # Move cursor past result sets for the first two delete statements
+            cursor.nextset()
+            cursor.nextset()
             results = await cursor.fetchall()
             for result in results:
                 job = self.deserialize(result[0])
                 if not job:
                     continue
-                swept.append(job.key)
+                swept.append(job.key.encode("utf-8"))
                 if job.retryable:
                     await self.retry(job, error="swept")
                 else:
