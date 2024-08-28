@@ -138,8 +138,17 @@ class PostgresQueue(Queue):
     def job_id(self, job_key: str) -> str:
         return job_key
 
+    def serialize(self, job: Job) -> json.Jsonb:
+        return json.Jsonb(job.to_dict())
+
+    def deserialize(self, job_dict: dict[t.Any, t.Any]) -> Job | None:
+        if job_dict.pop("queue") != self.name:
+            raise ValueError(f"Job {job_dict} fetched by wrong queue: {self.name}")
+        return Job(**job_dict, queue=self)
+
     async def disconnect(self) -> None:
         if self.connection:
+            await self.connection.cancel_safe()
             await self.pool.putconn(self.connection)
             self.connection = None
         await self.pool.close()
@@ -565,7 +574,7 @@ class PostgresQueue(Queue):
                 SQL(
                     dedent(
                         """
-                        SELECT key, job
+                        SELECT key, job->'error'
                         FROM {jobs_table}
                         WHERE key = ANY(%(keys)s)
                         """
