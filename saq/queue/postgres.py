@@ -207,28 +207,6 @@ class PostgresQueue(Queue):
             "jobs": jobs_info,
         }
 
-    async def stats(self, ttl: int = 60) -> QueueStats:
-        stats = self._get_stats()
-        async with self.pool.connection() as conn:
-            await conn.execute(
-                SQL(
-                    dedent(
-                        """
-                        INSERT INTO {stats_table} (worker_id, stats, ttl)
-                        VALUES (%(worker_id)s, %(stats)s, %(ttl)s)
-                        ON CONFLICT (worker_id) DO UPDATE
-                        SET stats = %(stats)s, ttl = %(ttl)s
-                        """
-                    )
-                ).format(stats_table=self.stats_table),
-                {
-                    "worker_id": self.uuid,
-                    "stats": self._dump(stats),
-                    "ttl": seconds(now()) + ttl,
-                },
-            )
-        return stats
-
     async def count(self, kind: CountKind) -> int:
         async with self.pool.connection() as conn, conn.cursor() as cursor:
             if kind == "queued":
@@ -455,58 +433,6 @@ class PostgresQueue(Queue):
 
         await self.update(job)
 
-    async def retry(self, job: Job, error: str | None) -> None:
-        self._update_job_for_retry(job, error)
-        next_retry_delay = job.next_retry_delay()
-        if next_retry_delay:
-            scheduled = time.time() + next_retry_delay
-        else:
-            scheduled = job.scheduled or seconds(now())
-
-        await self.update(job, scheduled=int(scheduled))
-        await self._release_job(job.key)
-
-        self.retried += 1
-        logger.info("Retrying %s", job.info(logger.isEnabledFor(logging.DEBUG)))
-
-    async def finish(
-        self,
-        job: Job,
-        status: Status,
-        *,
-        result: t.Any = None,
-        error: str | None = None,
-    ) -> None:
-        self._update_job_for_finish(job, status, result=result, error=error)
-        key = job.key
-
-        async with self.pool.connection() as conn, conn.cursor() as cursor:
-            if job.ttl >= 0:
-                ttl = seconds(now()) + job.ttl if job.ttl > 0 else None
-                await self.update(job, status=status, ttl=ttl, connection=conn)
-            else:
-                await cursor.execute(
-                    SQL(
-                        dedent(
-                            """
-                            DELETE FROM {jobs_table}
-                            WHERE key = %(key)s
-                            """
-                        )
-                    ).format(jobs_table=self.jobs_table),
-                    {"key": key},
-                )
-                await self.notify(job, conn)
-            await self._release_job(key)
-            try:
-                self.queue.task_done()
-            except ValueError:
-                # Error because task_done() called too many times, which happens in unit tests
-                pass
-
-            self._update_stats(status)
-            logger.info("Finished %s", job.info(logger.isEnabledFor(logging.DEBUG)))
-
     async def dequeue(self, timeout: float = 0) -> Job | None:
         """Wait on `self.cond` to dequeue.
 
@@ -531,11 +457,7 @@ class PostgresQueue(Queue):
             for job in await self._dequeue():
                 await self.queue.put(job)
 
-    async def enqueue(self, job_or_func: str | Job, **kwargs: t.Any) -> Job | None:
-        job = self._create_job_for_enqueue(job_or_func, **kwargs)
-
-        await self._before_enqueue(job)
-
+    async def _enqueue(self, job: Job) -> Job | None:
         async with self.pool.connection() as conn, conn.cursor() as cursor:
             await cursor.execute(
                 SQL(
@@ -592,6 +514,26 @@ class PostgresQueue(Queue):
     async def finish_abort(self, job: Job) -> None:
         await job.finish(Status.ABORTED, error=job.error)
 
+    async def write_stats(self, stats: QueueStats, ttl: int) -> None:
+        async with self.pool.connection() as conn:
+            await conn.execute(
+                SQL(
+                    dedent(
+                        """
+                        INSERT INTO {stats_table} (worker_id, stats, ttl)
+                        VALUES (%(worker_id)s, %(stats)s, %(ttl)s)
+                        ON CONFLICT (worker_id) DO UPDATE
+                        SET stats = %(stats)s, ttl = %(ttl)s
+                        """
+                    )
+                ).format(stats_table=self.stats_table),
+                {
+                    "worker_id": self.uuid,
+                    "stats": self._dump(stats),
+                    "ttl": seconds(now()) + ttl,
+                },
+            )
+
     async def dequeue_timer(self, poll_interval: int) -> None:
         """Wakes up a single dequeue task every `poll_interval` seconds."""
         while True:
@@ -608,6 +550,55 @@ class PostgresQueue(Queue):
             async for _ in gen:
                 async with self.cond:
                     self.cond.notify(1)
+
+    async def _retry(self, job: Job, error: str | None) -> None:
+        next_retry_delay = job.next_retry_delay()
+        if next_retry_delay:
+            scheduled = time.time() + next_retry_delay
+        else:
+            scheduled = job.scheduled or seconds(now())
+
+        await self.update(job, scheduled=int(scheduled))
+        await self._release_job(job.key)
+
+        self.retried += 1
+        logger.info("Retrying %s", job.info(logger.isEnabledFor(logging.DEBUG)))
+
+    async def _finish(
+        self,
+        job: Job,
+        status: Status,
+        *,
+        result: t.Any = None,
+        error: str | None = None,
+    ) -> None:
+        key = job.key
+
+        async with self.pool.connection() as conn, conn.cursor() as cursor:
+            if job.ttl >= 0:
+                ttl = seconds(now()) + job.ttl if job.ttl > 0 else None
+                await self.update(job, status=status, ttl=ttl, connection=conn)
+            else:
+                await cursor.execute(
+                    SQL(
+                        dedent(
+                            """
+                            DELETE FROM {jobs_table}
+                            WHERE key = %(key)s
+                            """
+                        )
+                    ).format(jobs_table=self.jobs_table),
+                    {"key": key},
+                )
+                await self.notify(job, conn)
+            await self._release_job(key)
+            try:
+                self.queue.task_done()
+            except ValueError:
+                # Error because task_done() called too many times, which happens in unit tests
+                pass
+
+            logger.info("Finished %s", job.info(logger.isEnabledFor(logging.DEBUG)))
 
     async def _dequeue(self) -> list[Job]:
         if not self.waiting:
