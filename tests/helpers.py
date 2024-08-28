@@ -19,7 +19,9 @@ async def create_postgres_queue(**kwargs: t.Any) -> PostgresQueue:
 
     queue = t.cast(
         PostgresQueue,
-        Queue.from_url("postgres://postgres@localhost?options=--search_path%3Dtest_saq", **kwargs),
+        Queue.from_url(
+            "postgres://postgres@localhost?options=--search_path%3Dtest_saq", **kwargs
+        ),
     )
     await queue.connect()
     return queue
