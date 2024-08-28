@@ -10,6 +10,7 @@ import math
 import time
 import typing as t
 from contextlib import asynccontextmanager
+from textwrap import dedent
 
 from saq.errors import MissingDependencyError
 from saq.job import (
@@ -102,20 +103,16 @@ class PostgresQueue(Queue):
         self.saq_lock_keyspace = saq_lock_keyspace
         self.job_lock_keyspace = job_lock_keyspace
 
-        if dump:
-            json.set_json_dumps(dump)
-        if load:
-            json.set_json_loads(load)
-
         self.cond = asyncio.Condition()
         self.queue: asyncio.Queue = asyncio.Queue()
         self.waiting = 0  # Internal counter of worker tasks waiting for dequeue
+        self.connection: AsyncConnection | None = None
         self.connection_lock = asyncio.Lock()
         self.released: list[str] = []
         self.has_sweep_lock = False
 
     async def connect(self) -> None:
-        if getattr(self, "connection", None):
+        if self.connection:
             # If connection exists, connect() was already called
             return
 
@@ -141,16 +138,10 @@ class PostgresQueue(Queue):
     def job_id(self, job_key: str) -> str:
         return job_key
 
-    def serialize(self, job: Job) -> json.Jsonb:
-        return json.Jsonb(job.to_dict())
-
-    def deserialize(self, job_dict: dict[t.Any, t.Any]) -> Job | None:
-        if job_dict.pop("queue") != self.name:
-            raise ValueError(f"Job {job_dict} fetched by wrong queue: {self.name}")
-        return Job(**job_dict, queue=self)
-
     async def disconnect(self) -> None:
-        await self.pool.putconn(self.connection)
+        if self.connection:
+            await self.pool.putconn(self.connection)
+            self.connection = None
         await self.pool.close()
         self.wait_for_job_task.cancel()
         self.listen_for_enqueues_task.cancel()
@@ -164,10 +155,12 @@ class PostgresQueue(Queue):
         async with self.pool.connection() as conn, conn.cursor() as cursor:
             await cursor.execute(
                 SQL(
-                    """
-                SELECT worker_id, stats FROM {stats_table}
-                WHERE %(now)s <= ttl
-                """
+                    dedent(
+                        """
+                        SELECT worker_id, stats FROM {stats_table}
+                        WHERE %(now)s <= ttl
+                        """
+                    )
                 ).format(stats_table=self.stats_table),
                 {"now": seconds(now())},
             )
@@ -182,10 +175,12 @@ class PostgresQueue(Queue):
             async with self.pool.connection() as conn, conn.cursor() as cursor:
                 await cursor.execute(
                     SQL(
-                        """
-                    SELECT job FROM {jobs_table}
-                    WHERE status IN ('new', 'deferred', 'queued', 'active')
-                    """
+                        dedent(
+                            """
+                            SELECT job FROM {jobs_table}
+                            WHERE status IN ('new', 'deferred', 'queued', 'active')
+                            """
+                        )
                     ).format(jobs_table=self.jobs_table),
                 )
                 results = await cursor.fetchall()
@@ -208,12 +203,14 @@ class PostgresQueue(Queue):
         async with self.pool.connection() as conn:
             await conn.execute(
                 SQL(
-                    """
-                INSERT INTO {stats_table} (worker_id, stats, ttl)
-                VALUES (%(worker_id)s, %(stats)s, %(ttl)s)
-                ON CONFLICT (worker_id) DO UPDATE
-                SET stats = %(stats)s, ttl = %(ttl)s
-                """
+                    dedent(
+                        """
+                        INSERT INTO {stats_table} (worker_id, stats, ttl)
+                        VALUES (%(worker_id)s, %(stats)s, %(ttl)s)
+                        ON CONFLICT (worker_id) DO UPDATE
+                        SET stats = %(stats)s, ttl = %(ttl)s
+                        """
+                    )
                 ).format(stats_table=self.stats_table),
                 {
                     "worker_id": self.uuid,
@@ -228,34 +225,40 @@ class PostgresQueue(Queue):
             if kind == "queued":
                 await cursor.execute(
                     SQL(
-                        """
-                    SELECT count(*) FROM {jobs_table}
-                    WHERE status = 'queued'
-                      AND queue = %(queue)s
-                      AND %(now)s >= scheduled
-                    """
+                        dedent(
+                            """
+                            SELECT count(*) FROM {jobs_table}
+                            WHERE status = 'queued'
+                              AND queue = %(queue)s
+                              AND %(now)s >= scheduled
+                            """
+                        )
                     ).format(jobs_table=self.jobs_table),
                     {"queue": self.name, "now": math.ceil(seconds(now()))},
                 )
             elif kind == "active":
                 await cursor.execute(
                     SQL(
-                        """
-                    SELECT count(*) FROM {jobs_table}
-                    WHERE status = 'active'
-                      AND queue = %(queue)s
-                    """
+                        dedent(
+                            """
+                            SELECT count(*) FROM {jobs_table}
+                            WHERE status = 'active'
+                              AND queue = %(queue)s
+                            """
+                        )
                     ).format(jobs_table=self.jobs_table),
                     {"queue": self.name},
                 )
             elif kind == "incomplete":
                 await cursor.execute(
                     SQL(
-                        """
-                    SELECT count(*) FROM {jobs_table}
-                    WHERE status IN ('new', 'deferred', 'queued', 'active')
-                      AND queue = %(queue)s
-                    """
+                        dedent(
+                            """
+                            SELECT count(*) FROM {jobs_table}
+                            WHERE status IN ('new', 'deferred', 'queued', 'active')
+                              AND queue = %(queue)s
+                            """
+                        )
                     ).format(jobs_table=self.jobs_table),
                     {"queue": self.name},
                 )
@@ -276,11 +279,7 @@ class PostgresQueue(Queue):
             # Attempt to get the sweep lock and hold on to it
             async with self._get_connection() as conn, conn.cursor() as cursor, conn.transaction():
                 await cursor.execute(
-                    SQL(
-                        """
-                SELECT pg_try_advisory_lock({key1}, {key2})
-                """
-                    ).format(
+                    SQL("SELECT pg_try_advisory_lock({key1}, {key2})").format(
                         key1=self.saq_lock_keyspace,
                         key2=SWEEP_LOCK_KEY,
                     )
@@ -294,7 +293,8 @@ class PostgresQueue(Queue):
         async with self.pool.connection() as conn, conn.cursor() as cursor:
             await cursor.execute(
                 SQL(
-                    """
+                    dedent(
+                        """
                 -- Delete expired jobs
                 DELETE FROM {jobs_table}
                 WHERE status IN ('aborted', 'complete', 'failed')
@@ -317,6 +317,7 @@ class PostgresQueue(Queue):
                 WHERE status IN ('active', 'aborting')
                   AND objid IS NULL;
                 """
+                    )
                 ).format(
                     jobs_table=self.jobs_table,
                     stats_table=self.stats_table,
@@ -402,10 +403,12 @@ class PostgresQueue(Queue):
         ) as conn:
             await conn.execute(
                 SQL(
-                    """
-                    UPDATE {jobs_table} SET job = %(job)s, status = %(status)s, scheduled = %(scheduled)s, ttl = %(ttl)s
-                    WHERE key = %(key)s
-                    """
+                    dedent(
+                        """
+                        UPDATE {jobs_table} SET job = %(job)s, status = %(status)s, scheduled = %(scheduled)s, ttl = %(ttl)s
+                        WHERE key = %(key)s
+                        """
+                    )
                 ).format(jobs_table=self.jobs_table),
                 {
                     "job": self.serialize(job),
@@ -421,11 +424,13 @@ class PostgresQueue(Queue):
         async with self.pool.connection() as conn, conn.cursor() as cursor:
             await cursor.execute(
                 SQL(
-                    """
-                SELECT job
-                FROM {jobs_table}
-                WHERE key = %(key)s
-                """
+                    dedent(
+                        """
+                        SELECT job
+                        FROM {jobs_table}
+                        WHERE key = %(key)s
+                        """
+                    )
                 ).format(jobs_table=self.jobs_table),
                 {"key": job_key},
             )
@@ -473,10 +478,12 @@ class PostgresQueue(Queue):
             else:
                 await cursor.execute(
                     SQL(
-                        """
-                    DELETE FROM {jobs_table}
-                    WHERE key = %(key)s
-                    """
+                        dedent(
+                            """
+                            DELETE FROM {jobs_table}
+                            WHERE key = %(key)s
+                            """
+                        )
                     ).format(jobs_table=self.jobs_table),
                     {"key": key},
                 )
@@ -523,15 +530,17 @@ class PostgresQueue(Queue):
         async with self.pool.connection() as conn, conn.cursor() as cursor:
             await cursor.execute(
                 SQL(
-                    """
-                INSERT INTO {jobs_table} (key, job, queue, status, scheduled)
-                VALUES (%(key)s, %(job)s, %(queue)s, %(status)s, %(scheduled)s)
-                ON CONFLICT (key) DO UPDATE
-                SET job = %(job)s, queue = %(queue)s, status = %(status)s, scheduled = %(scheduled)s, ttl = null
-                WHERE {jobs_table}.status IN ('aborted', 'complete', 'failed')
-                  AND %(scheduled)s > {jobs_table}.scheduled
-                RETURNING job
-                """
+                    dedent(
+                        """
+                        INSERT INTO {jobs_table} (key, job, queue, status, scheduled)
+                        VALUES (%(key)s, %(job)s, %(queue)s, %(status)s, %(scheduled)s)
+                        ON CONFLICT (key) DO UPDATE
+                        SET job = %(job)s, queue = %(queue)s, status = %(status)s, scheduled = %(scheduled)s, ttl = null
+                        WHERE {jobs_table}.status IN ('aborted', 'complete', 'failed')
+                          AND %(scheduled)s > {jobs_table}.scheduled
+                        RETURNING job
+                        """
+                    )
                 ).format(jobs_table=self.jobs_table),
                 {
                     "key": job.key,
@@ -554,11 +563,13 @@ class PostgresQueue(Queue):
         async with self.pool.connection() as conn, conn.cursor() as cursor:
             await cursor.execute(
                 SQL(
-                    """
-                SELECT key, job->'error'
-                FROM {jobs_table}
-                WHERE key = ANY(%(keys)s)
-                """
+                    dedent(
+                        """
+                        SELECT key, job
+                        FROM {jobs_table}
+                        WHERE key = ANY(%(keys)s)
+                        """
+                    )
                 ).format(jobs_table=self.jobs_table),
                 {"keys": [job.key for job in jobs]},
             )
@@ -596,23 +607,25 @@ class PostgresQueue(Queue):
         async with self._get_connection() as conn, conn.cursor() as cursor, conn.transaction():
             await cursor.execute(
                 SQL(
-                    """
-                WITH locked_job AS (
-                  SELECT key, lock_key
-                  FROM {jobs_table}
-                  WHERE status = 'queued'
-                    AND queue = %(queue)s
-                    AND %(now)s >= scheduled
-                  ORDER BY scheduled
-                  LIMIT %(limit)s
-                  FOR UPDATE SKIP LOCKED
-                )
-                UPDATE {jobs_table} SET status = 'active'
-                FROM locked_job
-                WHERE {jobs_table}.key = locked_job.key
-                  AND pg_try_advisory_lock({job_lock_keyspace}, locked_job.lock_key)
-                RETURNING job
-                """
+                    dedent(
+                        """
+                        WITH locked_job AS (
+                          SELECT key, lock_key
+                          FROM {jobs_table}
+                          WHERE status = 'queued'
+                            AND queue = %(queue)s
+                            AND %(now)s >= scheduled
+                          ORDER BY scheduled
+                          LIMIT %(limit)s
+                          FOR UPDATE SKIP LOCKED
+                        )
+                        UPDATE {jobs_table} SET status = 'active'
+                        FROM locked_job
+                        WHERE {jobs_table}.key = locked_job.key
+                          AND pg_try_advisory_lock({job_lock_keyspace}, locked_job.lock_key)
+                        RETURNING job
+                        """
+                    )
                 ).format(
                     jobs_table=self.jobs_table,
                     job_lock_keyspace=self.job_lock_keyspace,
@@ -632,6 +645,7 @@ class PostgresQueue(Queue):
 
     @asynccontextmanager
     async def _get_connection(self) -> t.AsyncGenerator[AsyncConnection]:
+        assert self.connection
         async with self.connection_lock:
             yield self.connection
 
@@ -646,17 +660,20 @@ class PostgresQueue(Queue):
         yield enter_result
 
     async def _release_job(self, key: str) -> None:
+        assert self.connection
         self.released.append(key)
         if self.connection_lock.locked():
             return
         async with self._get_connection() as conn:
             await conn.execute(
                 SQL(
-                    """
-                SELECT pg_advisory_unlock({job_lock_keyspace}, lock_key)
-                FROM {jobs_table}
-                WHERE key = ANY(%(keys)s)
-                """
+                    dedent(
+                        """
+                        SELECT pg_advisory_unlock({job_lock_keyspace}, lock_key)
+                        FROM {jobs_table}
+                        WHERE key = ANY(%(keys)s)
+                        """
+                    )
                 ).format(
                     jobs_table=self.jobs_table,
                     job_lock_keyspace=self.job_lock_keyspace,
