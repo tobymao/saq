@@ -13,7 +13,14 @@ from saq.job import Job, Status
 from saq.queue import JobError, Queue
 from saq.utils import uuid1
 from saq.worker import Worker
-from tests.helpers import cleanup_queue, create_postgres_queue, create_redis_queue
+from tests.helpers import (
+    cleanup_queue,
+    create_postgres_queue,
+    create_redis_queue,
+    setup_postgres,
+    teardown_postgres,
+)
+
 
 if t.TYPE_CHECKING:
     from unittest.mock import MagicMock
@@ -424,8 +431,13 @@ class TestRedisQueue(TestQueue):
 
 class TestPostgresQueue(TestQueue):
     async def asyncSetUp(self) -> None:
+        await setup_postgres()
         self.create_queue = create_postgres_queue
         self.queue: PostgresQueue = await self.create_queue()
+
+    async def asyncTearDown(self) -> None:
+        await super().asyncTearDown()
+        await teardown_postgres()
 
     async def test_job_key(self) -> None:
         self.skipTest("Not implemented")

@@ -13,7 +13,13 @@ from saq.queue import Queue
 from saq.queue.redis import RedisQueue
 from saq.utils import uuid1
 from saq.worker import Worker
-from tests.helpers import cleanup_queue, create_redis_queue, create_postgres_queue
+from tests.helpers import (
+    cleanup_queue,
+    create_redis_queue,
+    create_postgres_queue,
+    setup_postgres,
+    teardown_postgres,
+)
 
 if t.TYPE_CHECKING:
     from unittest.mock import MagicMock
@@ -384,9 +390,14 @@ class TestWorkerRedisQueue(TestWorker):
 
 class TestWorkerPostgresQueue(TestWorker):
     async def asyncSetUp(self) -> None:
+        await setup_postgres()
         self.create_queue = create_postgres_queue
         self.queue = await self.create_queue()
         self.worker = Worker(self.queue, functions=functions)
+
+    async def asyncTearDown(self) -> None:
+        await super().asyncTearDown()
+        await teardown_postgres()
 
     @mock.patch("saq.utils.time")
     async def test_schedule(self, mock_time: MagicMock) -> None:

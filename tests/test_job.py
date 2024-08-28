@@ -6,7 +6,14 @@ import unittest
 from unittest import mock
 
 from saq.job import Job, Status
-from tests.helpers import cleanup_queue, create_postgres_queue, create_redis_queue
+from tests.helpers import (
+    cleanup_queue,
+    create_postgres_queue,
+    create_redis_queue,
+    setup_postgres,
+    teardown_postgres,
+)
+
 
 if t.TYPE_CHECKING:
     from unittest.mock import MagicMock
@@ -123,7 +130,6 @@ class TestJob(unittest.IsolatedAsyncioTestCase):
 
 
 class TestJobRedisQueue(TestJob):
-
     async def asyncSetUp(self) -> None:
         self.create_queue = create_redis_queue
         self.queue = await self.create_queue()
@@ -131,11 +137,15 @@ class TestJobRedisQueue(TestJob):
 
 
 class TestJobPostgresQueue(TestJob):
-
     async def asyncSetUp(self) -> None:
+        await setup_postgres()
         self.create_queue = create_postgres_queue
         self.queue = await self.create_queue()
         self.job = Job("func", queue=self.queue)
+
+    async def asyncTearDown(self) -> None:
+        await super().asyncTearDown()
+        await teardown_postgres()
 
     async def test_refresh(self) -> None:
         with self.assertRaises(RuntimeError):
