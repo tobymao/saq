@@ -31,6 +31,7 @@ class Status(str, enum.Enum):
     DEFERRED = "deferred"
     QUEUED = "queued"
     ACTIVE = "active"
+    ABORTING = "aborting"
     ABORTED = "aborted"
     FAILED = "failed"
     COMPLETE = "complete"

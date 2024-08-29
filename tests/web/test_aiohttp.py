@@ -9,7 +9,7 @@ from aiohttp.test_utils import TestClient, TestServer
 from saq.job import Status
 from saq.web.aiohttp import create_app
 from saq.worker import Worker
-from tests.helpers import cleanup_queue, create_queue
+from tests.helpers import cleanup_queue, create_redis_queue
 
 if t.TYPE_CHECKING:
     from saq.types import Context, Function
@@ -26,8 +26,8 @@ functions: list[Function] = [echo]
 
 class TestAiohttpWeb(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self) -> None:
-        self.queue1 = create_queue(name="queue1")
-        self.queue2 = create_queue(name="queue2")
+        self.queue1 = await create_redis_queue(name="queue1")
+        self.queue2 = await create_redis_queue(name="queue2")
         self.worker = Worker(self.queue1, functions=functions)
         self.app = await self.get_application()
         self.client = await self.get_test_client()

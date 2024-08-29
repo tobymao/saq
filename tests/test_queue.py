@@ -2,20 +2,32 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import pickle
 import time
 import typing as t
 import unittest
 from unittest import mock
 
+from psycopg.sql import SQL
+
 from saq.job import Job, Status
-from saq.queue import JobError
+from saq.queue import JobError, Queue
 from saq.utils import uuid1
 from saq.worker import Worker
-from tests.helpers import cleanup_queue, create_queue
+from tests.helpers import (
+    cleanup_queue,
+    create_postgres_queue,
+    create_redis_queue,
+    setup_postgres,
+    teardown_postgres,
+)
+
 
 if t.TYPE_CHECKING:
     from unittest.mock import MagicMock
 
+    from saq.queue.postgres import PostgresQueue
+    from saq.queue.redis import RedisQueue
     from saq.types import Context, CountKind, Function
 
 
@@ -31,8 +43,11 @@ functions: list[Function] = [echo, error]
 
 
 class TestQueue(unittest.IsolatedAsyncioTestCase):
-    def setUp(self) -> None:
-        self.queue = create_queue()
+    queue: Queue
+    create_queue: t.Callable
+
+    async def asyncSetUp(self) -> None:
+        self.skipTest("Skipping base test case")
 
     async def asyncTearDown(self) -> None:
         await cleanup_queue(self.queue)
@@ -77,16 +92,6 @@ class TestQueue(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(await self.queue.enqueue("test", key="1"))
         self.assertIsNone(await self.queue.enqueue(job))
 
-    async def test_enqueue_scheduled(self) -> None:
-        scheduled = time.time() + 10
-        job = await self.enqueue("test", scheduled=scheduled)
-        self.assertEqual(await self.count("queued"), 0)
-        self.assertEqual(await self.count("incomplete"), 1)
-        self.assertEqual(
-            await self.queue.redis.zscore(self.queue.namespace("incomplete"), job.id),
-            scheduled,
-        )
-
     async def test_dequeue(self) -> None:
         job = await self.enqueue("test")
         self.assertEqual(await self.count("queued"), 1)
@@ -105,8 +110,10 @@ class TestQueue(unittest.IsolatedAsyncioTestCase):
         await task
 
     async def test_dequeue_fifo(self) -> None:
-        await cleanup_queue(self.queue)
-        self.queue = create_queue()
+        await cleanup_queue(
+            self.queue  # pylint: disable=access-member-before-definition
+        )
+        self.queue = await self.create_queue()
         job = await self.enqueue("test")
         job_second = await self.enqueue("test_second")
         self.assertEqual(await self.count("queued"), 2)
@@ -154,30 +161,6 @@ class TestQueue(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await self.count("incomplete"), 0)
         self.assertEqual(await self.count("active"), 0)
 
-    async def test_finish_ttl_positive(self) -> None:
-        job = await self.enqueue("test", ttl=5)
-        await self.dequeue()
-        await self.finish(job, Status.COMPLETE)
-        ttl = await self.queue.redis.ttl(job.id)
-
-        self.assertLessEqual(ttl, 5)
-
-    async def test_finish_ttl_neutral(self) -> None:
-        job = await self.enqueue("test", ttl=0)
-        await self.dequeue()
-        await self.finish(job, Status.COMPLETE)
-        ttl = await self.queue.redis.ttl(job.id)
-
-        self.assertEqual(ttl, -1)
-
-    async def test_finish_ttl_negative(self) -> None:
-        job = await self.enqueue("test", ttl=-1)
-        await self.dequeue()
-        await self.finish(job, Status.COMPLETE)
-        ttl = await self.queue.redis.ttl(job.id)
-
-        self.assertEqual(ttl, -2)
-
     async def test_retry(self) -> None:
         job = await self.enqueue("test", retries=2)
         await self.dequeue()
@@ -211,31 +194,12 @@ class TestQueue(unittest.IsolatedAsyncioTestCase):
         await job.refresh()
         self.assertEqual(job.status, Status.QUEUED)
 
-    async def test_abort(self) -> None:
-        job = await self.enqueue("test", retries=2)
-        self.assertEqual(await self.count("queued"), 1)
-        self.assertEqual(await self.count("incomplete"), 1)
-        await self.queue.abort(job, "test")
-        self.assertEqual(await self.count("queued"), 0)
-        self.assertEqual(await self.count("incomplete"), 0)
-
-        job = await self.enqueue("test", retries=2)
-        await self.dequeue()
-        self.assertEqual(await self.count("queued"), 0)
-        self.assertEqual(await self.count("incomplete"), 1)
-        self.assertEqual(await self.count("active"), 1)
-        await self.queue.abort(job, "test")
-        self.assertEqual(await self.count("queued"), 0)
-        self.assertEqual(await self.count("incomplete"), 0)
-        self.assertEqual(await self.count("active"), 0)
-        self.assertEqual(await self.queue.redis.get(job.abort_id), b"test")
-
     async def test_stats(self) -> None:
         for _ in range(10):
             await self.enqueue("test")
             job = await self.dequeue()
             await job.retry(None)
-            await job.abort("test")
+            await job.finish(Status.ABORTED)
             await job.finish(Status.FAILED)
             await job.finish(Status.COMPLETE)
         stats = await self.queue.stats()
@@ -246,7 +210,7 @@ class TestQueue(unittest.IsolatedAsyncioTestCase):
         self.assertGreater(stats["uptime"], 0)
 
     async def test_info(self) -> None:
-        queue2 = create_queue(name=self.queue.name)
+        queue2 = await self.create_queue(name=self.queue.name)
         self.addAsyncCleanup(cleanup_queue, queue2)
         worker = Worker(self.queue, functions=functions)
         info = await self.queue.info(jobs=True)
@@ -285,47 +249,6 @@ class TestQueue(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(jobs2)
         self.assertEqual(await self.count("queued"), 3)
         self.assertEqual(await self.count("incomplete"), 4)
-
-    @mock.patch("saq.utils.time")
-    async def test_sweep(self, mock_time: MagicMock) -> None:
-        mock_time.time.return_value = 1
-        job1 = await self.enqueue("test", heartbeat=1, retries=0)
-        job2 = await self.enqueue("test", timeout=1)
-        await self.enqueue("test", timeout=2)
-        await self.enqueue("test", heartbeat=2)
-        job3 = await self.enqueue("test", timeout=1)
-        for _ in range(4):
-            job = await self.dequeue()
-            job.status = Status.ACTIVE
-            job.started = 1000
-            await self.queue.update(job)
-        await self.dequeue()
-
-        # missing job
-        job4 = Job(function="", queue=self.queue)
-
-        # pylint: disable=protected-access
-        await self.queue.redis.lpush(self.queue._active, job4.id)
-
-        mock_time.time.return_value = 3
-        self.assertEqual(await self.count("active"), 6)
-        swept = await self.queue.sweep(abort=0.01)
-        self.assertEqual(
-            set(swept),
-            {
-                job1.id.encode(),
-                job2.id.encode(),
-                job3.id.encode(),
-                job4.id.encode(),
-            },
-        )
-        await job1.refresh()
-        await job2.refresh()
-        await job3.refresh()
-        self.assertEqual(job1.status, Status.ABORTED)
-        self.assertEqual(job2.status, Status.QUEUED)
-        self.assertEqual(job3.status, Status.QUEUED)
-        self.assertEqual(await self.count("active"), 2)
 
     async def test_update(self) -> None:
         job = await self.enqueue("test")
@@ -402,6 +325,302 @@ class TestQueue(unittest.IsolatedAsyncioTestCase):
         await self.enqueue("test")
         self.assertIsNone(called_with_job)
 
+
+class TestRedisQueue(TestQueue):
+    async def asyncSetUp(self) -> None:
+        self.create_queue = create_redis_queue
+        self.queue: RedisQueue = await self.create_queue()
+
+    async def test_enqueue_scheduled(self) -> None:
+        scheduled = time.time() + 10
+        job = await self.enqueue("test", scheduled=scheduled)
+        self.assertEqual(await self.count("queued"), 0)
+        self.assertEqual(await self.count("incomplete"), 1)
+        self.assertEqual(
+            await self.queue.redis.zscore(self.queue.namespace("incomplete"), job.id),
+            scheduled,
+        )
+
+    async def test_finish_ttl_positive(self) -> None:
+        job = await self.enqueue("test", ttl=5)
+        await self.dequeue()
+        await self.finish(job, Status.COMPLETE)
+        ttl = await self.queue.redis.ttl(job.id)
+
+        self.assertLessEqual(ttl, 5)
+
+    async def test_finish_ttl_neutral(self) -> None:
+        job = await self.enqueue("test", ttl=0)
+        await self.dequeue()
+        await self.finish(job, Status.COMPLETE)
+        ttl = await self.queue.redis.ttl(job.id)
+
+        self.assertEqual(ttl, -1)
+
+    async def test_finish_ttl_negative(self) -> None:
+        job = await self.enqueue("test", ttl=-1)
+        await self.dequeue()
+        await self.finish(job, Status.COMPLETE)
+        ttl = await self.queue.redis.ttl(job.id)
+
+        self.assertEqual(ttl, -2)
+
+    async def test_abort(self) -> None:
+        job = await self.enqueue("test", retries=2)
+        self.assertEqual(await self.count("queued"), 1)
+        self.assertEqual(await self.count("incomplete"), 1)
+        await self.queue.abort(job, "test")
+        self.assertEqual(await self.count("queued"), 0)
+        self.assertEqual(await self.count("incomplete"), 0)
+
+        job = await self.enqueue("test", retries=2)
+        await self.dequeue()
+        self.assertEqual(await self.count("queued"), 0)
+        self.assertEqual(await self.count("incomplete"), 1)
+        self.assertEqual(await self.count("active"), 1)
+        await self.queue.abort(job, "test")
+        self.assertEqual(await self.count("queued"), 0)
+        self.assertEqual(await self.count("incomplete"), 0)
+        self.assertEqual(await self.count("active"), 0)
+        self.assertEqual(await self.queue.redis.get(job.abort_id), b"test")
+
+    @mock.patch("saq.utils.time")
+    async def test_sweep(self, mock_time: MagicMock) -> None:
+        mock_time.time.return_value = 1
+        job1 = await self.enqueue("test", heartbeat=1, retries=0)
+        job2 = await self.enqueue("test", timeout=1)
+        await self.enqueue("test", timeout=2)
+        await self.enqueue("test", heartbeat=2)
+        job3 = await self.enqueue("test", timeout=1)
+        for _ in range(4):
+            job = await self.dequeue()
+            job.status = Status.ACTIVE
+            job.started = 1000
+            await self.queue.update(job)
+        await self.dequeue()
+
+        # missing job
+        job4 = Job(function="", queue=self.queue)
+
+        # pylint: disable=protected-access
+        await self.queue.redis.lpush(self.queue._active, job4.id)
+
+        mock_time.time.return_value = 3
+        self.assertEqual(await self.count("active"), 6)
+        swept = await self.queue.sweep(abort=0.01)
+        self.assertEqual(
+            set(swept),
+            {
+                job1.id.encode(),
+                job2.id.encode(),
+                job3.id.encode(),
+                job4.id.encode(),
+            },
+        )
+        await job1.refresh()
+        await job2.refresh()
+        await job3.refresh()
+        self.assertEqual(job1.status, Status.ABORTED)
+        self.assertEqual(job2.status, Status.QUEUED)
+        self.assertEqual(job3.status, Status.QUEUED)
+        self.assertEqual(await self.count("active"), 2)
+
     async def test_job_key(self) -> None:
         self.assertEqual("a", self.queue.job_key_from_id(self.queue.job_id("a")))
         self.assertEqual("a:b", self.queue.job_key_from_id(self.queue.job_id("a:b")))
+
+
+class TestPostgresQueue(TestQueue):
+    async def asyncSetUp(self) -> None:
+        await setup_postgres()
+        self.create_queue = create_postgres_queue
+        self.queue: PostgresQueue = await self.create_queue()
+
+    async def asyncTearDown(self) -> None:
+        await super().asyncTearDown()
+        await teardown_postgres()
+
+    async def test_job_key(self) -> None:
+        self.skipTest("Not implemented")
+
+    @mock.patch("saq.utils.time")
+    async def test_schedule(self, mock_time: MagicMock) -> None:
+        self.skipTest("Not implemented")
+
+    async def test_batch(self) -> None:
+        with contextlib.suppress(ValueError):
+            async with self.queue.batch():
+                job = await self.enqueue("echo", a=1)
+                raise ValueError()
+
+        self.assertEqual(job.status, Status.ABORTING)
+
+    async def test_enqueue_dup(self) -> None:
+        job = await self.enqueue("test", key="1")
+        self.assertEqual(job.id, "1")
+        self.assertIsNone(await self.queue.enqueue("test", key="1"))
+        self.assertIsNone(await self.queue.enqueue(job))
+
+    async def test_abort(self) -> None:
+        job = await self.enqueue("test", retries=2)
+        self.assertEqual(await self.count("queued"), 1)
+        self.assertEqual(await self.count("incomplete"), 1)
+        await self.queue.abort(job, "test")
+        self.assertEqual(await self.count("queued"), 0)
+        self.assertEqual(await self.count("incomplete"), 0)
+
+        job = await self.enqueue("test", retries=2)
+        await self.dequeue()
+        self.assertEqual(await self.count("queued"), 0)
+        self.assertEqual(await self.count("incomplete"), 1)
+        self.assertEqual(await self.count("active"), 1)
+        await self.queue.abort(job, "test")
+        self.assertEqual(await self.count("queued"), 0)
+        self.assertEqual(await self.count("incomplete"), 0)
+        self.assertEqual(await self.count("active"), 0)
+        async with self.queue.pool.connection() as conn, conn.cursor() as cursor:
+            await cursor.execute(
+                SQL(
+                    """
+                SELECT status
+                FROM {}
+                WHERE key = %s
+                """
+                ).format(self.queue.jobs_table),
+                (job.key,),
+            )
+            self.assertEqual(await cursor.fetchone(), (Status.ABORTING,))
+
+    async def test_sweep_stuck(self) -> None:
+        job1 = await self.queue.enqueue("test")
+        assert job1
+        job = await self.dequeue()
+        job.status = Status.ACTIVE
+        job.started = 1000
+        await self.queue.update(job)
+
+        # Enqueue 2 more jobs that will become stuck
+        job2 = await self.queue.enqueue("test", retries=0)
+        assert job2
+        job3 = await self.queue.enqueue("test")
+        assert job3
+
+        another_queue = await self.create_queue()
+        for _ in range(2):
+            job = await another_queue.dequeue()
+            job.status = Status.ACTIVE
+            job.started = 1000
+            await another_queue.update(job)
+
+        # Disconnect another_queue to simulate worker going down
+        await another_queue.disconnect()
+
+        self.assertEqual(await self.count("active"), 3)
+        swept = await self.queue.sweep(abort=0.01)
+        self.assertEqual(
+            set(swept),
+            {
+                job2.id.encode(),
+                job3.id.encode(),
+            },
+        )
+        await job1.refresh()
+        await job2.refresh()
+        await job3.refresh()
+        self.assertEqual(job1.status, Status.ACTIVE)
+        self.assertEqual(job2.status, Status.ABORTED)
+        self.assertEqual(job3.status, Status.QUEUED)
+        self.assertEqual(await self.count("active"), 1)
+
+    async def test_sweep_jobs(self) -> None:
+        job1 = await self.enqueue("test", ttl=1)
+        job2 = await self.enqueue("test", ttl=60)
+        await self.queue.finish(job1, Status.COMPLETE)
+        await self.queue.finish(job2, Status.COMPLETE)
+        await asyncio.sleep(1)
+
+        await self.queue.sweep()
+        with self.assertRaisesRegex(RuntimeError, "doesn't exist"):
+            await job1.refresh()
+        await job2.refresh()
+        self.assertEqual(job2.status, Status.COMPLETE)
+
+    async def test_sweep_stats(self) -> None:
+        # Stats are deleted
+        await self.queue.stats(ttl=1)
+        await asyncio.sleep(1)
+        await self.queue.sweep()
+        async with self.queue.pool.connection() as conn, conn.cursor() as cursor:
+            await cursor.execute(
+                SQL(
+                    """
+                SELECT stats
+                FROM {}
+                WHERE worker_id = %s
+                """
+                ).format(self.queue.stats_table),
+                (self.queue.uuid,),
+            )
+            self.assertIsNone(await cursor.fetchone())
+
+        # Stats are not deleted
+        await self.queue.stats(ttl=60)
+        await asyncio.sleep(1)
+        await self.queue.sweep()
+        async with self.queue.pool.connection() as conn, conn.cursor() as cursor:
+            await cursor.execute(
+                SQL(
+                    """
+                SELECT stats
+                FROM {}
+                WHERE worker_id = %s
+                """
+                ).format(self.queue.stats_table),
+                (self.queue.uuid,),
+            )
+            self.assertIsNotNone(await cursor.fetchone())
+
+    async def test_job_lock(self) -> None:
+        query = SQL(
+            """
+        SELECT count(*)
+        FROM {} JOIN pg_locks ON lock_key = objid
+        WHERE key = %(key)s
+          AND classid = {}
+          AND objsubid = 2 -- key is int pair, not single bigint
+        """
+        ).format(self.queue.jobs_table, self.queue.job_lock_keyspace)
+        job = await self.enqueue("test")
+        await self.dequeue()
+        async with self.queue.pool.connection() as conn, conn.cursor() as cursor:
+            await cursor.execute(query, {"key": job.key})
+            self.assertEqual(await cursor.fetchone(), (1,))
+
+        await self.finish(job, Status.COMPLETE, result=1)
+        async with self.queue.pool.connection() as conn, conn.cursor() as cursor:
+            await cursor.execute(query, {"key": job.key})
+            self.assertEqual(await cursor.fetchone(), (0,))
+
+    async def test_load_dump_pickle(self) -> None:
+        self.queue = await self.create_queue(dump=pickle.dumps, load=pickle.loads)
+        job = await self.enqueue("test")
+
+        async with self.queue.pool.connection() as conn, conn.cursor() as cursor:
+            await cursor.execute(
+                SQL(
+                    """
+                SELECT job
+                FROM {}
+                WHERE key = %s
+                """
+                ).format(self.queue.jobs_table),
+                (job.key,),
+            )
+            result = await cursor.fetchone()
+            assert result
+            fetched_job = pickle.loads(result[0])
+            self.assertIsInstance(fetched_job, dict)
+            self.assertEqual(fetched_job["key"], job.key)
+
+        dequeued_job = await self.dequeue()
+        self.assertEqual(dequeued_job, job)

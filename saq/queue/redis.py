@@ -6,18 +6,25 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import json
 import time
 import typing as t
 from collections import defaultdict
 
-from redis import asyncio as aioredis
-
+from saq.errors import MissingDependencyError
 from saq.job import (
     Job,
     Status,
 )
 from saq.queue.base import Queue, logger
-from saq.utils import millis, now, seconds, uuid1
+from saq.utils import millis, now, seconds
+
+try:
+    from redis import asyncio as aioredis
+except ModuleNotFoundError as e:
+    raise MissingDependencyError(
+        "Missing dependencies for Redis. Install them with `pip install saq[redis]`."
+    ) from e
 
 if t.TYPE_CHECKING:
     from collections.abc import Iterable
@@ -71,7 +78,6 @@ class RedisQueue(Queue):
         super().__init__(name=name, dump=dump, load=load)
 
         self.redis = redis
-        self.uuid: str = uuid1()
         self._version: VersionTuple | None = None
         self._schedule_script: AsyncScript | None = None
         self._enqueue_script: AsyncScript | None = None
@@ -139,7 +145,7 @@ class RedisQueue(Queue):
         worker_info = {}
         for worker_uuid, stats in zip(worker_uuids, worker_stats):
             if stats:
-                stats_obj = self._load(stats)
+                stats_obj = json.loads(stats)
                 worker_info[worker_uuid] = stats_obj
 
         queued = await self.count("queued")
@@ -177,32 +183,6 @@ class RedisQueue(Queue):
             "scheduled": incomplete - queued - active,
             "jobs": job_info,
         }
-
-    async def stats(self, ttl: int = 60) -> QueueStats:
-        """
-        Returns & updates stats on the queue
-
-        Args:
-            ttl: Time-to-live of stats saved in Redis
-        """
-        current = now()
-        stats: QueueStats = {
-            "complete": self.complete,
-            "failed": self.failed,
-            "retried": self.retried,
-            "aborted": self.aborted,
-            "uptime": current - self.started,
-        }
-        async with self.redis.pipeline(transaction=True) as pipe:
-            key = self.namespace(f"stats:{self.uuid}")
-            await (
-                pipe.setex(key, ttl, self._dump(stats))
-                .zremrangebyscore(self._stats, 0, current)
-                .zadd(self._stats, {key: current + millis(ttl)})
-                .expire(self._stats, ttl)
-                .execute()
-            )
-        return stats
 
     async def count(self, kind: CountKind) -> int:
         """
@@ -339,69 +319,6 @@ class RedisQueue(Queue):
             else:
                 await self.redis.lrem(self._active, 0, job.id)
 
-    async def retry(self, job: Job, error: str | None) -> None:
-        job_id = job.id
-        job.status = Status.QUEUED
-        job.error = error
-        job.completed = 0
-        job.started = 0
-        job.progress = 0
-        job.touched = now()
-        next_retry_delay = job.next_retry_delay()
-
-        async with self.redis.pipeline(transaction=True) as pipe:
-            pipe = pipe.lrem(self._active, 1, job_id)
-            pipe = pipe.lrem(self._queued, 1, job_id)
-            if next_retry_delay:
-                scheduled = time.time() + next_retry_delay
-                pipe = pipe.zadd(self._incomplete, {job_id: scheduled})
-            else:
-                pipe = pipe.zadd(self._incomplete, {job_id: job.scheduled})
-                pipe = pipe.rpush(self._queued, job_id)
-            await pipe.set(job_id, self.serialize(job)).execute()
-            self.retried += 1
-            await self.notify(job)
-            logger.info("Retrying %s", job.info(logger.isEnabledFor(logging.DEBUG)))
-
-    async def finish(
-        self,
-        job: Job,
-        status: Status,
-        *,
-        result: t.Any = None,
-        error: str | None = None,
-    ) -> None:
-        job_id = job.id
-        job.status = status
-        job.result = result
-        job.error = error
-        job.completed = now()
-
-        if status == Status.COMPLETE:
-            job.progress = 1.0
-
-        async with self.redis.pipeline(transaction=True) as pipe:
-            pipe = pipe.lrem(self._active, 1, job_id).zrem(self._incomplete, job_id)
-
-            if job.ttl > 0:
-                pipe = pipe.setex(job_id, job.ttl, self.serialize(job))
-            elif job.ttl == 0:
-                pipe = pipe.set(job_id, self.serialize(job))
-            else:
-                pipe.delete(job_id)
-
-            await pipe.execute()
-
-            if status == Status.COMPLETE:
-                self.complete += 1
-            elif status == Status.FAILED:
-                self.failed += 1
-            elif status == Status.ABORTED:
-                self.aborted += 1
-
-            await self.notify(job)
-            logger.info("Finished %s", job.info(logger.isEnabledFor(logging.DEBUG)))
-
     async def dequeue(self, timeout: float = 0) -> Job | None:
         if await self.version() < (6, 2, 0):
             job_id = await self.redis.brpoplpush(
@@ -420,74 +337,6 @@ class RedisQueue(Queue):
 
         logger.debug("Dequeue timed out")
         return None
-
-    async def enqueue(self, job_or_func: str | Job, **kwargs: t.Any) -> Job | None:
-        """
-        Enqueue a job by instance or string.
-
-        Example:
-            .. code-block::
-
-                job = await queue.enqueue("add", a=1, b=2)
-                print(job.id)
-
-        Args:
-            job_or_func: The job or function to enqueue.
-                If a job instance is passed in, it's properties are overriden.
-            kwargs: Kwargs can be arguments of the function or properties of the job.
-
-        Returns:
-            If the job has already been enqueued, this returns None, else Job
-        """
-        job_kwargs: dict[str, t.Any] = {}
-
-        for k, v in kwargs.items():
-            if k in Job.__dataclass_fields__:  # pylint: disable=no-member
-                job_kwargs[k] = v
-            else:
-                job_kwargs.setdefault("kwargs", {})[k] = v
-
-        if isinstance(job_or_func, str):
-            job = Job(function=job_or_func, **job_kwargs)
-        else:
-            job = job_or_func
-
-            for k, v in job_kwargs.items():
-                setattr(job, k, v)
-
-        if job.queue and job.queue.name != self.name:
-            raise ValueError(f"Job {job} registered to a different queue")
-
-        if not self._enqueue_script:
-            self._enqueue_script = self.redis.register_script(
-                """
-                if not redis.call('ZSCORE', KEYS[1], KEYS[2]) and redis.call('EXISTS', KEYS[4]) == 0 then
-                    redis.call('SET', KEYS[2], ARGV[1])
-                    redis.call('ZADD', KEYS[1], ARGV[2], KEYS[2])
-                    if ARGV[2] == '0' then redis.call('RPUSH', KEYS[3], KEYS[2]) end
-                    return 1
-                else
-                    return nil
-                end
-                """
-            )
-
-        job.queue = self
-        job.queued = now()
-        job.status = Status.QUEUED
-
-        await self._before_enqueue(job)
-
-        async with self._op_sem:
-            if not await self._enqueue_script(
-                keys=[self._incomplete, job.id, self._queued, job.abort_id],
-                args=[self.serialize(job), job.scheduled],
-                client=self.redis,
-            ):
-                return None
-
-        logger.info("Enqueuing %s", job.info(logger.isEnabledFor(logging.DEBUG)))
-        return job
 
     async def listen(
         self,
@@ -532,11 +381,98 @@ class RedisQueue(Queue):
         finally:
             await self._pubsub.unsubscribe(queue)
 
-    async def get_many(self, keys: Iterable[str]) -> list[bytes | None]:
-        return await self.redis.mget(keys)
+    async def get_abort_errors(self, jobs: Iterable[Job]) -> list[bytes | None]:
+        return await self.redis.mget(job.abort_id for job in jobs)
 
-    async def delete(self, key: str) -> None:
-        await self.redis.delete(key)
+    async def finish_abort(self, job: Job) -> None:
+        await self.redis.delete(job.abort_id)
+
+    async def write_stats(self, stats: QueueStats, ttl: int) -> None:
+        """
+        Returns & updates stats on the queue
+
+        Args:
+            ttl: Time-to-live of stats saved in Redis
+        """
+        current = now()
+        async with self.redis.pipeline(transaction=True) as pipe:
+            key = self.namespace(f"stats:{self.uuid}")
+            await (
+                pipe.setex(key, ttl, json.dumps(stats))
+                .zremrangebyscore(self._stats, 0, current)
+                .zadd(self._stats, {key: current + millis(ttl)})
+                .expire(self._stats, ttl)
+                .execute()
+            )
+
+    async def _retry(self, job: Job, error: str | None) -> None:
+        job_id = job.id
+        next_retry_delay = job.next_retry_delay()
+
+        async with self.redis.pipeline(transaction=True) as pipe:
+            pipe = pipe.lrem(self._active, 1, job_id)
+            pipe = pipe.lrem(self._queued, 1, job_id)
+            if next_retry_delay:
+                scheduled = time.time() + next_retry_delay
+                pipe = pipe.zadd(self._incomplete, {job_id: scheduled})
+            else:
+                pipe = pipe.zadd(self._incomplete, {job_id: job.scheduled})
+                pipe = pipe.rpush(self._queued, job_id)
+            await pipe.set(job_id, self.serialize(job)).execute()
+            self.retried += 1
+            await self.notify(job)
+            logger.info("Retrying %s", job.info(logger.isEnabledFor(logging.DEBUG)))
+
+    async def _finish(
+        self,
+        job: Job,
+        status: Status,
+        *,
+        result: t.Any = None,
+        error: str | None = None,
+    ) -> None:
+        job_id = job.id
+
+        async with self.redis.pipeline(transaction=True) as pipe:
+            pipe = pipe.lrem(self._active, 1, job_id).zrem(self._incomplete, job_id)
+
+            if job.ttl > 0:
+                pipe = pipe.setex(job_id, job.ttl, self.serialize(job))
+            elif job.ttl == 0:
+                pipe = pipe.set(job_id, self.serialize(job))
+            else:
+                pipe.delete(job_id)
+
+            await pipe.execute()
+
+            await self.notify(job)
+            logger.info("Finished %s", job.info(logger.isEnabledFor(logging.DEBUG)))
+
+    async def _enqueue(self, job: Job) -> Job | None:
+        if not self._enqueue_script:
+            self._enqueue_script = self.redis.register_script(
+                """
+                if not redis.call('ZSCORE', KEYS[1], KEYS[2]) and redis.call('EXISTS', KEYS[4]) == 0 then
+                    redis.call('SET', KEYS[2], ARGV[1])
+                    redis.call('ZADD', KEYS[1], ARGV[2], KEYS[2])
+                    if ARGV[2] == '0' then redis.call('RPUSH', KEYS[3], KEYS[2]) end
+                    return 1
+                else
+                    return nil
+                end
+                """
+            )
+
+        async with self._op_sem:
+            if not await self._enqueue_script(
+                keys=[self._incomplete, job.id, self._queued, job.abort_id],
+                args=[self.serialize(job), job.scheduled],
+                client=self.redis,
+            ):
+                return None
+
+        logger.info("Enqueuing %s", job.info(logger.isEnabledFor(logging.DEBUG)))
+        return job
 
 
 class PubSubMultiplexer:

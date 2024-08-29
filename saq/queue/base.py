@@ -18,7 +18,7 @@ from saq.job import (
     Status,
     get_default_job_key,
 )
-from saq.utils import now
+from saq.utils import now, uuid1
 
 if t.TYPE_CHECKING:
     from collections.abc import AsyncIterator, Iterable, Sequence
@@ -59,6 +59,7 @@ class Queue(ABC):
         load: LoadType | None,
     ) -> None:
         self.name = name
+        self.uuid: str = uuid1()
         self.started: int = now()
         self.complete = 0
         self.failed = 0
@@ -80,10 +81,6 @@ class Queue(ABC):
     async def info(
         self, jobs: bool = False, offset: int = 0, limit: int = 10
     ) -> QueueInfo:
-        pass
-
-    @abstractmethod
-    async def stats(self, ttl: int = 60) -> QueueStats:
         pass
 
     @abstractmethod
@@ -124,11 +121,27 @@ class Queue(ABC):
         pass
 
     @abstractmethod
-    async def retry(self, job: Job, error: str | None) -> None:
+    async def dequeue(self, timeout: float = 0) -> Job | None:
         pass
 
     @abstractmethod
-    async def finish(
+    async def get_abort_errors(self, jobs: Iterable[Job]) -> list[bytes | None]:
+        pass
+
+    @abstractmethod
+    async def finish_abort(self, job: Job) -> None:
+        pass
+
+    @abstractmethod
+    async def write_stats(self, stats: QueueStats, ttl: int) -> None:
+        pass
+
+    @abstractmethod
+    async def _retry(self, job: Job, error: str | None) -> None:
+        pass
+
+    @abstractmethod
+    async def _finish(
         self,
         job: Job,
         status: Status,
@@ -139,35 +152,28 @@ class Queue(ABC):
         pass
 
     @abstractmethod
-    async def dequeue(self, timeout: float = 0) -> Job | None:
-        pass
-
-    @abstractmethod
-    async def enqueue(self, job_or_func: str | Job, **kwargs: t.Any) -> Job | None:
-        pass
-
-    @abstractmethod
-    async def get_many(self, keys: Iterable[str]) -> list[bytes | None]:
-        pass
-
-    @abstractmethod
-    async def delete(self, key: str) -> None:
+    async def _enqueue(self, job: Job) -> Job | None:
         pass
 
     @staticmethod
     def from_url(url: str, **kwargs: t.Any) -> Queue:
         """Create a queue with a redis url a name."""
-        from saq.queue.redis import RedisQueue
+        if url.startswith("redis"):
+            from saq.queue.redis import RedisQueue
 
-        return RedisQueue.from_url(url, **kwargs)
+            return RedisQueue.from_url(url, **kwargs)
 
-    def register_before_enqueue(self, callback: BeforeEnqueueType) -> None:
-        self._before_enqueues[id(callback)] = callback
+        if url.startswith("postgres"):
+            from saq.queue.postgres import PostgresQueue
 
-    def unregister_before_enqueue(self, callback: BeforeEnqueueType) -> None:
-        self._before_enqueues.pop(id(callback), None)
+            return PostgresQueue.from_url(url, **kwargs)
 
-    def serialize(self, job: Job) -> str:
+        raise ValueError("URL is not valid")
+
+    async def connect(self) -> None:
+        pass
+
+    def serialize(self, job: Job) -> bytes | str:
         return self._dump(job.to_dict())
 
     def deserialize(self, job_bytes: bytes | None) -> Job | None:
@@ -178,6 +184,104 @@ class Queue(ABC):
         if job_dict.pop("queue") != self.name:
             raise ValueError(f"Job {job_dict} fetched by wrong queue: {self.name}")
         return Job(**job_dict, queue=self)
+
+    async def stats(self, ttl: int = 60) -> QueueStats:
+        stats: QueueStats = {
+            "complete": self.complete,
+            "failed": self.failed,
+            "retried": self.retried,
+            "aborted": self.aborted,
+            "uptime": now() - self.started,
+        }
+
+        await self.write_stats(stats, ttl)
+        return stats
+
+    def register_before_enqueue(self, callback: BeforeEnqueueType) -> None:
+        self._before_enqueues[id(callback)] = callback
+
+    def unregister_before_enqueue(self, callback: BeforeEnqueueType) -> None:
+        self._before_enqueues.pop(id(callback), None)
+
+    async def retry(self, job: Job, error: str | None) -> None:
+        job.status = Status.QUEUED
+        job.error = error
+        job.completed = 0
+        job.started = 0
+        job.progress = 0
+        job.touched = now()
+
+        await self._retry(job=job, error=error)
+
+    async def finish(
+        self,
+        job: Job,
+        status: Status,
+        *,
+        result: t.Any = None,
+        error: str | None = None,
+    ) -> None:
+        job.status = status
+        job.result = result
+        job.error = error
+        job.completed = now()
+
+        if status == Status.COMPLETE:
+            job.progress = 1.0
+
+        await self._finish(job=job, status=status, result=result, error=error)
+
+        if status == Status.COMPLETE:
+            self.complete += 1
+        elif status == Status.FAILED:
+            self.failed += 1
+        elif status == Status.ABORTED:
+            self.aborted += 1
+
+    async def enqueue(self, job_or_func: str | Job, **kwargs: t.Any) -> Job | None:
+        """
+        Enqueue a job by instance or string.
+
+        Example:
+            .. code-block::
+
+                job = await queue.enqueue("add", a=1, b=2)
+                print(job.id)
+
+        Args:
+            job_or_func: The job or function to enqueue.
+                If a job instance is passed in, it's properties are overriden.
+            kwargs: Kwargs can be arguments of the function or properties of the job.
+
+        Returns:
+            If the job has already been enqueued, this returns None, else Job
+        """
+        job_kwargs: dict[str, t.Any] = {}
+
+        for k, v in kwargs.items():
+            if k in Job.__dataclass_fields__:  # pylint: disable=no-member
+                job_kwargs[k] = v
+            else:
+                job_kwargs.setdefault("kwargs", {})[k] = v
+
+        if isinstance(job_or_func, str):
+            job = Job(function=job_or_func, **job_kwargs)
+        else:
+            job = job_or_func
+
+            for k, v in job_kwargs.items():
+                setattr(job, k, v)
+
+        if job.queue and job.queue.name != self.name:
+            raise ValueError(f"Job {job} registered to a different queue")
+
+        job.queue = self
+        job.queued = now()
+        job.status = Status.QUEUED
+
+        await self._before_enqueue(job)
+
+        return await self._enqueue(job)
 
     async def apply(
         self, job_or_func: str, timeout: float | None = None, **kwargs: t.Any

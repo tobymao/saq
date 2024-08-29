@@ -42,7 +42,7 @@ async def bench_arq():
     print(f"ARQ process {N} sleep {time.time() - now}")
 
 
-async def bench_saq():
+async def bench_saq(url: str):
     from saq import Queue, Worker
 
     async def enqueue(func):
@@ -50,8 +50,9 @@ async def bench_saq():
             *[asyncio.create_task(queue.enqueue(func)) for _ in range(N)]
         )
 
-    queue = Queue.from_url("redis://localhost")
+    queue = Queue.from_url(url)
     worker = Worker(queue=queue, functions=[noop, sleeper], concurrency=10)
+    await queue.connect()
 
     now = time.time()
     await enqueue("noop")
@@ -77,6 +78,7 @@ def bench_rq():
     with Connection() as connection:
         queue = Queue(connection=connection)
         worker = Worker("default", log_job_description=False)
+        worker.log_result_lifespan = False
 
         def enqueue(func):
             for _ in range(N):
@@ -100,8 +102,10 @@ async def main():
         await bench_arq()
     elif lib == "rq":
         bench_rq()
+    elif lib == "saq_pg":
+        await bench_saq("postgres://postgres@localhost")
     else:
-        await bench_saq()
+        await bench_saq("redis://localhost")
 
 
 if __name__ == "__main__":

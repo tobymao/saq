@@ -1,13 +1,47 @@
 import typing as t
 
-from saq.queue import Queue, RedisQueue
+import psycopg
+
+from saq.queue import Queue
+from saq.queue.postgres import PostgresQueue
+from saq.queue.redis import RedisQueue
+
+POSTGRES_TEST_SCHEMA = "test_saq"
 
 
-def create_queue(**kwargs: t.Any) -> RedisQueue:
+async def create_redis_queue(**kwargs: t.Any) -> RedisQueue:
     queue = t.cast(RedisQueue, Queue.from_url("redis://localhost:6379", **kwargs))
+    await queue.connect()
     return queue
 
 
-async def cleanup_queue(queue: RedisQueue) -> None:
-    await queue.redis.flushdb()
+async def create_postgres_queue(**kwargs: t.Any) -> PostgresQueue:
+    queue = t.cast(
+        PostgresQueue,
+        Queue.from_url(
+            f"postgres://postgres@localhost?options=--search_path%3D{POSTGRES_TEST_SCHEMA}",
+            **kwargs,
+        ),
+    )
+    await queue.connect()
+    return queue
+
+
+async def cleanup_queue(queue: Queue) -> None:
+    if isinstance(queue, RedisQueue):
+        await queue.redis.flushdb()
     await queue.disconnect()
+
+
+async def setup_postgres() -> None:
+    async with await psycopg.AsyncConnection.connect(
+        "postgres://postgres@localhost", autocommit=True
+    ) as conn:
+        await conn.execute(f"CREATE SCHEMA IF NOT EXISTS {POSTGRES_TEST_SCHEMA}")
+
+
+async def teardown_postgres() -> None:
+    async with await psycopg.AsyncConnection.connect(
+        "postgres://postgres@localhost", autocommit=True
+    ) as conn:
+        await conn.execute(f"DROP SCHEMA {POSTGRES_TEST_SCHEMA} CASCADE")

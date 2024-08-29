@@ -128,6 +128,8 @@ class Worker:
         )
 
         try:
+            await self.queue.connect()
+
             self.event = asyncio.Event()
             loop = asyncio.get_running_loop()
 
@@ -219,7 +221,7 @@ class Worker:
         if not jobs:
             return
 
-        aborted = await self.queue.get_many(job.abort_id for job in jobs)
+        aborted = await self.queue.get_abort_errors(jobs)
 
         for job, abort in zip(jobs, aborted):
             if not abort:
@@ -233,7 +235,7 @@ class Worker:
                 task.cancel()
                 await asyncio.gather(task, return_exceptions=True)
 
-            await self.queue.delete(job.abort_id)
+            await self.queue.finish_abort(job)
             logger.info("Aborting %s", job.id)
 
     async def process(self) -> None:

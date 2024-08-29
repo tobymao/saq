@@ -6,16 +6,28 @@ import unittest
 from unittest import mock
 
 from saq.job import Job, Status
-from tests.helpers import cleanup_queue, create_queue
+from tests.helpers import (
+    cleanup_queue,
+    create_postgres_queue,
+    create_redis_queue,
+    setup_postgres,
+    teardown_postgres,
+)
+
 
 if t.TYPE_CHECKING:
     from unittest.mock import MagicMock
 
+    from saq.queue import Queue
+
 
 class TestJob(unittest.IsolatedAsyncioTestCase):
-    def setUp(self) -> None:
-        self.queue = create_queue()
-        self.job = Job("func", queue=self.queue)
+    queue: Queue
+    job: Job
+    create_queue: t.Callable
+
+    async def asyncSetUp(self) -> None:
+        self.skipTest("Skipping base test case")
 
     async def asyncTearDown(self) -> None:
         await cleanup_queue(self.queue)
@@ -45,7 +57,7 @@ class TestJob(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(queued, self.job.queued)
 
         with self.assertRaises(ValueError):
-            await self.job.enqueue(create_queue(name="queue2"))
+            await self.job.enqueue(await self.create_queue(name="queue2"))
 
     async def test_finish(self) -> None:
         await self.job.finish(Status.COMPLETE, result={})
@@ -115,3 +127,41 @@ class TestJob(unittest.IsolatedAsyncioTestCase):
             "queue": self.queue.name,
             "meta": {"x": 1},
         }
+
+
+class TestJobRedisQueue(TestJob):
+    async def asyncSetUp(self) -> None:
+        self.create_queue = create_redis_queue
+        self.queue = await self.create_queue()
+        self.job = Job("func", queue=self.queue)
+
+
+class TestJobPostgresQueue(TestJob):
+    async def asyncSetUp(self) -> None:
+        await setup_postgres()
+        self.create_queue = create_postgres_queue
+        self.queue = await self.create_queue()
+        self.job = Job("func", queue=self.queue)
+
+    async def asyncTearDown(self) -> None:
+        await super().asyncTearDown()
+        await teardown_postgres()
+
+    async def test_refresh(self) -> None:
+        with self.assertRaises(RuntimeError):
+            await self.job.refresh()
+
+        await self.job.enqueue()
+        await self.job.refresh()
+        with self.assertRaises(asyncio.TimeoutError):
+            await self.job.refresh(0.01)
+
+        with self.assertRaises(asyncio.TimeoutError):
+            await asyncio.wait_for(self.job.refresh(0), 0.1)
+
+        self.assertEqual(self.job.status, Status.QUEUED)
+        task = asyncio.create_task(self.job.refresh(1))
+        await asyncio.sleep(0)
+        await self.job.finish(Status.COMPLETE)
+        await task
+        self.assertEqual(self.job.status, Status.COMPLETE)

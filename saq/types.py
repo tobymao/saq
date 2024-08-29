@@ -118,7 +118,7 @@ class SettingsDict(t.TypedDict, total=False):
 
 BeforeEnqueueType = t.Callable[["Job"], t.Awaitable[t.Any]]
 CountKind = t.Literal["queued", "active", "incomplete"]
-DumpType = t.Callable[[t.Mapping[t.Any, t.Any]], str]
+DumpType = t.Callable[[t.Mapping[t.Any, t.Any]], t.Union[bytes, str]]
 DurationKind = t.Literal["process", "start", "total", "running"]
 Function = t.Callable[..., t.Any]
 ListenCallback = t.Callable[[str, "Status"], t.Any]
