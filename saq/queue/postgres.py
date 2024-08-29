@@ -5,6 +5,7 @@ Postgres Queue
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import math
 import time
@@ -36,7 +37,6 @@ if t.TYPE_CHECKING:
 try:
     from psycopg import AsyncConnection, Notify
     from psycopg.sql import Identifier, SQL
-    from psycopg.types import json
     from psycopg_pool import AsyncConnectionPool
 except ModuleNotFoundError as e:
     raise MissingDependencyError(
@@ -138,13 +138,12 @@ class PostgresQueue(Queue):
     def job_id(self, job_key: str) -> str:
         return job_key
 
-    def serialize(self, job: Job) -> json.Jsonb:
-        return json.Jsonb(job.to_dict())
-
-    def deserialize(self, job_dict: dict[t.Any, t.Any]) -> Job | None:
-        if job_dict.pop("queue") != self.name:
-            raise ValueError(f"Job {job_dict} fetched by wrong queue: {self.name}")
-        return Job(**job_dict, queue=self)
+    def serialize(self, job: Job) -> bytes | str:
+        """Ensure serialized job is in bytes because the job column is of type BYTEA."""
+        serialized = self._dump(job.to_dict())
+        if isinstance(serialized, str):
+            return serialized.encode("utf-8")
+        return serialized
 
     async def disconnect(self) -> None:
         if self.connection:
@@ -338,7 +337,7 @@ class PostgresQueue(Queue):
 
         async def _listen(gen: t.AsyncGenerator[Notify]) -> None:
             async for notify in gen:
-                payload = self._load(notify.payload)
+                payload = json.loads(notify.payload)
                 key = payload["key"]
                 status = Status[payload["status"].upper()]
                 if asyncio.iscoroutinefunction(callback):
@@ -356,20 +355,8 @@ class PostgresQueue(Queue):
             await asyncio.wait_for(_listen(conn.notifies()), timeout)
 
     async def notify(self, job: Job, connection: AsyncConnection | None = None) -> None:
-        payload = self._dump({"key": job.key, "status": job.status})
+        payload = json.dumps({"key": job.key, "status": job.status})
         await self._notify(job.key, payload, connection)
-
-    async def _notify(
-        self, channel: str, payload: t.Any, connection: AsyncConnection | None = None
-    ) -> None:
-        async with (
-            self.nullcontext(connection) if connection else self.pool.connection()
-        ) as conn:
-            await conn.execute(
-                SQL("NOTIFY {channel}, {payload}").format(
-                    channel=Identifier(channel), payload=payload
-                )
-            )
 
     async def update(
         self,
@@ -496,7 +483,7 @@ class PostgresQueue(Queue):
                 SQL(
                     dedent(
                         """
-                        SELECT key, job->'error'
+                        SELECT key, job
                         FROM {jobs_table}
                         WHERE key = ANY(%(keys)s)
                         """
@@ -504,10 +491,13 @@ class PostgresQueue(Queue):
                 ).format(jobs_table=self.jobs_table),
                 {"keys": [job.key for job in jobs]},
             )
-            results: dict[str, str | None] = dict(await cursor.fetchmany())
+            results: dict[str, bytes | None] = dict(await cursor.fetchmany())
         errors = []
         for job in jobs:
-            error = results.get(job.key)
+            result = self.deserialize(results.get(job.key))
+            error = None
+            if result:
+                error = result.error
             errors.append(error.encode("utf-8") if error else None)
         return errors
 
@@ -529,7 +519,7 @@ class PostgresQueue(Queue):
                 ).format(stats_table=self.stats_table),
                 {
                     "worker_id": self.uuid,
-                    "stats": self._dump(stats),
+                    "stats": json.dumps(stats),
                     "ttl": seconds(now()) + ttl,
                 },
             )
@@ -642,6 +632,18 @@ class PostgresQueue(Queue):
             if job:
                 jobs.append(job)
         return jobs
+
+    async def _notify(
+        self, channel: str, payload: t.Any, connection: AsyncConnection | None = None
+    ) -> None:
+        async with (
+            self.nullcontext(connection) if connection else self.pool.connection()
+        ) as conn:
+            await conn.execute(
+                SQL("NOTIFY {channel}, {payload}").format(
+                    channel=Identifier(channel), payload=payload
+                )
+            )
 
     @asynccontextmanager
     async def _get_connection(self) -> t.AsyncGenerator[AsyncConnection]:

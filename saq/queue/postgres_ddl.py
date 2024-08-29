@@ -3,7 +3,7 @@ CREATE TABLE IF NOT EXISTS {jobs_table} (
     key TEXT PRIMARY KEY,
     lock_key SERIAL,
     queued BIGINT NOT NULL DEFAULT EXTRACT(EPOCH FROM now()),
-    job JSONB,
+    job BYTEA,
     queue TEXT,
     status TEXT,
     scheduled BIGINT,

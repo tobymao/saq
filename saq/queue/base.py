@@ -173,6 +173,18 @@ class Queue(ABC):
     async def connect(self) -> None:
         pass
 
+    def serialize(self, job: Job) -> bytes | str:
+        return self._dump(job.to_dict())
+
+    def deserialize(self, job_bytes: bytes | None) -> Job | None:
+        if not job_bytes:
+            return None
+
+        job_dict = self._load(job_bytes)
+        if job_dict.pop("queue") != self.name:
+            raise ValueError(f"Job {job_dict} fetched by wrong queue: {self.name}")
+        return Job(**job_dict, queue=self)
+
     async def stats(self, ttl: int = 60) -> QueueStats:
         stats: QueueStats = {
             "complete": self.complete,

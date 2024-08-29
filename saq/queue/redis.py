@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import json
 import time
 import typing as t
 from collections import defaultdict
@@ -104,18 +105,6 @@ class RedisQueue(Queue):
     def namespace(self, key: str) -> str:
         return ":".join(["saq", self.name, key])
 
-    def serialize(self, job: Job) -> str:
-        return self._dump(job.to_dict())
-
-    def deserialize(self, job_bytes: bytes | None) -> Job | None:
-        if not job_bytes:
-            return None
-
-        job_dict = self._load(job_bytes)
-        if job_dict.pop("queue") != self.name:
-            raise ValueError(f"Job {job_dict} fetched by wrong queue: {self.name}")
-        return Job(**job_dict, queue=self)
-
     async def disconnect(self) -> None:
         await self._pubsub.close()
         if hasattr(self.redis, "aclose"):
@@ -156,7 +145,7 @@ class RedisQueue(Queue):
         worker_info = {}
         for worker_uuid, stats in zip(worker_uuids, worker_stats):
             if stats:
-                stats_obj = self._load(stats)
+                stats_obj = json.loads(stats)
                 worker_info[worker_uuid] = stats_obj
 
         queued = await self.count("queued")
@@ -409,7 +398,7 @@ class RedisQueue(Queue):
         async with self.redis.pipeline(transaction=True) as pipe:
             key = self.namespace(f"stats:{self.uuid}")
             await (
-                pipe.setex(key, ttl, self._dump(stats))
+                pipe.setex(key, ttl, json.dumps(stats))
                 .zremrangebyscore(self._stats, 0, current)
                 .zadd(self._stats, {key: current + millis(ttl)})
                 .expire(self._stats, ttl)

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import pickle
 import time
 import typing as t
 import unittest
@@ -599,3 +600,27 @@ class TestPostgresQueue(TestQueue):
         async with self.queue.pool.connection() as conn, conn.cursor() as cursor:
             await cursor.execute(query, {"key": job.key})
             self.assertEqual(await cursor.fetchone(), (0,))
+
+    async def test_load_dump_pickle(self) -> None:
+        self.queue = await self.create_queue(dump=pickle.dumps, load=pickle.loads)
+        job = await self.enqueue("test")
+
+        async with self.queue.pool.connection() as conn, conn.cursor() as cursor:
+            await cursor.execute(
+                SQL(
+                    """
+                SELECT job
+                FROM {}
+                WHERE key = %s
+                """
+                ).format(self.queue.jobs_table),
+                (job.key,),
+            )
+            result = await cursor.fetchone()
+            assert result
+            fetched_job = pickle.loads(result[0])
+            self.assertIsInstance(fetched_job, dict)
+            self.assertEqual(fetched_job["key"], job.key)
+
+        dequeued_job = await self.dequeue()
+        self.assertEqual(dequeued_job, job)
