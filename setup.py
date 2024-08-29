@@ -23,6 +23,7 @@ setup(
     license="MIT",
     packages=[
         "saq",
+        "saq.queue",
         "saq.web",
     ],
     include_package_data=True,
