@@ -11,13 +11,13 @@ BODY = """
     <head>
         <meta charset="utf-8">
         <meta name="viewport" content="width=device-width, initial-scale=1">
-        <link rel="stylesheet" type="text/css" href="{root_path}/static/pico.min.css.gz">
+        <link rel="stylesheet" type="text/css" href="{root_path}/static/pico.min.css">
         <title>SAQ</title>
     </head>
     <body>
         <div id="app"></div>
         <script>const root_path = "{root_path}";</script>
-        <script src="{root_path}/static/snabbdom.js.gz"></script>
+        <script src="{root_path}/static/snabbdom.js"></script>
         <script src="{root_path}/static/app.js"></script>
     </body>
 </html>
