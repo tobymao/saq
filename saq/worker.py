@@ -363,6 +363,7 @@ def start(
 
 
 async def async_check_health(queue: Queue) -> int:
+    await queue.connect()
     info = await queue.info()
     name = info.get("name")
     if name != queue.name:
@@ -387,5 +388,5 @@ async def async_check_health(queue: Queue) -> int:
 def check_health(settings: str) -> int:
     settings_dict = import_settings(settings)
     loop = asyncio.new_event_loop()
-    queue = settings_dict.get("queue", Queue.from_url("redis://localhost"))
+    queue = settings_dict.get("queue") or Queue.from_url("redis://localhost")
     return loop.run_until_complete(async_check_health(queue))
