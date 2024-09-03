@@ -41,8 +41,8 @@ async def sleeper(_ctx: Context, sleep: float = 0.1) -> dict[str, t.Any]:
     return {"a": 1, "b": []}
 
 
-async def cron(_ctx: Context) -> int:
-    return 1
+async def cron(_ctx: Context, *, param: int) -> int:
+    return param
 
 
 async def error(_ctx: Context) -> t.NoReturn:
@@ -277,7 +277,7 @@ class TestWorker(unittest.IsolatedAsyncioTestCase):
         worker = Worker(
             self.queue,
             functions=functions,
-            cron_jobs=[CronJob(cron, cron="* * * * *")],
+            cron_jobs=[CronJob(cron, cron="* * * * *", kwargs={"param": 1})],
         )
         self.assertEqual(await self.queue.count("queued"), 0)
         self.assertEqual(await self.queue.count("incomplete"), 0)

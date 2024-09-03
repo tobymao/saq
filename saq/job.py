@@ -66,6 +66,7 @@ class CronJob:
     heartbeat: int | None = None
     retries: int | None = None
     ttl: int | None = None
+    kwargs: dict[str, t.Any] | None = None
 
 
 @dataclasses.dataclass
