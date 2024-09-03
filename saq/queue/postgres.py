@@ -110,6 +110,7 @@ class PostgresQueue(Queue):
         self.connection_lock = asyncio.Lock()
         self.released: list[str] = []
         self.has_sweep_lock = False
+        self.tasks: list[asyncio.Task] = []
 
     async def connect(self) -> None:
         if self.connection:
@@ -128,11 +129,11 @@ class PostgresQueue(Queue):
         # Reserve a connection for dequeue and advisory locks
         self.connection = await self.pool.getconn()
 
-        self.wait_for_job_task = asyncio.create_task(self.wait_for_job())
-        self.listen_for_enqueues_task = asyncio.create_task(self.listen_for_enqueues())
+        self.tasks.append(asyncio.create_task(self.wait_for_job()))
+        self.tasks.append(asyncio.create_task(self.listen_for_enqueues()))
         if self.poll_interval > 0:
-            self.dequeue_timer_task = asyncio.create_task(
-                self.dequeue_timer(self.poll_interval)
+            self.tasks.append(
+                asyncio.create_task(self.dequeue_timer(self.poll_interval))
             )
 
     def job_id(self, job_key: str) -> str:
@@ -151,10 +152,12 @@ class PostgresQueue(Queue):
             await self.pool.putconn(self.connection)
             self.connection = None
         await self.pool.close()
-        self.wait_for_job_task.cancel()
-        self.listen_for_enqueues_task.cancel()
-        if hasattr(self, "dequeue_timer_task"):
-            self.dequeue_timer_task.cancel()
+        for task in self.tasks:
+            task.cancel()
+        try:
+            await asyncio.gather(*self.tasks, return_exceptions=True)
+        except asyncio.exceptions.CancelledError:
+            pass
         self.has_sweep_lock = False
 
     async def info(
