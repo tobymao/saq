@@ -363,6 +363,7 @@ def start(
 
 
 async def async_check_health(queue: Queue) -> int:
+    await queue.connect()
     info = await queue.info()
     name = info.get("name")
     if name != queue.name:
