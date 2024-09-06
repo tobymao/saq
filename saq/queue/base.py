@@ -69,9 +69,8 @@ class Queue(ABC):
         self._load = load or json.loads
         self._before_enqueues: dict[int, BeforeEnqueueType] = {}
 
-    @abstractmethod
     def job_id(self, job_key: str) -> str:
-        pass
+        return job_key
 
     @abstractmethod
     async def disconnect(self) -> None:

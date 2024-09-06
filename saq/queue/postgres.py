@@ -136,9 +136,6 @@ class PostgresQueue(Queue):
                 asyncio.create_task(self.dequeue_timer(self.poll_interval))
             )
 
-    def job_id(self, job_key: str) -> str:
-        return job_key
-
     def serialize(self, job: Job) -> bytes | str:
         """Ensure serialized job is in bytes because the job column is of type BYTEA."""
         serialized = self._dump(job.to_dict())
