@@ -1,3 +1,4 @@
+import asyncio
 import typing as t
 
 import psycopg
@@ -24,12 +25,15 @@ async def create_postgres_queue(**kwargs: t.Any) -> PostgresQueue:
         ),
     )
     await queue.connect()
+    await queue.upkeep()
+    await asyncio.sleep(0.1)  # Give some time for the tasks to start
     return queue
 
 
 async def cleanup_queue(queue: Queue) -> None:
     if isinstance(queue, RedisQueue):
         await queue.redis.flushdb()
+    await queue.stop()
     await queue.disconnect()
 
 

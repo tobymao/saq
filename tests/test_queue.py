@@ -176,7 +176,7 @@ class TestQueue(unittest.IsolatedAsyncioTestCase):
 
     async def test_retry_delay(self) -> None:
         # Let's first verify how things work without a retry delay
-        worker = Worker(self.queue, functions=functions, dequeue_timeout=0.01)
+        worker = Worker(self.queue, functions=functions, dequeue_timeout=0.1)
         job = await self.enqueue("error", retries=2)
         await worker.process()
         await job.refresh()
@@ -440,12 +440,14 @@ class TestPostgresQueue(TestQueue):
         await super().asyncTearDown()
         await teardown_postgres()
 
+    @unittest.skip("Not implemented")
     async def test_job_key(self) -> None:
-        self.skipTest("Not implemented")
+        pass
 
+    @unittest.skip("Not implemented")
     @mock.patch("saq.utils.time")
     async def test_schedule(self, mock_time: MagicMock) -> None:
-        self.skipTest("Not implemented")
+        pass
 
     async def test_batch(self) -> None:
         with contextlib.suppress(ValueError):

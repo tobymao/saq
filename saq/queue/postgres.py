@@ -110,7 +110,23 @@ class PostgresQueue(Queue):
         self.connection_lock = asyncio.Lock()
         self.released: list[str] = []
         self.has_sweep_lock = False
-        self.tasks: list[asyncio.Task] = []
+
+    async def init_db(self) -> None:
+        async with self.pool.connection() as conn, conn.cursor() as cursor:
+            for statement in DDL_STATEMENTS:
+                await cursor.execute(
+                    SQL(statement).format(
+                        jobs_table=self.jobs_table, stats_table=self.stats_table
+                    )
+                )
+
+    async def upkeep(self) -> None:
+        await self.init_db()
+
+        self.tasks.add(asyncio.create_task(self.wait_for_job()))
+        self.tasks.add(asyncio.create_task(self.listen_for_enqueues()))
+        if self.poll_interval > 0:
+            self.tasks.add(asyncio.create_task(self.dequeue_timer(self.poll_interval)))
 
     async def connect(self) -> None:
         if self.connection:
@@ -119,22 +135,8 @@ class PostgresQueue(Queue):
 
         await self.pool.open()
         await self.pool.resize(min_size=self.min_size, max_size=self.max_size)
-        async with self.pool.connection() as conn, conn.cursor() as cursor:
-            for statement in DDL_STATEMENTS:
-                await cursor.execute(
-                    SQL(statement).format(
-                        jobs_table=self.jobs_table, stats_table=self.stats_table
-                    )
-                )
         # Reserve a connection for dequeue and advisory locks
         self.connection = await self.pool.getconn()
-
-        self.tasks.append(asyncio.create_task(self.wait_for_job()))
-        self.tasks.append(asyncio.create_task(self.listen_for_enqueues()))
-        if self.poll_interval > 0:
-            self.tasks.append(
-                asyncio.create_task(self.dequeue_timer(self.poll_interval))
-            )
 
     def serialize(self, job: Job) -> bytes | str:
         """Ensure serialized job is in bytes because the job column is of type BYTEA."""
@@ -144,17 +146,12 @@ class PostgresQueue(Queue):
         return serialized
 
     async def disconnect(self) -> None:
-        if self.connection:
-            await self.connection.cancel_safe()
-            await self.pool.putconn(self.connection)
-            self.connection = None
+        async with self.connection_lock:
+            if self.connection:
+                await self.connection.cancel_safe()
+                await self.pool.putconn(self.connection)
+                self.connection = None
         await self.pool.close()
-        for task in self.tasks:
-            task.cancel()
-        try:
-            await asyncio.gather(*self.tasks, return_exceptions=True)
-        except asyncio.exceptions.CancelledError:
-            pass
         self.has_sweep_lock = False
 
     async def info(

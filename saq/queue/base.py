@@ -18,7 +18,7 @@ from saq.job import (
     Status,
     get_default_job_key,
 )
-from saq.utils import now, uuid1
+from saq.utils import cancel_tasks, now, uuid1
 
 if t.TYPE_CHECKING:
     from collections.abc import AsyncIterator, Iterable, Sequence
@@ -68,6 +68,7 @@ class Queue(ABC):
         self._dump = dump or json.dumps
         self._load = load or json.loads
         self._before_enqueues: dict[int, BeforeEnqueueType] = {}
+        self.tasks: set[asyncio.Task[t.Any]] = set()
 
     def job_id(self, job_key: str) -> str:
         return job_key
@@ -156,7 +157,7 @@ class Queue(ABC):
 
     @staticmethod
     def from_url(url: str, **kwargs: t.Any) -> Queue:
-        """Create a queue with a redis url a name."""
+        """Create a queue with a Postgers or Redis url."""
         if url.startswith("redis"):
             from saq.queue.redis import RedisQueue
 
@@ -168,6 +169,15 @@ class Queue(ABC):
             return PostgresQueue.from_url(url, **kwargs)
 
         raise ValueError("URL is not valid")
+
+    async def upkeep(self) -> None:
+        """Start various upkeep tasks async."""
+
+    async def stop(self) -> None:
+        """Stop the queue and cleanup."""
+        all_tasks = list(self.tasks)
+        self.tasks.clear()
+        await cancel_tasks(all_tasks)
 
     async def connect(self) -> None:
         pass
