@@ -367,7 +367,7 @@ class PostgresQueue(Queue):
         job: Job,
         status: Status | None = None,
         scheduled: int | None = None,
-        ttl: float | None = None,
+        ttl: float | None = -1,
         connection: AsyncConnection | None = None,
     ) -> None:
         if status:
@@ -383,11 +383,18 @@ class PostgresQueue(Queue):
                 SQL(
                     dedent(
                         """
-                        UPDATE {jobs_table} SET job = %(job)s, status = %(status)s, scheduled = %(scheduled)s, ttl = %(ttl)s
+                        UPDATE {jobs_table} SET
+                          job = %(job)s
+                          ,status = %(status)s
+                          ,scheduled = %(scheduled)s
+                          {ttl}
                         WHERE key = %(key)s
                         """
                     )
-                ).format(jobs_table=self.jobs_table),
+                ).format(
+                    jobs_table=self.jobs_table,
+                    ttl=SQL(",ttl = %(ttl)s" if ttl != -1 else ""),
+                ),
                 {
                     "job": self.serialize(job),
                     "status": job.status,
@@ -420,9 +427,8 @@ class PostgresQueue(Queue):
     async def abort(self, job: Job, error: str, ttl: float = 5) -> None:
         job.error = error
         job.status = Status.ABORTING
-        job.ttl = int(seconds(now()) + ttl) + 1
 
-        await self.update(job)
+        await self.update(job, ttl=int(seconds(now()) + ttl) + 1)
 
     async def dequeue(self, timeout: float = 0) -> Job | None:
         """Wait on `self.cond` to dequeue.
@@ -552,7 +558,7 @@ class PostgresQueue(Queue):
         else:
             scheduled = job.scheduled or seconds(now())
 
-        await self.update(job, scheduled=int(scheduled))
+        await self.update(job, scheduled=int(scheduled), ttl=None)
         await self._release_job(job.key)
 
         self.retried += 1
