@@ -355,7 +355,11 @@ class PostgresQueue(Queue):
             for key in job_keys:
                 await conn.execute(SQL("LISTEN {}").format(Identifier(key)))
             await conn.commit()
-            await asyncio.wait_for(_listen(conn.notifies()), timeout)
+
+            if timeout:
+                await asyncio.wait_for(_listen(conn.notifies()), timeout)
+            else:
+                await _listen(conn.notifies())
 
     async def notify(self, job: Job, connection: AsyncConnection | None = None) -> None:
         payload = json.dumps({"key": job.key, "status": job.status})
