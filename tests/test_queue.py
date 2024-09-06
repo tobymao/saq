@@ -635,7 +635,7 @@ class TestPostgresQueue(TestQueue):
             await cursor.execute(
                 SQL(
                     """
-                SELECT ttl
+                SELECT expire_at
                 FROM {}
                 WHERE key = %s
                 """
@@ -655,7 +655,7 @@ class TestPostgresQueue(TestQueue):
             await cursor.execute(
                 SQL(
                     """
-                SELECT ttl
+                SELECT expire_at
                 FROM {}
                 WHERE key = %s
                 """
@@ -675,7 +675,7 @@ class TestPostgresQueue(TestQueue):
             await cursor.execute(
                 SQL(
                     """
-                SELECT ttl
+                SELECT expire_at
                 FROM {}
                 WHERE key = %s
                 """
@@ -694,7 +694,7 @@ class TestPostgresQueue(TestQueue):
             await cursor.execute(
                 SQL(
                     """
-                SELECT ttl
+                SELECT expire_at
                 FROM {}
                 WHERE key = %s
                 """
@@ -709,7 +709,7 @@ class TestPostgresQueue(TestQueue):
             await cursor.execute(
                 SQL(
                     """
-                SELECT ttl
+                SELECT expire_at
                 FROM {}
                 WHERE key = %s
                 """

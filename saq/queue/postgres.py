@@ -166,7 +166,7 @@ class PostgresQueue(Queue):
                     dedent(
                         """
                         SELECT worker_id, stats FROM {stats_table}
-                        WHERE %(now)s <= ttl
+                        WHERE %(now)s <= expire_at
                         """
                     )
                 ).format(stats_table=self.stats_table),
@@ -258,7 +258,7 @@ class PostgresQueue(Queue):
     async def schedule(self, lock: int = 1) -> t.Any: ...
 
     async def sweep(self, lock: int = 60, abort: float = 5.0) -> list[t.Any]:
-        """Delete jobs and stats past their TTL and sweep stuck jobs"""
+        """Delete jobs and stats past their expiration and sweep stuck jobs"""
         swept = []
 
         if not self.has_sweep_lock:
@@ -284,11 +284,11 @@ class PostgresQueue(Queue):
                 -- Delete expired jobs
                 DELETE FROM {jobs_table}
                 WHERE status IN ('aborted', 'complete', 'failed')
-                  AND {now} >= ttl;
+                  AND {now} >= expire_at;
 
                 -- Delete expired stats
                 DELETE FROM {stats_table}
-                WHERE {now} >= ttl;
+                WHERE {now} >= expire_at;
 
                 -- Fetch active and aborting jobs without advisory locks
                 WITH locks AS (
@@ -367,7 +367,7 @@ class PostgresQueue(Queue):
         job: Job,
         status: Status | None = None,
         scheduled: int | None = None,
-        ttl: float | None = -1,
+        expire_at: float | None = -1,
         connection: AsyncConnection | None = None,
     ) -> None:
         if status:
@@ -387,20 +387,22 @@ class PostgresQueue(Queue):
                           job = %(job)s
                           ,status = %(status)s
                           ,scheduled = %(scheduled)s
-                          {ttl}
+                          {expire_at}
                         WHERE key = %(key)s
                         """
                     )
                 ).format(
                     jobs_table=self.jobs_table,
-                    ttl=SQL(",ttl = %(ttl)s" if ttl != -1 else ""),
+                    expire_at=SQL(
+                        ",expire_at = %(expire_at)s" if expire_at != -1 else ""
+                    ),
                 ),
                 {
                     "job": self.serialize(job),
                     "status": job.status,
                     "key": job.key,
                     "scheduled": job.scheduled,
-                    "ttl": ttl,
+                    "expire_at": expire_at,
                 },
             )
             await self.notify(job, conn)
@@ -428,7 +430,7 @@ class PostgresQueue(Queue):
         job.error = error
         job.status = Status.ABORTING
 
-        await self.update(job, ttl=int(seconds(now()) + ttl) + 1)
+        await self.update(job, expire_at=int(seconds(now()) + ttl) + 1)
 
     async def dequeue(self, timeout: float = 0) -> Job | None:
         """Wait on `self.cond` to dequeue.
@@ -463,7 +465,7 @@ class PostgresQueue(Queue):
                         INSERT INTO {jobs_table} (key, job, queue, status, scheduled)
                         VALUES (%(key)s, %(job)s, %(queue)s, %(status)s, %(scheduled)s)
                         ON CONFLICT (key) DO UPDATE
-                        SET job = %(job)s, queue = %(queue)s, status = %(status)s, scheduled = %(scheduled)s, ttl = null
+                        SET job = %(job)s, queue = %(queue)s, status = %(status)s, scheduled = %(scheduled)s, expire_at = null
                         WHERE {jobs_table}.status IN ('aborted', 'complete', 'failed')
                           AND %(scheduled)s > {jobs_table}.scheduled
                         RETURNING job
@@ -520,17 +522,17 @@ class PostgresQueue(Queue):
                 SQL(
                     dedent(
                         """
-                        INSERT INTO {stats_table} (worker_id, stats, ttl)
-                        VALUES (%(worker_id)s, %(stats)s, %(ttl)s)
+                        INSERT INTO {stats_table} (worker_id, stats, expire_at)
+                        VALUES (%(worker_id)s, %(stats)s, %(expire_at)s)
                         ON CONFLICT (worker_id) DO UPDATE
-                        SET stats = %(stats)s, ttl = %(ttl)s
+                        SET stats = %(stats)s, expire_at = %(expire_at)s
                         """
                     )
                 ).format(stats_table=self.stats_table),
                 {
                     "worker_id": self.uuid,
                     "stats": json.dumps(stats),
-                    "ttl": seconds(now()) + ttl,
+                    "expire_at": seconds(now()) + ttl,
                 },
             )
 
@@ -558,7 +560,7 @@ class PostgresQueue(Queue):
         else:
             scheduled = job.scheduled or seconds(now())
 
-        await self.update(job, scheduled=int(scheduled), ttl=None)
+        await self.update(job, scheduled=int(scheduled), expire_at=None)
         await self._release_job(job.key)
 
         self.retried += 1
@@ -576,8 +578,10 @@ class PostgresQueue(Queue):
 
         async with self.pool.connection() as conn, conn.cursor() as cursor:
             if job.ttl >= 0:
-                ttl = seconds(now()) + job.ttl if job.ttl > 0 else None
-                await self.update(job, status=status, ttl=ttl, connection=conn)
+                expire_at = seconds(now()) + job.ttl if job.ttl > 0 else None
+                await self.update(
+                    job, status=status, expire_at=expire_at, connection=conn
+                )
             else:
                 await cursor.execute(
                     SQL(
