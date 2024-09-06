@@ -13,6 +13,7 @@ POSTGRES_TEST_SCHEMA = "test_saq"
 async def create_redis_queue(**kwargs: t.Any) -> RedisQueue:
     queue = t.cast(RedisQueue, Queue.from_url("redis://localhost:6379", **kwargs))
     await queue.connect()
+    await queue.redis.flushdb()
     return queue
 
 

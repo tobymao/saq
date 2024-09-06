@@ -245,8 +245,8 @@ class TestQueue(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await self.count("incomplete"), 4)
         jobs1 = await self.queue.schedule()
         jobs2 = await self.queue.schedule()
-        self.assertEqual(jobs1, [job1.id.encode(), job2.id.encode()])
-        self.assertIsNone(jobs2)
+        self.assertEqual(jobs1, [job1.id, job2.id])
+        self.assertEqual(jobs2, [])
         self.assertEqual(await self.count("queued"), 3)
         self.assertEqual(await self.count("incomplete"), 4)
 
@@ -411,10 +411,10 @@ class TestRedisQueue(TestQueue):
         self.assertEqual(
             set(swept),
             {
-                job1.id.encode(),
-                job2.id.encode(),
-                job3.id.encode(),
-                job4.id.encode(),
+                job1.id,
+                job2.id,
+                job3.id,
+                job4.id,
             },
         )
         await job1.refresh()
@@ -522,8 +522,8 @@ class TestPostgresQueue(TestQueue):
         self.assertEqual(
             set(swept),
             {
-                job2.id.encode(),
-                job3.id.encode(),
+                job2.id,
+                job3.id,
             },
         )
         await job1.refresh()

@@ -219,17 +219,15 @@ class Worker:
         if not jobs:
             return
 
-        aborted = await self.queue.get_abort_errors(jobs)
-
-        for job, abort in zip(jobs, aborted):
-            if not abort:
+        for job in await self.queue.jobs(job.key for job in jobs):
+            if not job or job.status != Status.ABORTING:
                 continue
 
             task_data: JobTaskContext = self.job_task_contexts.get(job, {})
             task = task_data.get("task")
 
             if task and not task.done():
-                task_data["aborted"] = abort.decode("utf-8")
+                task_data["aborted"] = job.error if job.error else ""
                 task.cancel()
                 await asyncio.gather(task, return_exceptions=True)
 

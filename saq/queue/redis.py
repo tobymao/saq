@@ -199,7 +199,7 @@ class RedisQueue(Queue):
             return await self.redis.zcard(self._incomplete)
         raise ValueError("Can't count unknown type {kind}")
 
-    async def schedule(self, lock: int = 1) -> t.Any:
+    async def schedule(self, lock: int = 1) -> t.List[str]:
         if not self._schedule_script:
             self._schedule_script = self.redis.register_script(
                 """
@@ -219,12 +219,16 @@ class RedisQueue(Queue):
                 """
             )
 
-        return await self._schedule_script(
-            keys=[self._schedule, self._incomplete, self._queued],
-            args=[lock, seconds(now())],
-        )
+        return [
+            job_id.decode("utf-8")
+            for job_id in await self._schedule_script(
+                keys=[self._schedule, self._incomplete, self._queued],
+                args=[lock, seconds(now())],
+            )
+            or []
+        ]
 
-    async def sweep(self, lock: int = 60, abort: float = 5.0) -> list[t.Any]:
+    async def sweep(self, lock: int = 60, abort: float = 5.0) -> list[str]:
         if not self._cleanup_script:
             self._cleanup_script = self.redis.register_script(
                 """
@@ -241,9 +245,12 @@ class RedisQueue(Queue):
 
         swept = []
         if job_ids:
-            for job_id, job_bytes in zip(job_ids, await self.redis.mget(job_ids)):
-                job = self.deserialize(job_bytes)
-
+            for job_id, job in zip(
+                job_ids,
+                await self.jobs(
+                    [self.job_key_from_id(job_id.decode("utf-8")) for job_id in job_ids]
+                ),
+            ):
                 if job:
                     # in rare cases a sweep may occur between a dequeue and actual processing.
                     # in that case, the job status is still set to queued, but only because it hasn't
@@ -256,21 +263,21 @@ class RedisQueue(Queue):
                         stuck = job.status != Status.ACTIVE or job.stuck
 
                     if stuck:
-                        swept.append(job_id)
-                        await self.abort(job, error="swept")
-
                         logger.info(
                             "Sweeping job %s",
                             job.info(logger.isEnabledFor(logging.DEBUG)),
                         )
+                        swept.append(job_id)
+
+                        await self.abort(job, error="swept")
+
+                        try:
+                            await job.refresh(abort)
+                        except asyncio.TimeoutError:
+                            logger.info("Could not abort job %s", job_id)
 
                         if job.retryable:
-                            try:
-                                await job.refresh(abort)
-                            except asyncio.TimeoutError:
-                                logger.info("Could not abort job %s", job_id)
-                            finally:
-                                await self.retry(job, error="swept")
+                            await self.retry(job, error="swept")
                         else:
                             await job.finish(Status.ABORTED, error="swept")
                 else:
@@ -284,7 +291,7 @@ class RedisQueue(Queue):
                         )
                     logger.info("Sweeping missing job %s", job_id)
 
-        return swept
+        return [job_id.decode("utf-8") for job_id in swept]
 
     async def notify(self, job: Job) -> None:
         await self.redis.publish(job.id, job.status)
@@ -298,6 +305,12 @@ class RedisQueue(Queue):
         job_id = self.job_id(job_key)
         return await self._get_job_by_id(job_id)
 
+    async def jobs(self, job_keys: Iterable[str]) -> t.List[Job | None]:
+        return [
+            self.deserialize(job_bytes)
+            for job_bytes in await self.redis.mget(self.job_id(key) for key in job_keys)
+        ]
+
     async def _get_job_by_id(self, job_id: bytes | str) -> Job | None:
         async with self._op_sem:
             return self.deserialize(await self.redis.get(job_id))
@@ -305,11 +318,15 @@ class RedisQueue(Queue):
     async def abort(self, job: Job, error: str, ttl: float = 5) -> None:
         async with self._op_sem:
             async with self.redis.pipeline(transaction=True) as pipe:
+                job.status = Status.ABORTING
+                job.error = error
+
                 dequeued, *_ = await (
                     pipe.lrem(self._queued, 0, job.id)
                     .zrem(self._incomplete, job.id)
-                    .expire(job.id, ttl + 1)
+                    .set(job.id, self.serialize(job))
                     .setex(job.abort_id, ttl, error)
+                    .publish(job.id, job.status)
                     .execute()
                 )
 
@@ -381,11 +398,9 @@ class RedisQueue(Queue):
         finally:
             await self._pubsub.unsubscribe(queue)
 
-    async def get_abort_errors(self, jobs: Iterable[Job]) -> list[bytes | None]:
-        return await self.redis.mget(job.abort_id for job in jobs)
-
     async def finish_abort(self, job: Job) -> None:
         await self.redis.delete(job.abort_id)
+        await super().finish_abort(job)
 
     async def write_stats(self, stats: QueueStats, ttl: int) -> None:
         """
@@ -419,9 +434,7 @@ class RedisQueue(Queue):
                 pipe = pipe.zadd(self._incomplete, {job_id: job.scheduled})
                 pipe = pipe.rpush(self._queued, job_id)
             await pipe.set(job_id, self.serialize(job)).execute()
-            self.retried += 1
             await self.notify(job)
-            logger.info("Retrying %s", job.info(logger.isEnabledFor(logging.DEBUG)))
 
     async def _finish(
         self,
@@ -446,7 +459,6 @@ class RedisQueue(Queue):
             await pipe.execute()
 
             await self.notify(job)
-            logger.info("Finished %s", job.info(logger.isEnabledFor(logging.DEBUG)))
 
     async def _enqueue(self, job: Job) -> Job | None:
         if not self._enqueue_script:

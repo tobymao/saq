@@ -12,6 +12,7 @@ disable=
     no-self-argument,
     too-few-public-methods,
     too-many-arguments,
+    too-many-branches,
     too-many-lines,
     too-many-nested-blocks,
     too-many-public-methods,

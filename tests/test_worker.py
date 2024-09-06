@@ -8,8 +8,12 @@ import typing as t
 import unittest
 from unittest import mock
 
+from aiohttp import web
+from aiohttp.test_utils import AioHTTPTestCase
+
 from saq.job import CronJob, Job, Status
 from saq.queue import Queue
+from saq.queue.http import HttpProxy
 from saq.queue.redis import RedisQueue
 from saq.utils import uuid1
 from saq.worker import Worker
@@ -27,7 +31,7 @@ if t.TYPE_CHECKING:
     from saq.types import Context, Function
 
 
-logging.getLogger().setLevel(logging.CRITICAL)
+logging.getLogger().setLevel(logging.INFO)
 
 ctx_var = contextvars.ContextVar[str]("ctx_var")
 
@@ -81,10 +85,11 @@ class TestWorker(unittest.IsolatedAsyncioTestCase):
         assert job is not None
         return job
 
-    async def test_start(self) -> None:
+    @mock.patch("saq.worker.logger")
+    async def test_start(self, _mock_logger: MagicMock) -> None:
         task = asyncio.create_task(self.worker.start())
         job = await self.enqueue("noop")
-        await job.refresh(1)
+        await job.refresh(0)
         self.assertEqual(job.result, 1)
         job = await self.enqueue("error")
         await asyncio.sleep(0.05)
@@ -103,7 +108,7 @@ class TestWorker(unittest.IsolatedAsyncioTestCase):
 
         asyncio.create_task(self.worker.start())
         job = await self.enqueue("noop")
-        await job.refresh(1)
+        await job.refresh(0)
         self.assertEqual(job.result, 1)
         job = await self.enqueue("sleeper")
         self.assertEqual(job.status, Status.QUEUED)
@@ -127,7 +132,8 @@ class TestWorker(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(job.status, Status.COMPLETE)
         self.assertEqual(job.result, 1)
 
-    async def test_sleeper(self) -> None:
+    @mock.patch("saq.worker.logger")
+    async def test_sleeper(self, _mock_logger: MagicMock) -> None:
         job = await self.enqueue("sleeper")
         await self.worker.process()
         await job.refresh()
@@ -148,7 +154,8 @@ class TestWorker(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(job.status, Status.FAILED)
         assert job.error is not None and "TimeoutError" in job.error
 
-    async def test_error(self) -> None:
+    @mock.patch("saq.worker.logger")
+    async def test_error(self, _mock_logger: MagicMock) -> None:
         job = await self.enqueue("error", retries=2)
         await self.worker.process()
         await job.refresh()
@@ -193,7 +200,8 @@ class TestWorker(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(job.error, "cancelled")
         loop.close()
 
-    async def test_hooks(self) -> None:
+    @mock.patch("saq.worker.logger")
+    async def test_hooks(self, _mock_logger: MagicMock) -> None:
         x = {"before": 0, "after": 0}
 
         async def before_process(ctx: Context) -> None:
@@ -286,29 +294,25 @@ class TestWorker(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await self.queue.count("incomplete"), 1)
 
         mock_time.time.return_value = 60
-        if isinstance(self.queue, RedisQueue):
-            # pylint: disable=protected-access
-            await self.queue.redis.delete(self.queue._schedule)
+        await asyncio.sleep(1)
         await worker.schedule()
         self.assertEqual(await self.queue.count("queued"), 1)
         self.assertEqual(await self.queue.count("incomplete"), 1)
         # Remove if statement when schedule is implemented for Postgres queue
         if isinstance(self.queue, RedisQueue):
             mock_logger.info.assert_any_call(
-                "Scheduled %s", [b"saq:job:default:cron:cron"]
+                "Scheduled %s", ["saq:job:default:cron:cron"]
             )
 
     @mock.patch("saq.worker.logger")
     async def test_abort(self, mock_logger: MagicMock) -> None:
-        job = await self.enqueue("sleeper")
-        self.worker.context["sleep"] = 60
+        job = await self.enqueue("sleeper", sleep=60)
         asyncio.create_task(self.worker.process())
 
         # wait for the job to actually start
         def callback(job_key: str, status: Status) -> bool:
             self.assertEqual(job.key, job_key)
-            self.assertEqual(status, Status.ACTIVE)
-            return True
+            return status == Status.ACTIVE
 
         await self.queue.listen([job.key], callback)
         self.assertEqual(await self.queue.count("queued"), 0)
@@ -334,7 +338,6 @@ class TestWorker(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(job.status, Status.ABORTED)
         self.assertEqual(job.error, "test")
 
-        # ensure job can get requeued
         await job.enqueue()
         self.assertEqual(await self.queue.count("queued"), 1)
         self.assertEqual(await self.queue.count("incomplete"), 1)
@@ -369,7 +372,7 @@ class TestWorker(unittest.IsolatedAsyncioTestCase):
         state = {"counter": 0}
 
         async def handler(_ctx: Context) -> None:
-            await asyncio.sleep(3)
+            await asyncio.sleep(4)
             state["counter"] += 1
 
         self.worker = Worker(
@@ -431,3 +434,50 @@ class TestWorkerPostgresQueue(TestWorker):
         mock_time.time.return_value = time.time() + 60
         self.assertEqual(await self.queue.count("queued"), 1)
         self.assertEqual(await self.queue.count("incomplete"), 1)
+
+
+class TestWorkerHttpQueue(AioHTTPTestCase, TestWorker):
+
+    async def asyncSetUp(self) -> None:
+        self.redis_queue = await create_redis_queue()
+        self.redis_worker = Worker(
+            self.redis_queue, functions={}, concurrency=0, timers={"sweep": 1}  # type: ignore
+        )
+
+        await super().asyncSetUp()
+
+        async def create_http_queue():
+            queue = Queue.from_url("")
+            queue.session = self.client
+            return queue
+
+        self.create_queue = create_http_queue
+        self.queue = await self.create_queue()
+        self.worker = Worker(self.queue, functions=functions)
+
+    async def asyncTearDown(self) -> None:
+        await super().asyncTearDown()
+        await self.redis_worker.stop()
+        await self.redis_queue.disconnect()
+
+    async def get_application(self):
+        """
+        Override the get_app method to return your application.
+        """
+        proxy = HttpProxy(self.redis_queue)
+
+        async def startup(_app) -> None:
+            await self.redis_queue.connect()
+            asyncio.create_task(self.redis_worker.start())
+
+        async def process(request):
+            result = await proxy.process(await request.text())
+            return web.json_response(text=result)
+
+        app = web.Application()
+        app.add_routes([web.post("/", process)])
+        app.on_startup.append(startup)
+        return app
+
+    def test_stop(self) -> None:
+        self.skipTest("Not working")

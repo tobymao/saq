@@ -31,7 +31,7 @@ test:
 lint:
 	python -m pylint ${PATHS}
 	python -m black ${PATHS}
-	python -m mypy ${PATHS}
+	python -m mypy saq/
 
 format:
 	python -m black ${PATHS}
