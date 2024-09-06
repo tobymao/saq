@@ -16,7 +16,7 @@ from croniter import croniter
 
 from saq.job import Status
 from saq.queue import Queue
-from saq.utils import millis, now, seconds
+from saq.utils import cancel_tasks, millis, now, seconds
 
 if t.TYPE_CHECKING:
     from asyncio import Task
@@ -159,9 +159,8 @@ class Worker:
         self.event.set()
         all_tasks = list(self.tasks)
         self.tasks.clear()
-        for task in all_tasks:
-            task.cancel()
-        await asyncio.gather(*all_tasks, return_exceptions=True)
+        await cancel_tasks(all_tasks)
+        await self.queue.stop()
 
     async def schedule(self, lock: int = 1) -> None:
         for cron_job in self.cron_jobs:
@@ -197,6 +196,7 @@ class Worker:
 
                 await asyncio.sleep(sleep)
 
+        await self.queue.upkeep()
         return [
             asyncio.create_task(poll(self.abort, self.timers["abort"])),
             asyncio.create_task(poll(self.schedule, self.timers["schedule"])),
@@ -204,7 +204,6 @@ class Worker:
             asyncio.create_task(
                 poll(self.queue.stats, self.timers["stats"], self.timers["stats"] + 1)
             ),
-            *(await self.queue.upkeep()),
         ]
 
     async def abort(self, abort_threshold: float) -> None:

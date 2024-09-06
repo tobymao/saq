@@ -33,10 +33,7 @@ async def create_postgres_queue(**kwargs: t.Any) -> PostgresQueue:
 async def cleanup_queue(queue: Queue) -> None:
     if isinstance(queue, RedisQueue):
         await queue.redis.flushdb()
-    for task in queue.tasks:
-        task.cancel()
-    await asyncio.gather(*queue.tasks, return_exceptions=True)
-    queue.tasks.clear()
+    await queue.stop()
     await queue.disconnect()
 
 

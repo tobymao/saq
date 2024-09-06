@@ -4,9 +4,14 @@ Utils
 
 from __future__ import annotations
 
+import asyncio
 import time
+import typing as t
 import uuid
 from random import random
+
+if t.TYPE_CHECKING:
+    from collections.abc import Iterable
 
 
 def now() -> int:
@@ -53,3 +58,10 @@ def exponential_backoff(
     if jitter:
         backoff = backoff * random()
     return backoff
+
+
+async def cancel_tasks(tasks: Iterable[asyncio.Task]) -> None:
+    """Cancel tasks and wait for all of them to finish"""
+    for task in tasks:
+        task.cancel()
+    await asyncio.gather(*tasks, return_exceptions=True)
