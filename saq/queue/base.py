@@ -170,9 +170,8 @@ class Queue(ABC):
 
         raise ValueError("URL is not valid")
 
-    async def upkeep(self) -> set[asyncio.Task[None]]:
+    async def upkeep(self) -> None:
         """Start various upkeep tasks async."""
-        return set()
 
     async def stop(self) -> None:
         """Stop the queue and cleanup."""

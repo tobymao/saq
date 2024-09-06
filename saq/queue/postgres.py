@@ -120,14 +120,13 @@ class PostgresQueue(Queue):
                     )
                 )
 
-    async def upkeep(self) -> set[asyncio.Task[None]]:
+    async def upkeep(self) -> None:
         await self.init_db()
 
         self.tasks.add(asyncio.create_task(self.wait_for_job()))
         self.tasks.add(asyncio.create_task(self.listen_for_enqueues()))
         if self.poll_interval > 0:
             self.tasks.add(asyncio.create_task(self.dequeue_timer(self.poll_interval)))
-        return self.tasks
 
     async def connect(self) -> None:
         if self.connection:
