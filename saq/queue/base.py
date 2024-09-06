@@ -68,6 +68,7 @@ class Queue(ABC):
         self._dump = dump or json.dumps
         self._load = load or json.loads
         self._before_enqueues: dict[int, BeforeEnqueueType] = {}
+        self.tasks: set[asyncio.Task[t.Any]] = set()
 
     def job_id(self, job_key: str) -> str:
         return job_key
@@ -168,6 +169,9 @@ class Queue(ABC):
             return PostgresQueue.from_url(url, **kwargs)
 
         raise ValueError("URL is not valid")
+
+    async def upkeep(self) -> set[asyncio.Task[None]]:
+        return set()
 
     async def connect(self) -> None:
         pass

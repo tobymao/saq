@@ -128,8 +128,6 @@ class Worker:
         )
 
         try:
-            await self.queue.connect()
-
             self.event = asyncio.Event()
             loop = asyncio.get_running_loop()
 
@@ -206,6 +204,7 @@ class Worker:
             asyncio.create_task(
                 poll(self.queue.stats, self.timers["stats"], self.timers["stats"] + 1)
             ),
+            *(await self.queue.upkeep()),
         ]
 
     async def abort(self, abort_threshold: float) -> None:
@@ -341,6 +340,13 @@ def start(
     loop = asyncio.new_event_loop()
     worker = Worker(**settings_obj)
 
+    async def worker_start() -> None:
+        try:
+            await worker.queue.connect()
+            await worker.start()
+        finally:
+            await worker.queue.disconnect()
+
     if web:
         import aiohttp.web
 
@@ -356,10 +362,10 @@ def start(
         app = create_app(queues)
         app.on_shutdown.append(shutdown)
 
-        loop.create_task(worker.start())
+        loop.create_task(worker_start())
         aiohttp.web.run_app(app, port=port, loop=loop)
     else:
-        loop.run_until_complete(worker.start())
+        loop.run_until_complete(worker_start())
 
 
 async def async_check_health(queue: Queue) -> int:

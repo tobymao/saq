@@ -345,8 +345,9 @@ class TestWorker(unittest.IsolatedAsyncioTestCase):
             ctx_var.set("123")
 
         self.worker.before_process = before_process
-        asyncio.create_task(self.worker.start())
+        task = asyncio.create_task(self.worker.start())
         self.assertEqual(await self.queue.apply("sync_echo_ctx"), "123")
+        task.cancel()
 
     async def test_propagation(self) -> None:
         async def before_process(ctx: Context) -> None:
