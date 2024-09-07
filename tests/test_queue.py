@@ -626,3 +626,97 @@ class TestPostgresQueue(TestQueue):
 
         dequeued_job = await self.dequeue()
         self.assertEqual(dequeued_job, job)
+
+    @mock.patch("saq.utils.time")
+    async def test_finish_ttl_positive(self, mock_time: MagicMock) -> None:
+        mock_time.time.return_value = 0
+        job = await self.enqueue("test", ttl=5)
+        await self.dequeue()
+        await self.finish(job, Status.COMPLETE)
+        async with self.queue.pool.connection() as conn, conn.cursor() as cursor:
+            await cursor.execute(
+                SQL(
+                    """
+                SELECT expire_at
+                FROM {}
+                WHERE key = %s
+                """
+                ).format(self.queue.jobs_table),
+                (job.key,),
+            )
+            result = await cursor.fetchone()
+            self.assertEqual(result, (5,))
+
+    @mock.patch("saq.utils.time")
+    async def test_finish_ttl_neutral(self, mock_time: MagicMock) -> None:
+        mock_time.time.return_value = 0
+        job = await self.enqueue("test", ttl=0)
+        await self.dequeue()
+        await self.finish(job, Status.COMPLETE)
+        async with self.queue.pool.connection() as conn, conn.cursor() as cursor:
+            await cursor.execute(
+                SQL(
+                    """
+                SELECT expire_at
+                FROM {}
+                WHERE key = %s
+                """
+                ).format(self.queue.jobs_table),
+                (job.key,),
+            )
+            result = await cursor.fetchone()
+            self.assertEqual(result, (None,))
+
+    @mock.patch("saq.utils.time")
+    async def test_finish_ttl_negative(self, mock_time: MagicMock) -> None:
+        mock_time.time.return_value = 0
+        job = await self.enqueue("test", ttl=-1)
+        await self.dequeue()
+        await self.finish(job, Status.COMPLETE)
+        async with self.queue.pool.connection() as conn, conn.cursor() as cursor:
+            await cursor.execute(
+                SQL(
+                    """
+                SELECT expire_at
+                FROM {}
+                WHERE key = %s
+                """
+                ).format(self.queue.jobs_table),
+                (job.key,),
+            )
+            result = await cursor.fetchone()
+            self.assertIsNone(result)
+
+    @mock.patch("saq.utils.time")
+    async def test_retry_abort_ttl(self, mock_time: MagicMock) -> None:
+        mock_time.time.return_value = 0
+        job = await self.enqueue("test", retries=2)
+        await self.queue.abort(job, "Abort", ttl=10)
+        async with self.queue.pool.connection() as conn, conn.cursor() as cursor:
+            await cursor.execute(
+                SQL(
+                    """
+                SELECT expire_at
+                FROM {}
+                WHERE key = %s
+                """
+                ).format(self.queue.jobs_table),
+                (job.key,),
+            )
+            result = await cursor.fetchone()
+            self.assertEqual(result, (11,))
+
+        await self.queue.retry(job, None)
+        async with self.queue.pool.connection() as conn, conn.cursor() as cursor:
+            await cursor.execute(
+                SQL(
+                    """
+                SELECT expire_at
+                FROM {}
+                WHERE key = %s
+                """
+                ).format(self.queue.jobs_table),
+                (job.key,),
+            )
+            result = await cursor.fetchone()
+            self.assertEqual(result, (None,))

@@ -7,7 +7,7 @@ CREATE TABLE IF NOT EXISTS {jobs_table} (
     queue TEXT,
     status TEXT,
     scheduled BIGINT,
-    ttl BIGINT
+    expire_at BIGINT
 );
 """
 
@@ -19,7 +19,7 @@ CREATE_STATS_TABLE = """
 CREATE TABLE IF NOT EXISTS {stats_table} (
     worker_id TEXT PRIMARY KEY,
     stats JSONB,
-    ttl BIGINT
+    expire_at BIGINT
 );
 """
 
