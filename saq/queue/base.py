@@ -87,21 +87,11 @@ class Queue(ABC):
     async def count(self, kind: CountKind) -> int:
         pass
 
-    @abstractmethod
-    async def schedule(self, lock: int = 1) -> t.Any:
-        pass
+    async def schedule(self, _lock: int = 1) -> t.List[str]:
+        return []
 
     @abstractmethod
-    async def sweep(self, lock: int = 60, abort: float = 5.0) -> list[t.Any]:
-        pass
-
-    @abstractmethod
-    async def listen(
-        self,
-        job_keys: Iterable[str],
-        callback: ListenCallback,
-        timeout: float | None = 10,
-    ) -> None:
+    async def sweep(self, lock: int = 60, abort: float = 5.0) -> list[str]:
         pass
 
     @abstractmethod
@@ -117,6 +107,10 @@ class Queue(ABC):
         pass
 
     @abstractmethod
+    async def jobs(self, job_keys: t.Iterable[str]) -> t.List[Job | None]:
+        pass
+
+    @abstractmethod
     async def abort(self, job: Job, error: str, ttl: float = 5) -> None:
         pass
 
@@ -124,13 +118,8 @@ class Queue(ABC):
     async def dequeue(self, timeout: float = 0) -> Job | None:
         pass
 
-    @abstractmethod
-    async def get_abort_errors(self, jobs: Iterable[Job]) -> list[bytes | None]:
-        pass
-
-    @abstractmethod
     async def finish_abort(self, job: Job) -> None:
-        pass
+        await job.finish(Status.ABORTED, error=job.error)
 
     @abstractmethod
     async def write_stats(self, stats: QueueStats, ttl: int) -> None:
@@ -168,7 +157,9 @@ class Queue(ABC):
 
             return PostgresQueue.from_url(url, **kwargs)
 
-        raise ValueError("URL is not valid")
+        from saq.queue.http import HttpQueue
+
+        return HttpQueue.from_url(url, **kwargs)
 
     async def upkeep(self) -> None:
         """Start various upkeep tasks async."""
@@ -185,11 +176,11 @@ class Queue(ABC):
     def serialize(self, job: Job) -> bytes | str:
         return self._dump(job.to_dict())
 
-    def deserialize(self, job_bytes: bytes | None) -> Job | None:
-        if not job_bytes:
+    def deserialize(self, payload: dict | str | bytes | None) -> Job | None:
+        if not payload:
             return None
 
-        job_dict = self._load(job_bytes)
+        job_dict = payload if isinstance(payload, dict) else self._load(payload)
         if job_dict.pop("queue") != self.name:
             raise ValueError(f"Job {job_dict} fetched by wrong queue: {self.name}")
         return Job(**job_dict, queue=self)
@@ -221,6 +212,8 @@ class Queue(ABC):
         job.touched = now()
 
         await self._retry(job=job, error=error)
+        self.retried += 1
+        logger.info("Retrying %s", job.info(logger.isEnabledFor(logging.DEBUG)))
 
     async def finish(
         self,
@@ -239,6 +232,7 @@ class Queue(ABC):
             job.progress = 1.0
 
         await self._finish(job=job, status=status, result=result, error=error)
+        logger.info("Finished %s", job.info(logger.isEnabledFor(logging.DEBUG)))
 
         if status == Status.COMPLETE:
             self.complete += 1
@@ -291,6 +285,30 @@ class Queue(ABC):
         await self._before_enqueue(job)
 
         return await self._enqueue(job)
+
+    async def listen(
+        self,
+        job_keys: Iterable[str],
+        callback: ListenCallback,
+        timeout: float | None = 10,
+    ) -> None:
+        async def listen() -> None:
+            while True:
+                for job in await self.jobs(job_keys):
+                    if not job:
+                        continue
+                    if asyncio.iscoroutinefunction(callback):
+                        stop = await callback(job.id, job.status)
+                    else:
+                        stop = callback(job.id, job.status)
+                    if stop:
+                        return
+                await asyncio.sleep(1)
+
+        if timeout:
+            await asyncio.wait_for(listen(), timeout)
+        else:
+            await listen()
 
     async def apply(
         self, job_or_func: str, timeout: float | None = None, **kwargs: t.Any
@@ -366,7 +384,7 @@ class Queue(ABC):
         job_keys = [key["key"] for key in iter_kwargs]
         pending_job_keys = set(job_keys)
 
-        async def callback(job_key: str, status: Status) -> bool:
+        def callback(job_key: str, status: Status) -> bool:
             if status in TERMINAL_STATUSES:
                 pending_job_keys.discard(job_key)
 

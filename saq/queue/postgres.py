@@ -35,7 +35,7 @@ if t.TYPE_CHECKING:
     )
 
 try:
-    from psycopg import AsyncConnection, Notify
+    from psycopg import AsyncConnection
     from psycopg.sql import Identifier, SQL
     from psycopg_pool import AsyncConnectionPool
 except ModuleNotFoundError as e:
@@ -252,9 +252,7 @@ class PostgresQueue(Queue):
             assert result
             return result[0]
 
-    async def schedule(self, lock: int = 1) -> t.Any: ...
-
-    async def sweep(self, lock: int = 60, abort: float = 5.0) -> list[t.Any]:
+    async def sweep(self, lock: int = 60, abort: float = 5.0) -> list[str]:
         """Delete jobs and stats past their expiration and sweep stuck jobs"""
         swept = []
 
@@ -316,7 +314,7 @@ class PostgresQueue(Queue):
                 job = self.deserialize(result[0])
                 if not job:
                     continue
-                swept.append(job.key.encode("utf-8"))
+                swept.append(job.key)
                 if job.retryable:
                     await self.retry(job, error="swept")
                 else:
@@ -332,7 +330,7 @@ class PostgresQueue(Queue):
         if not job_keys:
             return
 
-        async def _listen(gen: t.AsyncGenerator[Notify]) -> None:
+        async def _listen(gen: t.AsyncGenerator) -> None:
             async for notify in gen:
                 payload = json.loads(notify.payload)
                 key = payload["key"]
@@ -423,6 +421,25 @@ class PostgresQueue(Queue):
                 return self.deserialize(job[0])
         return None
 
+    async def jobs(self, job_keys: Iterable[str]) -> t.List[Job | None]:
+        keys = list(job_keys)
+
+        async with self.pool.connection() as conn, conn.cursor() as cursor:
+            await cursor.execute(
+                SQL(
+                    dedent(
+                        """
+                        SELECT key, job
+                        FROM {jobs_table}
+                        WHERE key = ANY(%(keys)s)
+                        """
+                    )
+                ).format(jobs_table=self.jobs_table),
+                {"keys": keys},
+            )
+            results: dict[str, bytes | None] = dict(await cursor.fetchmany())
+        return [self.deserialize(results.get(key)) for key in keys]
+
     async def abort(self, job: Job, error: str, ttl: float = 5) -> None:
         job.error = error
         job.status = Status.ABORTING
@@ -486,33 +503,6 @@ class PostgresQueue(Queue):
         logger.info("Enqueuing %s", job.info(logger.isEnabledFor(logging.DEBUG)))
         return job
 
-    async def get_abort_errors(self, jobs: Iterable[Job]) -> list[bytes | None]:
-        async with self.pool.connection() as conn, conn.cursor() as cursor:
-            await cursor.execute(
-                SQL(
-                    dedent(
-                        """
-                        SELECT key, job
-                        FROM {jobs_table}
-                        WHERE key = ANY(%(keys)s)
-                        """
-                    )
-                ).format(jobs_table=self.jobs_table),
-                {"keys": [job.key for job in jobs]},
-            )
-            results: dict[str, bytes | None] = dict(await cursor.fetchmany())
-        errors = []
-        for job in jobs:
-            result = self.deserialize(results.get(job.key))
-            error = None
-            if result:
-                error = result.error
-            errors.append(error.encode("utf-8") if error else None)
-        return errors
-
-    async def finish_abort(self, job: Job) -> None:
-        await job.finish(Status.ABORTED, error=job.error)
-
     async def write_stats(self, stats: QueueStats, ttl: int) -> None:
         async with self.pool.connection() as conn:
             await conn.execute(
@@ -560,9 +550,6 @@ class PostgresQueue(Queue):
         await self.update(job, scheduled=int(scheduled), expire_at=None)
         await self._release_job(job.key)
 
-        self.retried += 1
-        logger.info("Retrying %s", job.info(logger.isEnabledFor(logging.DEBUG)))
-
     async def _finish(
         self,
         job: Job,
@@ -598,8 +585,6 @@ class PostgresQueue(Queue):
             except ValueError:
                 # Error because task_done() called too many times, which happens in unit tests
                 pass
-
-            logger.info("Finished %s", job.info(logger.isEnabledFor(logging.DEBUG)))
 
     async def _dequeue(self) -> list[Job]:
         if not self.waiting:
@@ -657,15 +642,13 @@ class PostgresQueue(Queue):
             )
 
     @asynccontextmanager
-    async def _get_connection(self) -> t.AsyncGenerator[AsyncConnection]:
+    async def _get_connection(self) -> t.AsyncGenerator:
         assert self.connection
         async with self.connection_lock:
             yield self.connection
 
     @asynccontextmanager
-    async def nullcontext(
-        self, enter_result: t.Any | None = None
-    ) -> t.AsyncGenerator[t.Any]:
+    async def nullcontext(self, enter_result: t.Any | None = None) -> t.AsyncGenerator:
         """Async version of contextlib.nullcontext
 
         Async support has been added to contextlib.nullcontext in Python 3.10.

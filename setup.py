@@ -36,6 +36,7 @@ setup(
     ],
     extras_require={
         "hiredis": ["redis[hiredis]>=4.2.0"],
+        "http": ["aiohttp"],
         "postgres": ["psycopg[pool]"],
         "redis": ["redis>=4.2,<6.0"],
         "web": ["aiohttp", "aiohttp_basicauth"],

@@ -181,6 +181,9 @@ class Job:
     def __hash__(self) -> int:
         return hash(self.key)
 
+    def __eq__(self, other: t.Any) -> bool:
+        return isinstance(other, Job) and self.key == other.key
+
     @property
     def id(self) -> str:
         """Full Job ID"""
@@ -307,7 +310,7 @@ class Job:
 
         if until_complete is not None and not self.completed:
 
-            async def callback(_id: str, status: Status) -> bool:
+            def callback(_id: str, status: Status) -> bool:
                 return status in TERMINAL_STATUSES
 
             await self.get_queue().listen([self.key], callback, until_complete)
