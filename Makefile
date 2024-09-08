@@ -10,7 +10,6 @@ help:
 	@echo  " test		Runs all tests"
 	@echo  " lint		Reports all linter violations"
 	@echo  " ci		Runs lints & tests (as a full CI run would)"
-	@echo  " format		Tries to auto-fix simpler linting issues"
 	@echo  " devdocs	Builds docs and hosts them on port 8000"
 
 up:
@@ -29,12 +28,7 @@ test:
 	@python -m coverage report
 
 lint:
-	python -m pylint ${PATHS}
-	python -m black ${PATHS}
-	python -m mypy saq/
-
-format:
-	python -m black ${PATHS}
+	pre-commit run --all-files
 
 ci: deps lint test
 

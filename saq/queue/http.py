@@ -17,9 +17,6 @@ if t.TYPE_CHECKING:
 
     from saq.types import (
         CountKind,
-        ListenCallback,
-        DumpType,
-        LoadType,
         QueueInfo,
         QueueStats,
     )
@@ -88,14 +85,10 @@ class HttpProxy:
             if kind == "schedule":
                 return json.dumps(await self.queue.schedule(req["lock"]))
             if kind == "sweep":
-                return json.dumps(
-                    await self.queue.sweep(lock=req["lock"], abort=req["abort"])
-                )
+                return json.dumps(await self.queue.sweep(lock=req["lock"], abort=req["abort"]))
             if kind == "info":
                 return json.dumps(
-                    await self.queue.info(
-                        jobs=req["job"], offset=req["offset"], limit=req["limit"]
-                    )
+                    await self.queue.info(jobs=req["job"], offset=req["offset"], limit=req["limit"])
                 )
             if kind == "write_stats":
                 await self.queue.write_stats(req["stats"], ttl=req["ttl"])
@@ -142,9 +135,7 @@ class HttpQueue(Queue):
         assert self.session
 
         try:
-            async with self.session.post(
-                self.url, json={"kind": kind, **kwargs}
-            ) as resp:
+            async with self.session.post(self.url, json={"kind": kind, **kwargs}) as resp:
                 return await resp.text()
         except Exception as e:
             logger.debug(e)
@@ -180,9 +171,7 @@ class HttpQueue(Queue):
     async def jobs(self, job_keys: Iterable[str]) -> t.List[Job | None]:
         return [
             self.deserialize(job_dict)
-            for job_dict in json.loads(
-                await self._send("jobs", job_keys=list(job_keys))
-            )
+            for job_dict in json.loads(await self._send("jobs", job_keys=list(job_keys)))
         ]
 
     async def abort(self, job: Job, error: str, ttl: float = 5) -> None:
@@ -197,12 +186,8 @@ class HttpQueue(Queue):
     async def write_stats(self, stats: QueueStats, ttl: int) -> None:
         await self._send("write_stats", stats=stats, ttl=ttl)
 
-    async def info(
-        self, jobs: bool = False, offset: int = 0, limit: int = 10
-    ) -> QueueInfo:
-        return json.loads(
-            await self._send("info", jobs=jobs, offset=offset, limit=limit)
-        )
+    async def info(self, jobs: bool = False, offset: int = 0, limit: int = 10) -> QueueInfo:
+        return json.loads(await self._send("info", jobs=jobs, offset=offset, limit=limit))
 
     async def count(self, kind: CountKind) -> int:
         return int(await self._send("count", count_kind=kind))

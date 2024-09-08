@@ -123,9 +123,7 @@ class Worker:
     async def start(self) -> None:
         """Start processing jobs and upkeep tasks."""
         logger.info("Worker starting: %s", repr(self.queue))
-        logger.debug(
-            "Registered functions:\n%s", "\n".join(f"  {key}" for key in self.functions)
-        )
+        logger.debug("Registered functions:\n%s", "\n".join(f"  {key}" for key in self.functions))
 
         try:
             self.event = asyncio.Event()
@@ -211,9 +209,7 @@ class Worker:
             return job.duration("running") or 0
 
         jobs = [
-            job
-            for job in self.job_task_contexts
-            if get_duration(job) >= millis(abort_threshold)
+            job for job in self.job_task_contexts if get_duration(job) >= millis(abort_threshold)
         ]
 
         if not jobs:
@@ -235,7 +231,6 @@ class Worker:
             logger.info("Aborting %s", job.id)
 
     async def process(self) -> None:
-        # pylint: disable=too-many-branches
         context: Context | None = None
         job: Job | None = None
 

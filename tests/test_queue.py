@@ -110,9 +110,7 @@ class TestQueue(unittest.IsolatedAsyncioTestCase):
         await task
 
     async def test_dequeue_fifo(self) -> None:
-        await cleanup_queue(
-            self.queue  # pylint: disable=access-member-before-definition
-        )
+        await cleanup_queue(self.queue)
         self.queue = await self.create_queue()
         job = await self.enqueue("test")
         job_second = await self.enqueue("test_second")
@@ -286,9 +284,7 @@ class TestQueue(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await self.queue.map("echo", []), [])
         self.assertEqual(await self.queue.map("echo", [{"a": 1}]), [1])
         self.assertEqual(await self.queue.map("echo", [{"a": 1}, {"a": 2}]), [1, 2])
-        self.assertEqual(
-            await self.queue.map("echo", [{}, {"a": 2}], timeout=10, a=3), [3, 2]
-        )
+        self.assertEqual(await self.queue.map("echo", [{}, {"a": 2}], timeout=10, a=3), [3, 2])
         with self.assertRaises(JobError):
             await self.queue.map("error", [{}, {}])
 
@@ -402,7 +398,6 @@ class TestRedisQueue(TestQueue):
         # missing job
         job4 = Job(function="", queue=self.queue)
 
-        # pylint: disable=protected-access
         await self.queue.redis.lpush(self.queue._active, job4.id)
 
         mock_time.time.return_value = 3

@@ -78,9 +78,7 @@ class Queue(ABC):
         pass
 
     @abstractmethod
-    async def info(
-        self, jobs: bool = False, offset: int = 0, limit: int = 10
-    ) -> QueueInfo:
+    async def info(self, jobs: bool = False, offset: int = 0, limit: int = 10) -> QueueInfo:
         pass
 
     @abstractmethod
@@ -262,7 +260,7 @@ class Queue(ABC):
         job_kwargs: dict[str, t.Any] = {}
 
         for k, v in kwargs.items():
-            if k in Job.__dataclass_fields__:  # pylint: disable=no-member
+            if k in Job.__dataclass_fields__:
                 job_kwargs[k] = v
             else:
                 job_kwargs.setdefault("kwargs", {})[k] = v
@@ -310,9 +308,7 @@ class Queue(ABC):
         else:
             await listen()
 
-    async def apply(
-        self, job_or_func: str, timeout: float | None = None, **kwargs: t.Any
-    ) -> t.Any:
+    async def apply(self, job_or_func: str, timeout: float | None = None, **kwargs: t.Any) -> t.Any:
         """
         Enqueue a job and wait for its result.
 
@@ -398,14 +394,10 @@ class Queue(ABC):
 
         # Start listening before we enqueue the jobs.
         # This ensures we don't miss any updates.
-        task = asyncio.create_task(
-            self.listen(pending_job_keys, callback, timeout=None)
-        )
+        task = asyncio.create_task(self.listen(pending_job_keys, callback, timeout=None))
 
         try:
-            await asyncio.gather(
-                *[self.enqueue(job_or_func, **kw) for kw in iter_kwargs]
-            )
+            await asyncio.gather(*[self.enqueue(job_or_func, **kw) for kw in iter_kwargs])
         except Exception:
             task.cancel()
             raise

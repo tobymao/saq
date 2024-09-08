@@ -14,17 +14,18 @@ import re
 import sys
 from subprocess import check_output
 
-sys.path.insert(0, os.path.abspath('.'))
-sys.path.insert(0, os.path.abspath('..'))
+sys.path.insert(0, os.path.abspath("."))
+sys.path.insert(0, os.path.abspath(".."))
 
 # Generate changelog
-os.environ['GITCHANGELOG_CONFIG_FILENAME'] = os.path.abspath('./gitchangelog.rc')
-changelog = check_output(['gitchangelog']).decode().replace('\n### \n', '')
-with open(os.path.abspath('./changelog.md'), 'wt') as f:
+os.environ["GITCHANGELOG_CONFIG_FILENAME"] = os.path.abspath("./gitchangelog.rc")
+changelog = check_output(["gitchangelog"]).decode().replace("\n### \n", "")
+with open(os.path.abspath("./changelog.md"), "wt") as f:
     f.write(changelog)
 
 # -- Project information -----------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#project-information
+
 
 def get_version():
     verstrline = open("../saq/__init__.py", "rt").read()
@@ -34,10 +35,11 @@ def get_version():
     else:
         raise RuntimeError("Unable to find version string")
 
-project = 'SAQ'
+
+project = "SAQ"
 year = datetime.datetime.now().year
-copyright = f'{year}, Toby Mao'
-author = 'Toby Mao'
+copyright = f"{year}, Toby Mao"
+author = "Toby Mao"
 
 # The short X.Y version
 version = get_version()
@@ -48,38 +50,38 @@ release = version
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#general-configuration
 
 extensions = [
-    'sphinx.ext.napoleon',
-    'sphinx.ext.viewcode',
-    'sphinx.ext.intersphinx',
-    'sphinx.ext.autodoc.typehints',
-    'myst_parser',
-    'autoapi.extension',
-    'sphinx_design',
+    "sphinx.ext.napoleon",
+    "sphinx.ext.viewcode",
+    "sphinx.ext.intersphinx",
+    "sphinx.ext.autodoc.typehints",
+    "myst_parser",
+    "autoapi.extension",
+    "sphinx_design",
 ]
 
-templates_path = ['_templates']
-exclude_patterns = ['_build', 'Thumbs.db', '.DS_Store']
+templates_path = ["_templates"]
+exclude_patterns = ["_build", "Thumbs.db", ".DS_Store"]
 
 intersphinx_mapping = {
-    'python': ('https://docs.python.org/3', None),
-    'redis': ('https://redis-py.readthedocs.io/en/stable/', None),
-    'typing_extensions': ('https://typing-extensions.readthedocs.io/en/latest/', None),
+    "python": ("https://docs.python.org/3", None),
+    "redis": ("https://redis-py.readthedocs.io/en/stable/", None),
+    "typing_extensions": ("https://typing-extensions.readthedocs.io/en/latest/", None),
 }
 
-autoapi_dirs = ['../saq']
+autoapi_dirs = ["../saq"]
 autoapi_ignore = [
-    '*/saq/__main__.py',
+    "*/saq/__main__.py",
 ]
 autoapi_options = [
-    'members',
-    'show-inheritance',
-    'special-members',
+    "members",
+    "show-inheritance",
+    "special-members",
 ]
-autodoc_typehints = 'description'
+autodoc_typehints = "description"
 napoleon_use_admonition_for_notes = True
 napoleon_preprocess_types = True
 napoleon_attr_annotations = True
-highlight_language = 'python'
+highlight_language = "python"
 
 myst_enable_extensions = [
     "fieldlist",
@@ -89,9 +91,7 @@ myst_enable_extensions = [
 # -- Options for HTML output -------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#options-for-html-output
 
-html_theme = 'furo'
-html_static_path = ['_static']
+html_theme = "furo"
+html_static_path = ["_static"]
 
-html_theme_options = {
-    'source_repository': 'https://github.com/tobymao/saq/'
-}
+html_theme_options = {"source_repository": "https://github.com/tobymao/saq/"}

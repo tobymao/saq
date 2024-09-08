@@ -115,9 +115,7 @@ class PostgresQueue(Queue):
         async with self.pool.connection() as conn, conn.cursor() as cursor:
             for statement in DDL_STATEMENTS:
                 await cursor.execute(
-                    SQL(statement).format(
-                        jobs_table=self.jobs_table, stats_table=self.stats_table
-                    )
+                    SQL(statement).format(jobs_table=self.jobs_table, stats_table=self.stats_table)
                 )
 
     async def upkeep(self) -> None:
@@ -154,9 +152,7 @@ class PostgresQueue(Queue):
         await self.pool.close()
         self.has_sweep_lock = False
 
-    async def info(
-        self, jobs: bool = False, offset: int = 0, limit: int = 10
-    ) -> QueueInfo:
+    async def info(self, jobs: bool = False, offset: int = 0, limit: int = 10) -> QueueInfo:
         async with self.pool.connection() as conn, conn.cursor() as cursor:
             await cursor.execute(
                 SQL(
@@ -371,9 +367,7 @@ class PostgresQueue(Queue):
             job.scheduled = scheduled
         job.touched = now()
 
-        async with (
-            self.nullcontext(connection) if connection else self.pool.connection()
-        ) as conn:
+        async with self.nullcontext(connection) if connection else self.pool.connection() as conn:
             await conn.execute(
                 SQL(
                     dedent(
@@ -388,9 +382,7 @@ class PostgresQueue(Queue):
                     )
                 ).format(
                     jobs_table=self.jobs_table,
-                    expire_at=SQL(
-                        ",expire_at = %(expire_at)s" if expire_at != -1 else ""
-                    ),
+                    expire_at=SQL(",expire_at = %(expire_at)s" if expire_at != -1 else ""),
                 ),
                 {
                     "job": self.serialize(job),
@@ -563,9 +555,7 @@ class PostgresQueue(Queue):
         async with self.pool.connection() as conn, conn.cursor() as cursor:
             if job.ttl >= 0:
                 expire_at = seconds(now()) + job.ttl if job.ttl > 0 else None
-                await self.update(
-                    job, status=status, expire_at=expire_at, connection=conn
-                )
+                await self.update(job, status=status, expire_at=expire_at, connection=conn)
             else:
                 await cursor.execute(
                     SQL(
@@ -632,9 +622,7 @@ class PostgresQueue(Queue):
     async def _notify(
         self, channel: str, payload: t.Any, connection: AsyncConnection | None = None
     ) -> None:
-        async with (
-            self.nullcontext(connection) if connection else self.pool.connection()
-        ) as conn:
+        async with self.nullcontext(connection) if connection else self.pool.connection() as conn:
             await conn.execute(
                 SQL("NOTIFY {channel}, {payload}").format(
                     channel=Identifier(channel), payload=payload
