@@ -28,7 +28,5 @@ class TestUtils(unittest.IsolatedAsyncioTestCase):
             10,
         )
 
-        backoff = exponential_backoff(
-            attempts=1, base_delay=1, max_delay=1, jitter=True
-        )
+        backoff = exponential_backoff(attempts=1, base_delay=1, max_delay=1, jitter=True)
         self.assertTrue(0 <= backoff < 1)

@@ -1,4 +1,3 @@
-# pylint: disable=consider-using-with
 from setuptools import setup
 
 version = (
@@ -41,12 +40,14 @@ setup(
         "redis": ["redis>=4.2,<6.0"],
         "web": ["aiohttp", "aiohttp_basicauth"],
         "dev": [
-            "black",
+            "aiohttp",
+            "aiohttp_basicauth",
             "coverage",
             "mypy",
             "psycopg[pool]",
-            "pylint",
+            "pre-commit",
             "redis>=4.2,<6.0",
+            "ruff",
             "types-croniter",
             "types-redis",
             "types-setuptools",

@@ -14,9 +14,7 @@ def main() -> None:
         type=str,
         help="Namespaced variable containing worker settings eg: eg module_a.settings",
     )
-    parser.add_argument(
-        "--workers", type=int, help="Number of worker processes", default=1
-    )
+    parser.add_argument("--workers", type=int, help="Number of worker processes", default=1)
     parser.add_argument(
         "--verbose",
         "-v",

@@ -67,7 +67,7 @@ class RedisQueue(Queue):
         """Create a queue with a redis url a name."""
         return cls(aioredis.from_url(url), **kwargs)
 
-    def __init__(  # pylint: disable=too-many-arguments
+    def __init__(
         self,
         redis: Redis[bytes],
         name: str = "default",
@@ -89,9 +89,7 @@ class RedisQueue(Queue):
         self._sweep = self.namespace("sweep")
         self._stats = self.namespace("stats")
         self._op_sem = asyncio.Semaphore(max_concurrent_ops)
-        self._pubsub = PubSubMultiplexer(
-            redis.pubsub(), prefix=f"{ID_PREFIX}{self.name}"
-        )
+        self._pubsub = PubSubMultiplexer(redis.pubsub(), prefix=f"{ID_PREFIX}{self.name}")
 
     def __repr__(self) -> str:
         return f"{self.__class__.__name__}<redis={self.redis}, name='{self.name}'>"
@@ -119,9 +117,7 @@ class RedisQueue(Queue):
             self._version = tuple(int(i) for i in str(info["redis_version"]).split("."))
         return self._version
 
-    async def info(
-        self, jobs: bool = False, offset: int = 0, limit: int = 10
-    ) -> QueueInfo:
+    async def info(self, jobs: bool = False, offset: int = 0, limit: int = 10) -> QueueInfo:
         """
         Returns info on the queue
 
@@ -130,7 +126,6 @@ class RedisQueue(Queue):
             offset: Offset of job info for pagination (default 0)
             limit: Max length of job info (default 10)
         """
-        # pylint: disable=too-many-locals
         worker_uuids = []
 
         for key in await self.redis.zrangebyscore(self._stats, now(), "inf"):
@@ -167,9 +162,7 @@ class RedisQueue(Queue):
             job_info = list(
                 {
                     job["key"]: job
-                    for job in (
-                        job.to_dict() for job in deserialized_jobs if job is not None
-                    )
+                    for job in (job.to_dict() for job in deserialized_jobs if job is not None)
                 }.values()
             )
         else:
@@ -339,7 +332,9 @@ class RedisQueue(Queue):
     async def dequeue(self, timeout: float = 0) -> Job | None:
         if await self.version() < (6, 2, 0):
             job_id = await self.redis.brpoplpush(
-                self._queued, self._active, timeout  # type:ignore[arg-type]
+                self._queued,
+                self._active,
+                timeout,  # type:ignore[arg-type]
             )
         else:
             job_id = await self.redis.blmove(

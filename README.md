@@ -162,5 +162,5 @@ source env/bin/activate
 pip install -e ".[dev,web]"
 docker run -d -p 6379:6379 redis
 docker run -d -p 5432:5432 -e POSTGRES_HOST_AUTH_METHOD=trust postgres
-./run_checks.sh
+make lint test
 ```

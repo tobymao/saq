@@ -300,9 +300,7 @@ class TestWorker(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await self.queue.count("incomplete"), 1)
         # Remove if statement when schedule is implemented for Postgres queue
         if isinstance(self.queue, RedisQueue):
-            mock_logger.info.assert_any_call(
-                "Scheduled %s", ["saq:job:default:cron:cron"]
-            )
+            mock_logger.info.assert_any_call("Scheduled %s", ["saq:job:default:cron:cron"])
 
     @mock.patch("saq.worker.logger")
     async def test_abort(self, mock_logger: MagicMock) -> None:
@@ -376,7 +374,9 @@ class TestWorker(unittest.IsolatedAsyncioTestCase):
             state["counter"] += 1
 
         self.worker = Worker(
-            self.queue, functions=[("handler", handler)], timers={"sweep": 1}  # type: ignore
+            self.queue,
+            functions=[("handler", handler)],
+            timers={"sweep": 1},  # type: ignore
         )
         asyncio.create_task(self.worker.start())
         await self.queue.enqueue("handler", heartbeat=1, retries=2)
@@ -385,7 +385,6 @@ class TestWorker(unittest.IsolatedAsyncioTestCase):
 
 
 class TestWorkerRedisQueue(TestWorker):
-
     async def asyncSetUp(self) -> None:
         self.create_queue = create_redis_queue
         self.queue = await self.create_queue()
@@ -437,11 +436,13 @@ class TestWorkerPostgresQueue(TestWorker):
 
 
 class TestWorkerHttpQueue(AioHTTPTestCase, TestWorker):
-
     async def asyncSetUp(self) -> None:
         self.redis_queue = await create_redis_queue()
         self.redis_worker = Worker(
-            self.redis_queue, functions={}, concurrency=0, timers={"sweep": 1}  # type: ignore
+            self.redis_queue,
+            functions={},
+            concurrency=0,
+            timers={"sweep": 1},  # type: ignore
         )
 
         await super().asyncSetUp()

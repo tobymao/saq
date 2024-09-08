@@ -46,11 +46,11 @@ class GZStaticFiles(StaticFiles):
         return response
 
 
-async def views(request: Request) -> Response:  # pylint: disable=unused-argument
+async def views(request: Request) -> Response:
     return Response(content=render(root_path=ROOT_PATH), media_type="text/html")
 
 
-async def health(request: Request) -> Response:  # pylint: disable=unused-argument
+async def health(request: Request) -> Response:
     if await _get_all_info():
         return Response(content="OK", media_type="text/plain")
     raise HTTPException(status_code=500)
@@ -128,7 +128,7 @@ def saq_web(root_path: str, queues: list[Queue]) -> Starlette:
     Returns:
         Starlette ASGI instance.
     """
-    global ROOT_PATH  # pylint: disable=global-statement
+    global ROOT_PATH
 
     QUEUES.clear()
     for queue in queues:

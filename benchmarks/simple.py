@@ -46,9 +46,7 @@ async def bench_saq(url: str):
     from saq import Queue, Worker
 
     async def enqueue(func):
-        await asyncio.gather(
-            *[asyncio.create_task(queue.enqueue(func)) for _ in range(N)]
-        )
+        await asyncio.gather(*[asyncio.create_task(queue.enqueue(func)) for _ in range(N)])
 
     queue = Queue.from_url(url)
     worker = Worker(queue=queue, functions=[noop, sleeper], concurrency=10)
