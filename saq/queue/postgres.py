@@ -307,29 +307,8 @@ class PostgresQueue(Queue):
             results = await cursor.fetchall()
             for key, job_bytes, objid in results:
                 job = self.deserialize(job_bytes)
-                if not job:
-                    swept.append(key)
-                    logger.info("Sweeping missing job %s", key)
-                    await cursor.execute(
-                        SQL(
-                            dedent(
-                                """
-                                DELETE FROM {jobs_table}
-                                WHERE key = %(key)s
-                                """
-                            )
-                        ).format(jobs_table=self.jobs_table),
-                        {"key": key},
-                    )
-                    continue
-                if job.status == Status.QUEUED:
-                    await asyncio.sleep(0.1)
-                    await job.refresh()
-                    stuck = job.status == Status.QUEUED
-                else:
-                    stuck = not objid or job.stuck
-
-                if not stuck:
+                assert job
+                if objid and not job.stuck:
                     continue
 
                 swept.append(key)
@@ -464,9 +443,7 @@ class PostgresQueue(Queue):
 
     async def abort(self, job: Job, error: str, ttl: float = 5) -> None:
         job.error = error
-        job.status = Status.ABORTING
-
-        await self.update(job, expire_at=int(seconds(now()) + ttl) + 1)
+        await self.update(job, status=Status.ABORTING, expire_at=int(seconds(now()) + ttl) + 1)
 
     async def dequeue(self, timeout: float = 0) -> Job | None:
         """Wait on `self.cond` to dequeue.
@@ -643,10 +620,11 @@ class PostgresQueue(Queue):
                 },
             )
             results = await cursor.fetchall()
-        for result in results:
-            job = self.deserialize(result[0])
-            if job:
-                jobs.append(job)
+            for result in results:
+                job = self.deserialize(result[0])
+                if job:
+                    await self.update(job, status=Status.ACTIVE, connection=conn)
+                    jobs.append(job)
         return jobs
 
     async def _notify(

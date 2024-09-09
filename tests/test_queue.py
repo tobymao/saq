@@ -503,29 +503,15 @@ class TestPostgresQueue(TestQueue):
             await self.queue.update(job)
         await self.dequeue()
 
-        # missing job
-        job4 = Job(function="", queue=self.queue)
-
-        async with self.queue.pool.connection() as conn:
-            await conn.execute(
-                SQL(
-                    """
-                INSERT INTO {} (key, queue, status) VALUES (%s, 'default', 'active')
-                """
-                ).format(self.queue.jobs_table),
-                (job4.key,),
-            )
-
         mock_time.time.return_value = 3
-        self.assertEqual(await self.count("active"), 6)
+        self.assertEqual(await self.count("active"), 5)
         swept = await self.queue.sweep(abort=0.01)
         self.assertEqual(
             set(swept),
             {
-                job1.id,
-                job2.id,
-                job3.id,
-                job4.id,
+                job1.key,
+                job2.key,
+                job3.key,
             },
         )
         await job1.refresh()
