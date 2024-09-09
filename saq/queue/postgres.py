@@ -289,10 +289,9 @@ class PostgresQueue(Queue):
                     AND classid = {job_lock_keyspace}
                     AND objsubid = 2 -- key is int pair, not single bigint
                 )
-                SELECT job
+                SELECT key, job, objid
                 FROM {jobs_table} LEFT OUTER JOIN locks ON lock_key = objid
-                WHERE status IN ('active', 'aborting')
-                  AND objid IS NULL;
+                WHERE status IN ('active', 'aborting');
                 """
                     )
                 ).format(
@@ -306,11 +305,21 @@ class PostgresQueue(Queue):
             cursor.nextset()
             cursor.nextset()
             results = await cursor.fetchall()
-            for result in results:
-                job = self.deserialize(result[0])
-                if not job:
+            for key, job_bytes, objid in results:
+                job = self.deserialize(job_bytes)
+                assert job
+                if objid and not job.stuck:
                     continue
-                swept.append(job.key)
+
+                swept.append(key)
+                await self.abort(job, error="swept")
+
+                try:
+                    await job.refresh(abort)
+                except asyncio.TimeoutError:
+                    logger.info("Could not abort job %s", key)
+
+                logger.info("Sweeping job %s", job.info(logger.isEnabledFor(logging.DEBUG)))
                 if job.retryable:
                     await self.retry(job, error="swept")
                 else:
@@ -434,9 +443,7 @@ class PostgresQueue(Queue):
 
     async def abort(self, job: Job, error: str, ttl: float = 5) -> None:
         job.error = error
-        job.status = Status.ABORTING
-
-        await self.update(job, expire_at=int(seconds(now()) + ttl) + 1)
+        await self.update(job, status=Status.ABORTING, expire_at=int(seconds(now()) + ttl) + 1)
 
     async def dequeue(self, timeout: float = 0) -> Job | None:
         """Wait on `self.cond` to dequeue.
@@ -613,10 +620,11 @@ class PostgresQueue(Queue):
                 },
             )
             results = await cursor.fetchall()
-        for result in results:
-            job = self.deserialize(result[0])
-            if job:
-                jobs.append(job)
+            for result in results:
+                job = self.deserialize(result[0])
+                if job:
+                    await self.update(job, status=Status.ACTIVE, connection=conn)
+                    jobs.append(job)
         return jobs
 
     async def _notify(
