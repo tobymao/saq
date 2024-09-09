@@ -488,7 +488,56 @@ class TestPostgresQueue(TestQueue):
             )
             self.assertEqual(await cursor.fetchone(), (Status.ABORTING,))
 
-    async def test_sweep_stuck(self) -> None:
+    @mock.patch("saq.utils.time")
+    async def test_sweep(self, mock_time: MagicMock) -> None:
+        mock_time.time.return_value = 1
+        job1 = await self.enqueue("test", heartbeat=1, retries=0)
+        job2 = await self.enqueue("test", timeout=1)
+        await self.enqueue("test", timeout=2)
+        await self.enqueue("test", heartbeat=2)
+        job3 = await self.enqueue("test", timeout=1)
+        for _ in range(4):
+            job = await self.dequeue()
+            job.status = Status.ACTIVE
+            job.started = 1000
+            await self.queue.update(job)
+        await self.dequeue()
+
+        # missing job
+        job4 = Job(function="", queue=self.queue)
+
+        async with self.queue.pool.connection() as conn:
+            await conn.execute(
+                SQL(
+                    """
+                INSERT INTO {} (key, queue, status) VALUES (%s, 'default', 'active')
+                """
+                ).format(self.queue.jobs_table),
+                (job4.key,),
+            )
+
+        mock_time.time.return_value = 3
+        self.assertEqual(await self.count("active"), 6)
+        swept = await self.queue.sweep(abort=0.01)
+        self.assertEqual(
+            set(swept),
+            {
+                job1.id,
+                job2.id,
+                job3.id,
+                job4.id,
+            },
+        )
+        await job1.refresh()
+        await job2.refresh()
+        await job3.refresh()
+        self.assertEqual(job1.status, Status.ABORTED)
+        self.assertEqual(job2.status, Status.QUEUED)
+        self.assertEqual(job3.status, Status.QUEUED)
+        self.assertEqual(await self.count("active"), 2)
+
+    @mock.patch("saq.utils.time")
+    async def test_sweep_stuck(self, mock_time: MagicMock) -> None:
         job1 = await self.queue.enqueue("test")
         assert job1
         job = await self.dequeue()
@@ -512,6 +561,7 @@ class TestPostgresQueue(TestQueue):
         # Disconnect another_queue to simulate worker going down
         await another_queue.disconnect()
 
+        mock_time.time.return_value = 3
         self.assertEqual(await self.count("active"), 3)
         swept = await self.queue.sweep(abort=0.01)
         self.assertEqual(

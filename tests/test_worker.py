@@ -406,9 +406,6 @@ class TestWorkerPostgresQueue(TestWorker):
     async def test_schedule(self, mock_time: MagicMock) -> None:
         self.skipTest("Not implemented")
 
-    async def test_sweep_abort(self) -> None:
-        self.skipTest("Not implemented")
-
     @mock.patch("saq.worker.logger")
     @mock.patch("saq.utils.time")
     async def test_cron(self, mock_time: MagicMock, mock_logger: MagicMock) -> None:

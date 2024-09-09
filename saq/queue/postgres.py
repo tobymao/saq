@@ -289,10 +289,9 @@ class PostgresQueue(Queue):
                     AND classid = {job_lock_keyspace}
                     AND objsubid = 2 -- key is int pair, not single bigint
                 )
-                SELECT job
+                SELECT key, job, objid
                 FROM {jobs_table} LEFT OUTER JOIN locks ON lock_key = objid
-                WHERE status IN ('active', 'aborting')
-                  AND objid IS NULL;
+                WHERE status IN ('active', 'aborting');
                 """
                     )
                 ).format(
@@ -306,11 +305,42 @@ class PostgresQueue(Queue):
             cursor.nextset()
             cursor.nextset()
             results = await cursor.fetchall()
-            for result in results:
-                job = self.deserialize(result[0])
+            for key, job_bytes, objid in results:
+                job = self.deserialize(job_bytes)
                 if not job:
+                    swept.append(key)
+                    logger.info("Sweeping missing job %s", key)
+                    await cursor.execute(
+                        SQL(
+                            dedent(
+                                """
+                                DELETE FROM {jobs_table}
+                                WHERE key = %(key)s
+                                """
+                            )
+                        ).format(jobs_table=self.jobs_table),
+                        {"key": key},
+                    )
                     continue
-                swept.append(job.key)
+                if job.status == Status.QUEUED:
+                    await asyncio.sleep(0.1)
+                    await job.refresh()
+                    stuck = job.status == Status.QUEUED
+                else:
+                    stuck = not objid or job.stuck
+
+                if not stuck:
+                    continue
+
+                swept.append(key)
+                await self.abort(job, error="swept")
+
+                try:
+                    await job.refresh(abort)
+                except asyncio.TimeoutError:
+                    logger.info("Could not abort job %s", key)
+
+                logger.info("Sweeping job %s", job.info(logger.isEnabledFor(logging.DEBUG)))
                 if job.retryable:
                     await self.retry(job, error="swept")
                 else:
