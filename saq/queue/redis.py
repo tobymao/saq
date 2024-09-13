@@ -236,6 +236,11 @@ class RedisQueue(Queue):
             keys=[self._sweep, self._active], args=[lock], client=self.redis
         )
 
+        # in rare cases a sweep may occur between a dequeue and actual processing.
+        # in that case, the job status is still set to queued, but only because it hasn't
+        # had its status updated yet. do a short sleep to make sure jobs have time to update status.
+        await asyncio.sleep(0.1)
+
         swept = []
         if job_ids:
             for job_id, job in zip(
@@ -245,17 +250,7 @@ class RedisQueue(Queue):
                 ),
             ):
                 if job:
-                    # in rare cases a sweep may occur between a dequeue and actual processing.
-                    # in that case, the job status is still set to queued, but only because it hasn't
-                    # had its status updated yet. try refreshing after a short sleep to pick up the latest status.
-                    if job.status == Status.QUEUED:
-                        await asyncio.sleep(0.1)
-                        await job.refresh()
-                        stuck = job.status == Status.QUEUED
-                    else:
-                        stuck = job.status != Status.ACTIVE or job.stuck
-
-                    if stuck:
+                    if job.status != Status.ACTIVE or job.stuck:
                         logger.info(
                             "Sweeping job %s",
                             job.info(logger.isEnabledFor(logging.DEBUG)),
