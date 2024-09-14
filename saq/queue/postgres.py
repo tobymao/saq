@@ -486,7 +486,7 @@ class PostgresQueue(Queue):
 
     async def abort(self, job: Job, error: str, ttl: float = 5) -> None:
         job.error = error
-        await self.update(job, status=Status.ABORTING, expire_at=int(seconds(now()) + ttl) + 1)
+        await self.update(job, status=Status.ABORTING)
 
     async def dequeue(self, timeout: float = 0) -> Job | None:
         """Wait on `self.cond` to dequeue.
