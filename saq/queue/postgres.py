@@ -365,16 +365,14 @@ class PostgresQueue(Queue):
     async def update(
         self,
         job: Job,
-        status: Status | None = None,
-        scheduled: int | None = None,
-        expire_at: float | None = -1,
         connection: AsyncConnection | None = None,
+        expire_at: float | None = -1,
+        **kwargs: t.Any,
     ) -> None:
-        if status:
-            job.status = status
-        if scheduled:
-            job.scheduled = scheduled
         job.touched = now()
+
+        for k, v in kwargs.items():
+            setattr(job, k, v)
 
         async with self.nullcontext(connection) if connection else self.pool.connection() as conn:
             await conn.execute(
