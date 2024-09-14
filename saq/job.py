@@ -28,7 +28,6 @@ class Status(str, enum.Enum):
     """
 
     NEW = "new"
-    DEFERRED = "deferred"
     QUEUED = "queued"
     ACTIVE = "active"
     ABORTING = "aborting"

@@ -200,11 +200,9 @@ class RedisQueue(Queue):
                     redis.call('SETEX', KEYS[1], ARGV[1], 1)
                     local jobs = redis.call('ZRANGEBYSCORE', KEYS[2], 1, ARGV[2])
 
-                    if next(jobs) then
-                        for _, v in ipairs(jobs) do
-                            redis.call('ZADD', KEYS[2], 0, v)
-                            redis.call('RPUSH', KEYS[3], v)
-                        end
+                    for _, v in ipairs(jobs) do
+                        redis.call('ZADD', KEYS[2], 0, v)
+                        redis.call('RPUSH', KEYS[3], v)
                     end
 
                     return jobs
@@ -227,57 +225,51 @@ class RedisQueue(Queue):
                 """
                 if redis.call('EXISTS', KEYS[1]) == 0 then
                     redis.call('SETEX', KEYS[1], ARGV[1], 1)
-                    return redis.call('LRANGE', KEYS[2], 0, -1)
+                    local id_jobs = {}
+                    for i, v in ipairs(redis.call('LRANGE', KEYS[2], 0, -1)) do
+                        id_jobs[i] = {v, redis.call('GET', v)}
+                    end
+                    return id_jobs
                 end
                 """
             )
 
-        job_ids = await self._cleanup_script(
+        id_jobs = await self._cleanup_script(
             keys=[self._sweep, self._active], args=[lock], client=self.redis
         )
 
-        # in rare cases a sweep may occur between a dequeue and actual processing.
-        # in that case, the job status is still set to queued, but only because it hasn't
-        # had its status updated yet. do a short sleep to make sure jobs have time to update status.
-        await asyncio.sleep(0.1)
-
         swept = []
-        if job_ids:
-            for job_id, job in zip(
-                job_ids,
-                await self.jobs(
-                    [self.job_key_from_id(job_id.decode("utf-8")) for job_id in job_ids]
-                ),
-            ):
-                if job:
-                    if job.status != Status.ACTIVE or job.stuck:
-                        logger.info(
-                            "Sweeping job %s",
-                            job.info(logger.isEnabledFor(logging.DEBUG)),
-                        )
-                        swept.append(job_id)
 
-                        await self.abort(job, error="swept")
+        for job_id, job_bytes in id_jobs:
+            job = self.deserialize(job_bytes)
 
-                        try:
-                            await job.refresh(abort)
-                        except asyncio.TimeoutError:
-                            logger.info("Could not abort job %s", job_id)
-
-                        if job.retryable:
-                            await self.retry(job, error="swept")
-                        else:
-                            await job.finish(Status.ABORTED, error="swept")
-                else:
+            if job:
+                if job.status != Status.ACTIVE or job.stuck:
+                    logger.info(
+                        "Sweeping job %s",
+                        job.info(logger.isEnabledFor(logging.DEBUG)),
+                    )
                     swept.append(job_id)
 
-                    async with self.redis.pipeline(transaction=True) as pipe:
-                        await (
-                            pipe.lrem(self._active, 0, job_id)
-                            .zrem(self._incomplete, job_id)
-                            .execute()
-                        )
-                    logger.info("Sweeping missing job %s", job_id)
+                    await self.abort(job, error="swept")
+
+                    try:
+                        await job.refresh(abort)
+                    except asyncio.TimeoutError:
+                        logger.info("Could not abort job %s", job_id)
+
+                    if job.retryable:
+                        await self.retry(job, error="swept")
+                    else:
+                        await job.finish(Status.ABORTED, error="swept")
+            else:
+                swept.append(job_id)
+
+                async with self.redis.pipeline(transaction=True) as pipe:
+                    await (
+                        pipe.lrem(self._active, 0, job_id).zrem(self._incomplete, job_id).execute()
+                    )
+                logger.info("Sweeping missing job %s", job_id)
 
         return [job_id.decode("utf-8") for job_id in swept]
 
@@ -298,6 +290,27 @@ class RedisQueue(Queue):
             self.deserialize(job_bytes)
             for job_bytes in await self.redis.mget(self.job_id(key) for key in job_keys)
         ]
+
+    async def iter_jobs(
+        self,
+        statuses: t.List[Status] = list(Status),
+        batch_size: int = 100,
+    ) -> t.AsyncIterator[Job]:
+        cursor = 0
+        while True:
+            cursor, job_ids = await self.redis.scan(
+                cursor=cursor, match=self.job_id("*"), count=batch_size
+            )
+            statuses_set = set(statuses)
+
+            for job in await self.jobs(
+                self.job_key_from_id(job_id.decode("utf-8")) for job_id in job_ids
+            ):
+                if job and job.status in statuses_set:
+                    yield job
+
+            if cursor <= 0:
+                break
 
     async def _get_job_by_id(self, job_id: bytes | str) -> Job | None:
         async with self._op_sem:

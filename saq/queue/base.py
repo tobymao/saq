@@ -109,6 +109,14 @@ class Queue(ABC):
         pass
 
     @abstractmethod
+    def iter_jobs(
+        self,
+        statuses: t.List[Status] = list(Status),
+        batch_size: int = 100,
+    ) -> t.AsyncIterator[Job]:
+        pass
+
+    @abstractmethod
     async def abort(self, job: Job, error: str, ttl: float = 5) -> None:
         pass
 

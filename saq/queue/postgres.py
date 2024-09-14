@@ -438,8 +438,51 @@ class PostgresQueue(Queue):
                 ).format(jobs_table=self.jobs_table),
                 {"keys": keys},
             )
-            results: dict[str, bytes | None] = dict(await cursor.fetchmany())
+            results: dict[str, bytes | None] = dict(await cursor.fetchall())
         return [self.deserialize(results.get(key)) for key in keys]
+
+    async def iter_jobs(
+        self,
+        statuses: t.List[Status] = list(Status),
+        batch_size: int = 100,
+    ) -> t.AsyncIterator[Job]:
+        async with self.pool.connection() as conn, conn.cursor() as cursor:
+            last_key = ""
+
+            while True:
+                await cursor.execute(
+                    SQL(
+                        dedent(
+                            """
+                            SELECT key, job
+                            FROM {jobs_table}
+                            WHERE
+                              status = ANY(%(statuses)s)
+                              AND queue = %(queue)s
+                              AND key > %(last_key)s
+                            ORDER BY key
+                            LIMIT %(batch_size)s
+                            """
+                        )
+                    ).format(jobs_table=self.jobs_table),
+                    {
+                        "statuses": statuses,
+                        "queue": self.name,
+                        "batch_size": batch_size,
+                        "last_key": last_key,
+                    },
+                )
+
+                rows = await cursor.fetchall()
+
+                if rows:
+                    for key, job_bytes in rows:
+                        last_key = key
+                        job = self.deserialize(job_bytes)
+                        if job:
+                            yield job
+                else:
+                    break
 
     async def abort(self, job: Job, error: str, ttl: float = 5) -> None:
         job.error = error
