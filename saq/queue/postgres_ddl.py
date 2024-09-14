@@ -1,12 +1,12 @@
 CREATE_JOBS_TABLE = """
 CREATE TABLE IF NOT EXISTS {jobs_table} (
     key TEXT PRIMARY KEY,
-    lock_key SERIAL,
+    lock_key SERIAL NOT NULL,
     queued BIGINT NOT NULL DEFAULT EXTRACT(EPOCH FROM now()),
     job BYTEA NOT NULL,
-    queue TEXT,
-    status TEXT,
-    scheduled BIGINT,
+    queue TEXT NOT NULL,
+    status TEXT NOT NULL,
+    scheduled BIGINT NOT NULL DEFAULT EXTRACT(EPOCH FROM now()),
     expire_at BIGINT
 );
 """

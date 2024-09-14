@@ -7,13 +7,13 @@ from __future__ import annotations
 import json
 import typing as t
 
+
 from saq.errors import MissingDependencyError
+from saq.job import Job, Status
 from saq.queue.base import Queue, logger
 
 if t.TYPE_CHECKING:
     from collections.abc import Iterable
-
-    from saq.job import Job, Status
 
     from saq.types import (
         CountKind,
@@ -80,6 +80,16 @@ class HttpProxy:
                         for job in await self.queue.jobs(req["job_keys"])
                     ]
                 )
+            if kind == "iter_jobs":
+                return json.dumps(
+                    [
+                        job.to_dict()
+                        async for job in self.queue.iter_jobs(
+                            statuses=req["statuses"], batch_size=req["batch_size"]
+                        )
+                    ]
+                )
+
             if kind == "count":
                 return json.dumps(await self.queue.count(req["count_kind"]))
             if kind == "schedule":
@@ -174,6 +184,19 @@ class HttpQueue(Queue):
             for job_dict in json.loads(await self._send("jobs", job_keys=list(job_keys)))
         ]
 
+    async def iter_jobs(
+        self,
+        statuses: t.List[Status] = list(Status),
+        batch_size: int = 100,
+    ) -> t.AsyncIterator[Job]:
+        async for job_dict in json.loads(
+            await self._send("iter_jobs", statuses=statuses, batch_size=batch_size)
+        ):
+            job = self.deserialize(job_dict)
+
+            if job:
+                yield job
+
     async def abort(self, job: Job, error: str, ttl: float = 5) -> None:
         await self._send("abort", job=self.serialize(job), error=error, ttl=ttl)
 
@@ -193,7 +216,8 @@ class HttpQueue(Queue):
         return int(await self._send("count", count_kind=kind))
 
     async def schedule(self, lock: int = 1) -> list[str]:
-        return json.loads(await self._send("schedule", lock=lock))
+        job_ids = await self._send("schedule", lock=lock)
+        return json.loads(job_ids) if job_ids else []
 
     async def sweep(self, lock: int = 60, abort: float = 5.0) -> list[str]:
         return json.loads(await self._send("sweep", lock=lock, abort=abort))

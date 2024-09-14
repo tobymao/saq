@@ -321,6 +321,23 @@ class TestQueue(unittest.IsolatedAsyncioTestCase):
         await self.enqueue("test")
         self.assertIsNone(called_with_job)
 
+    async def test_iter_jobs(self) -> None:
+        for _ in range(9):
+            await self.queue.enqueue("test")
+
+        async for job in self.queue.iter_jobs(batch_size=1):
+            job.status = Status.ACTIVE
+            await job.update()
+            break
+
+        self.assertEqual(9, len([job async for job in self.queue.iter_jobs()]))
+        self.assertEqual(9, len([job async for job in self.queue.iter_jobs(batch_size=1)]))
+        self.assertEqual(9, len([job async for job in self.queue.iter_jobs(batch_size=2)]))
+        self.assertEqual(9, len([job async for job in self.queue.iter_jobs(batch_size=3)]))
+        self.assertEqual(
+            1, len([job async for job in self.queue.iter_jobs(statuses=[Status.ACTIVE])])
+        )
+
 
 class TestRedisQueue(TestQueue):
     async def asyncSetUp(self) -> None:

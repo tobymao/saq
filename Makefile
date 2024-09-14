@@ -8,8 +8,8 @@ help:
 	@echo  " up		Force updates dev/test dependencies - attempts clean-install"
 	@echo  " deps		Ensure dev/test dependencies are installed"
 	@echo  " test		Runs all tests"
-	@echo  " lint		Reports all linter violations"
-	@echo  " ci		Runs lints & tests (as a full CI run would)"
+	@echo  " style		Lint, types, and formatting"
+	@echo  " ci		Runs style & tests (as a full CI run would)"
 	@echo  " devdocs	Builds docs and hosts them on port 8000"
 
 up:
@@ -27,10 +27,10 @@ test:
 	python -m coverage run -m unittest
 	@python -m coverage report
 
-lint:
+style:
 	pre-commit run --all-files
 
-ci: deps lint test
+ci: deps style test
 
 devdocs: deps_docs
 	sphinx-autobuild --ignore '*/changelog.md' docs docs/_build/html
