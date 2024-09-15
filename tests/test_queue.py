@@ -461,14 +461,6 @@ class TestPostgresQueue(TestQueue):
     async def test_schedule(self, mock_time: MagicMock) -> None:
         pass
 
-    async def test_batch(self) -> None:
-        with contextlib.suppress(ValueError):
-            async with self.queue.batch():
-                job = await self.enqueue("echo", a=1)
-                raise ValueError()
-
-        self.assertEqual(job.status, Status.ABORTING)
-
     async def test_enqueue_dup(self) -> None:
         job = await self.enqueue("test", key="1")
         self.assertEqual(job.id, "1")

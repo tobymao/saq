@@ -484,7 +484,29 @@ class PostgresQueue(Queue):
 
     async def abort(self, job: Job, error: str, ttl: float = 5) -> None:
         job.error = error
-        await self.update(job, status=Status.ABORTING)
+
+        async with self.pool.connection() as conn, conn.cursor() as cursor:
+            await cursor.execute(
+                SQL(
+                    dedent(
+                        """
+                        SELECT status
+                        FROM {jobs_table}
+                        WHERE key = %(key)s
+                        FOR UPDATE
+                        """
+                    )
+                ).format(
+                    jobs_table=self.jobs_table,
+                ),
+                {
+                    "key": job.key,
+                },
+            )
+            result = await cursor.fetchone()
+            await self.update(job, status=Status.ABORTING, connection=conn)
+        if result == (Status.QUEUED,):
+            await job.finish(Status.ABORTED, error=error)
 
     async def dequeue(self, timeout: float = 0) -> Job | None:
         """Wait on `self.cond` to dequeue.
