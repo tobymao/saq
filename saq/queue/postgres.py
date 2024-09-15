@@ -272,38 +272,67 @@ class PostgresQueue(Queue):
                 SQL(
                     dedent(
                         """
-                -- Delete expired jobs
-                DELETE FROM {jobs_table}
-                WHERE status IN ('aborted', 'complete', 'failed')
-                  AND {now} >= expire_at;
-
-                -- Delete expired stats
-                DELETE FROM {stats_table}
-                WHERE {now} >= expire_at;
-
-                -- Fetch active and aborting jobs without advisory locks
-                WITH locks AS (
-                  SELECT objid
-                  FROM pg_locks
-                  WHERE locktype = 'advisory'
-                    AND classid = {job_lock_keyspace}
-                    AND objsubid = 2 -- key is int pair, not single bigint
-                )
-                SELECT key, job, objid
-                FROM {jobs_table} LEFT OUTER JOIN locks ON lock_key = objid
-                WHERE status IN ('active', 'aborting');
-                """
+                        -- Delete expired jobs
+                        DELETE FROM {jobs_table}
+                        WHERE queue = %(queue)s
+                          AND status IN ('aborted', 'complete', 'failed')
+                          AND %(now)s >= expire_at;
+                        """
                     )
                 ).format(
                     jobs_table=self.jobs_table,
                     stats_table=self.stats_table,
-                    now=math.ceil(seconds(now())),
-                    job_lock_keyspace=self.job_lock_keyspace,
-                )
+                ),
+                {
+                    "queue": self.name,
+                    "now": math.ceil(seconds(now())),
+                },
             )
-            # Move cursor past result sets for the first two delete statements
-            cursor.nextset()
-            cursor.nextset()
+
+            await cursor.execute(
+                SQL(
+                    dedent(
+                        """
+                        -- Delete expired stats
+                        DELETE FROM {stats_table}
+                        WHERE %(now)s >= expire_at;
+                        """
+                    )
+                ).format(
+                    jobs_table=self.jobs_table,
+                    stats_table=self.stats_table,
+                ),
+                {
+                    "now": math.ceil(seconds(now())),
+                },
+            )
+
+            await cursor.execute(
+                SQL(
+                    dedent(
+                        """
+                        -- Fetch active and aborting jobs without advisory locks
+                        WITH locks AS (
+                          SELECT objid
+                          FROM pg_locks
+                          WHERE locktype = 'advisory'
+                            AND classid = %(job_lock_keyspace)s
+                            AND objsubid = 2 -- key is int pair, not single bigint
+                        )
+                        SELECT key, job, objid
+                        FROM {jobs_table} LEFT OUTER JOIN locks ON lock_key = objid
+                        WHERE queue = %(queue)s
+                          AND status IN ('active', 'aborting');
+                        """
+                    )
+                ).format(
+                    jobs_table=self.jobs_table,
+                ),
+                {
+                    "queue": self.name,
+                    "job_lock_keyspace": self.job_lock_keyspace,
+                },
+            )
             results = await cursor.fetchall()
             for key, job_bytes, objid in results:
                 job = self.deserialize(job_bytes)
