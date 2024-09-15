@@ -452,6 +452,22 @@ class TestPostgresQueue(TestQueue):
         await super().asyncTearDown()
         await teardown_postgres()
 
+    async def get_job_status(self, key: str) -> Status:
+        async with self.queue.pool.connection() as conn, conn.cursor() as cursor:
+            await cursor.execute(
+                SQL(
+                    """
+                    SELECT status
+                    FROM {}
+                    WHERE key = %s
+                    """
+                ).format(self.queue.jobs_table),
+                (key,),
+            )
+            result = await cursor.fetchone()
+            assert result
+            return result[0]
+
     @unittest.skip("Not implemented")
     async def test_job_key(self) -> None:
         pass
@@ -474,6 +490,9 @@ class TestPostgresQueue(TestQueue):
         await self.queue.abort(job, "test")
         self.assertEqual(await self.count("queued"), 0)
         self.assertEqual(await self.count("incomplete"), 0)
+        await job.refresh()
+        self.assertEqual(job.status, Status.ABORTED)
+        self.assertEqual(await self.get_job_status(job.key), Status.ABORTED)
 
         job = await self.enqueue("test", retries=2)
         await self.dequeue()
@@ -484,18 +503,7 @@ class TestPostgresQueue(TestQueue):
         self.assertEqual(await self.count("queued"), 0)
         self.assertEqual(await self.count("incomplete"), 0)
         self.assertEqual(await self.count("active"), 0)
-        async with self.queue.pool.connection() as conn, conn.cursor() as cursor:
-            await cursor.execute(
-                SQL(
-                    """
-                SELECT status
-                FROM {}
-                WHERE key = %s
-                """
-                ).format(self.queue.jobs_table),
-                (job.key,),
-            )
-            self.assertEqual(await cursor.fetchone(), (Status.ABORTING,))
+        self.assertEqual(await self.get_job_status(job.key), Status.ABORTING)
 
     @mock.patch("saq.utils.time")
     async def test_sweep(self, mock_time: MagicMock) -> None:
