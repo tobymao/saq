@@ -588,7 +588,6 @@ class PostgresQueue(Queue):
             scheduled = job.scheduled or seconds(now())
 
         await self.update(job, scheduled=int(scheduled), expire_at=None)
-        await self._release_job(job.key)
 
     async def _finish(
         self,
