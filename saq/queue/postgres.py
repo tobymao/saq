@@ -323,7 +323,7 @@ class PostgresQueue(Queue):
                 if job.retryable:
                     await self.retry(job, error="swept")
                 else:
-                    await job.finish(Status.ABORTED, error="swept")
+                    await self.finish(job, Status.ABORTED, error="swept")
         return swept
 
     async def listen(

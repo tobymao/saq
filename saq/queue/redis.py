@@ -261,7 +261,7 @@ class RedisQueue(Queue):
                     if job.retryable:
                         await self.retry(job, error="swept")
                     else:
-                        await job.finish(Status.ABORTED, error="swept")
+                        await self.finish(job, Status.ABORTED, error="swept")
             else:
                 swept.append(job_id)
 
@@ -332,7 +332,7 @@ class RedisQueue(Queue):
                 )
 
             if dequeued:
-                await job.finish(Status.ABORTED, error=error)
+                await self.finish(job, Status.ABORTED, error=error)
                 await self.redis.delete(job.abort_id)
             else:
                 await self.redis.lrem(self._active, 0, job.id)
