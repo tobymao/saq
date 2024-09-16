@@ -36,6 +36,7 @@ class Status(str, enum.Enum):
     COMPLETE = "complete"
 
 
+ACTIVE_STATUSES = {Status.NEW, Status.QUEUED, Status.ACTIVE}
 TERMINAL_STATUSES = {Status.COMPLETE, Status.FAILED, Status.ABORTED}
 UNSUCCESSFUL_TERMINAL_STATUSES = TERMINAL_STATUSES - {Status.COMPLETE}
 
