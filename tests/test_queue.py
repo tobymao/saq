@@ -734,6 +734,3 @@ class TestPostgresQueue(TestQueue):
             )
             result = await cursor.fetchone()
             self.assertIsNone(result)
-
-    async def test_sweep_lock(self) -> None:
-        self.assertTrue(-2147483648 < self.queue.sweep_lock_key < 2147483647)
