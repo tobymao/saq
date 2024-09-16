@@ -483,14 +483,12 @@ class PostgresQueue(Queue):
                     break
 
     async def abort(self, job: Job, error: str, ttl: float = 5) -> None:
-        job.error = error
-
         async with self.pool.connection() as conn:
             status = await self.get_job_status(job.key, for_update=True, connection=conn)
             if status == Status.QUEUED:
                 await self.finish(job, Status.ABORTED, error=error, connection=conn)
             else:
-                await self.update(job, status=Status.ABORTING, connection=conn)
+                await self.update(job, status=Status.ABORTING, error=error, connection=conn)
 
     async def dequeue(self, timeout: float = 0) -> Job | None:
         """Wait on `self.cond` to dequeue.
