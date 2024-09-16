@@ -223,14 +223,14 @@ class RedisQueue(Queue):
         if not self._cleanup_script:
             self._cleanup_script = self.redis.register_script(
                 """
+                local id_jobs = {}
                 if redis.call('EXISTS', KEYS[1]) == 0 then
                     redis.call('SETEX', KEYS[1], ARGV[1], 1)
-                    local id_jobs = {}
                     for i, v in ipairs(redis.call('LRANGE', KEYS[2], 0, -1)) do
                         id_jobs[i] = {v, redis.call('GET', v)}
                     end
-                    return id_jobs
                 end
+                return id_jobs
                 """
             )
 
