@@ -228,6 +228,7 @@ class Queue(ABC):
         *,
         result: t.Any = None,
         error: str | None = None,
+        **kwargs: t.Any,
     ) -> None:
         job.status = status
         job.result = result
@@ -237,7 +238,7 @@ class Queue(ABC):
         if status == Status.COMPLETE:
             job.progress = 1.0
 
-        await self._finish(job=job, status=status, result=result, error=error)
+        await self._finish(job=job, status=status, result=result, error=error, **kwargs)
         logger.info("Finished %s", job.info(logger.isEnabledFor(logging.DEBUG)))
 
         if status == Status.COMPLETE:
