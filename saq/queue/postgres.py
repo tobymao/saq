@@ -485,26 +485,9 @@ class PostgresQueue(Queue):
     async def abort(self, job: Job, error: str, ttl: float = 5) -> None:
         job.error = error
 
-        async with self.pool.connection() as conn, conn.cursor() as cursor:
-            await cursor.execute(
-                SQL(
-                    dedent(
-                        """
-                        SELECT status
-                        FROM {jobs_table}
-                        WHERE key = %(key)s
-                        FOR UPDATE
-                        """
-                    )
-                ).format(
-                    jobs_table=self.jobs_table,
-                ),
-                {
-                    "key": job.key,
-                },
-            )
-            result = await cursor.fetchone()
-            if result == (Status.QUEUED,):
+        async with self.pool.connection() as conn:
+            status = await self.get_job_status(job.key, for_update=True, connection=conn)
+            if status == Status.QUEUED:
                 await self.finish(job, Status.ABORTED, error=error, connection=conn)
             else:
                 await self.update(job, status=Status.ABORTING, connection=conn)
@@ -602,6 +585,37 @@ class PostgresQueue(Queue):
             async for _ in gen:
                 async with self.cond:
                     self.cond.notify(1)
+
+    async def get_job_status(
+        self,
+        key: str,
+        for_update: bool = False,
+        connection: AsyncConnection | None = None,
+    ) -> Status:
+        async with self.nullcontext(
+            connection
+        ) if connection else self.pool.connection() as conn, conn.cursor() as cursor:
+            await cursor.execute(
+                SQL(
+                    dedent(
+                        """
+                        SELECT status
+                        FROM {jobs_table}
+                        WHERE key = %(key)s
+                        {for_update}
+                        """
+                    )
+                ).format(
+                    jobs_table=self.jobs_table,
+                    for_update=SQL("FOR UPDATE" if for_update else ""),
+                ),
+                {
+                    "key": key,
+                },
+            )
+            result = await cursor.fetchone()
+            assert result
+            return result[0]
 
     async def _retry(self, job: Job, error: str | None) -> None:
         next_retry_delay = job.next_retry_delay()
