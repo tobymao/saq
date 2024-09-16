@@ -7,6 +7,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import hashlib
 import math
 import time
 import typing as t
@@ -43,10 +44,10 @@ except ModuleNotFoundError as e:
         "Missing dependencies for Postgres. Install them with `pip install saq[postgres]`."
     ) from e
 
-SWEEP_LOCK_KEY = 0
 ENQUEUE_CHANNEL = "saq:enqueue"
 JOBS_TABLE = "saq_jobs"
 STATS_TABLE = "saq_stats"
+POSTGRES_INT_SIZE = 2**32
 
 
 class PostgresQueue(Queue):
@@ -109,6 +110,12 @@ class PostgresQueue(Queue):
         self.connection: AsyncConnection | None = None
         self.connection_lock = asyncio.Lock()
         self.released: list[str] = []
+        # Postgres advisory lock keys are signed 32-bit integers
+        # Hash queue name to an integer between -2147483648 and +2147483647 for sweep advisory lock key
+        self.sweep_lock_key = (
+            int(hashlib.md5(self.name.encode("utf-8")).hexdigest(), 16) % POSTGRES_INT_SIZE
+            - POSTGRES_INT_SIZE // 2
+        )
         self.has_sweep_lock = False
 
     async def init_db(self) -> None:
@@ -258,7 +265,7 @@ class PostgresQueue(Queue):
                 await cursor.execute(
                     SQL("SELECT pg_try_advisory_lock({key1}, {key2})").format(
                         key1=self.saq_lock_keyspace,
-                        key2=SWEEP_LOCK_KEY,
+                        key2=self.sweep_lock_key,
                     )
                 )
                 result = await cursor.fetchone()
