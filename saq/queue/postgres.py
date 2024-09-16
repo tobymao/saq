@@ -255,7 +255,7 @@ class PostgresQueue(Queue):
             # Attempt to get the sweep lock and hold on to it
             async with self._get_connection() as conn, conn.cursor() as cursor, conn.transaction():
                 await cursor.execute(
-                    SQL("SELECT pg_try_advisory_lock(%(key1)s, hashtext(%(queue)s))").format(),
+                    SQL("SELECT pg_try_advisory_lock(%(key1)s, hashtext(%(queue)s))"),
                     {
                         "key1": self.saq_lock_keyspace,
                         "queue": self.name,
