@@ -30,6 +30,8 @@ class Context(t.TypedDict, total=False):
     "Job() instance of the task"
     queue: Queue
     "Queue the task is running on"
+    exception: t.Optional[Exception]
+    "Exception raised by the task if any"
 
 
 class JobTaskContext(t.TypedDict, total=False):
