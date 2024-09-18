@@ -260,8 +260,11 @@ class Worker:
                     await job.finish(Status.ABORTED, error=aborted)
                 else:
                     await job.retry("cancelled")
-        except Exception:
+        except Exception as ex:
             logger.exception("Error processing job %s", job)
+
+            if context is not None:
+                context["exception"] = ex
 
             if job:
                 error = traceback.format_exc()
