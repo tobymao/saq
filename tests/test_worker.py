@@ -234,6 +234,102 @@ class TestWorker(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(x["before"], 2)
         self.assertEqual(x["after"], 2)
 
+    @mock.patch("saq.worker.logger")
+    async def test_hooks_many(self, _mock_logger: MagicMock) -> None:
+        x = {"before_a": 0, "before_b": 0, "after_a": 0, "after_b": 0}
+
+        async def before_process_a(ctx: Context) -> None:
+            self.assertIsNotNone(ctx["job"])
+            x["before_a"] += 1
+
+        def before_process_b(ctx: Context) -> None:
+            self.assertIsNotNone(ctx["job"])
+            x["before_b"] += 1
+
+        async def after_process_a(ctx: Context) -> None:
+            self.assertIsNotNone(ctx["job"])
+            x["after_a"] += 1
+
+        def after_process_b(ctx: Context) -> None:
+            self.assertIsNotNone(ctx["job"])
+            x["after_b"] += 1
+
+        worker = Worker(
+            self.queue,
+            functions=functions,
+            before_process=[before_process_a, before_process_b],
+            after_process=[after_process_a, after_process_b],
+        )
+        await self.queue.enqueue("noop")
+        await worker.process()
+        self.assertEqual(x["before_a"], 1)
+        self.assertEqual(x["before_b"], 1)
+        self.assertEqual(x["after_a"], 1)
+        self.assertEqual(x["after_b"], 1)
+
+        await self.queue.enqueue("error")
+        await worker.process()
+        self.assertEqual(x["before_a"], 2)
+        self.assertEqual(x["before_b"], 2)
+        self.assertEqual(x["after_a"], 2)
+        self.assertEqual(x["after_b"], 2)
+
+        task = asyncio.create_task(worker.process())
+        await asyncio.sleep(0.05)
+        task.cancel()
+        self.assertEqual(x["before_a"], 2)
+        self.assertEqual(x["before_b"], 2)
+        self.assertEqual(x["after_a"], 2)
+        self.assertEqual(x["after_b"], 2)
+
+    @mock.patch("saq.worker.logger")
+    async def test_startup_shutdown_hooks_many(self, _mock_logger: MagicMock) -> None:
+        x = {
+            "startup_a": 0,
+            "startup_b": 0,
+            "shutdown_a": 0,
+            "shutdown_b": 0,
+        }
+
+        async def startup_a(ctx: Context) -> None:
+            x["startup_a"] += 1
+
+        def startup_b(ctx: Context) -> None:
+            x["startup_b"] += 1
+
+        async def shutdown_a(ctx: Context) -> None:
+            x["shutdown_a"] += 1
+
+        def shutdown_b(ctx: Context) -> None:
+            x["shutdown_b"] += 1
+
+        worker = Worker(
+            self.queue,
+            functions=functions,
+            startup=[startup_a, startup_b],
+            shutdown=[shutdown_a, shutdown_b],
+        )
+
+        task = asyncio.create_task(worker.start())
+        job = await self.enqueue("noop")
+        await job.refresh(0)
+        self.assertEqual(job.result, 1)
+        self.assertEqual(x["startup_a"], 1)
+        self.assertEqual(x["startup_b"], 1)
+        self.assertEqual(x["shutdown_a"], 0)
+        self.assertEqual(x["shutdown_b"], 0)
+
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+        self.assertEqual(x["startup_a"], 1)
+        self.assertEqual(x["startup_b"], 1)
+        self.assertEqual(x["shutdown_a"], 1)
+        self.assertEqual(x["shutdown_b"], 1)
+
     async def test_abort_status_after_process(self) -> None:
         status = None
         event = asyncio.Event()
@@ -345,7 +441,7 @@ class TestWorker(unittest.IsolatedAsyncioTestCase):
         async def before_process(*_: t.Any, **__: t.Any) -> None:
             ctx_var.set("123")
 
-        self.worker.before_process = before_process
+        self.worker.before_process = [before_process]
         task = asyncio.create_task(self.worker.start())
         self.assertEqual(await self.queue.apply("sync_echo_ctx"), "123")
         task.cancel()
@@ -359,7 +455,7 @@ class TestWorker(unittest.IsolatedAsyncioTestCase):
         async def before_enqueue(job: Job) -> None:
             job.meta["correlation_id"] = ctx_var.get(None) or uuid1()
 
-        self.worker.before_process = before_process
+        self.worker.before_process = [before_process]
         self.queue.register_before_enqueue(before_enqueue)
         asyncio.create_task(self.worker.start())
         correlation_ids = await self.queue.apply("recurse", n=2)

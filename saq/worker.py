@@ -69,19 +69,23 @@ class Worker:
         *,
         concurrency: int = 10,
         cron_jobs: Collection[CronJob] | None = None,
-        startup: ReceivesContext | None = None,
-        shutdown: ReceivesContext | None = None,
-        before_process: ReceivesContext | None = None,
-        after_process: ReceivesContext | None = None,
+        startup: ReceivesContext | Collection[ReceivesContext] | None = None,
+        shutdown: ReceivesContext | Collection[ReceivesContext] | None = None,
+        before_process: ReceivesContext | Collection[ReceivesContext] | None = None,
+        after_process: ReceivesContext | Collection[ReceivesContext] | None = None,
         timers: PartialTimersDict | None = None,
         dequeue_timeout: float = 0,
     ) -> None:
         self.queue = queue
         self.concurrency = concurrency
-        self.startup = startup
-        self.shutdown = shutdown
-        self.before_process = before_process
-        self.after_process = after_process
+        self.startup = ensure_coroutine_function_many(startup) if startup else None
+        self.shutdown = ensure_coroutine_function_many(shutdown) if shutdown else None
+        self.before_process = (
+            ensure_coroutine_function_many(before_process) if before_process else None
+        )
+        self.after_process = (
+            ensure_coroutine_function_many(after_process) if after_process else None
+        )
         self.timers: TimersDict = {
             "schedule": 1,
             "stats": 10,
@@ -114,11 +118,13 @@ class Worker:
 
     async def _before_process(self, ctx: Context) -> None:
         if self.before_process:
-            await self.before_process(ctx)
+            for bp in self.before_process:
+                await bp(ctx)
 
     async def _after_process(self, ctx: Context) -> None:
         if self.after_process:
-            await self.after_process(ctx)
+            for ap in self.after_process:
+                await ap(ctx)
 
     async def start(self) -> None:
         """Start processing jobs and upkeep tasks."""
@@ -133,7 +139,8 @@ class Worker:
                 loop.add_signal_handler(signum, self.event.set)
 
             if self.startup:
-                await self.startup(self.context)
+                for s in self.startup:
+                    await s(self.context)
 
             self.tasks.update(await self.upkeep())
 
@@ -148,7 +155,8 @@ class Worker:
             logger.info("Worker shutting down")
 
             if self.shutdown:
-                await self.shutdown(self.context)
+                for s in self.shutdown:
+                    await s(self.context)
 
             await self.stop()
 
@@ -291,6 +299,14 @@ class Worker:
             new_task = asyncio.create_task(self.process())
             self.tasks.add(new_task)
             new_task.add_done_callback(self._process)
+
+
+def ensure_coroutine_function_many(
+    func: Callable | Collection[Callable],
+) -> t.List[Callable[..., Coroutine]]:
+    if callable(func):
+        return [ensure_coroutine_function(func)]
+    return [ensure_coroutine_function(f) for f in func]
 
 
 def ensure_coroutine_function(func: Callable) -> Callable[..., Coroutine]:
