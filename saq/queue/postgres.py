@@ -35,7 +35,7 @@ if t.TYPE_CHECKING:
     )
 
 try:
-    from psycopg import AsyncConnection
+    from psycopg import AsyncConnection, OperationalError
     from psycopg.sql import Identifier, SQL
     from psycopg_pool import AsyncConnectionPool
 except ModuleNotFoundError as e:
@@ -75,7 +75,10 @@ class PostgresQueue(Queue):
     @classmethod
     def from_url(cls: type[PostgresQueue], url: str, **kwargs: t.Any) -> PostgresQueue:
         """Create a queue from a postgres url."""
-        return cls(AsyncConnectionPool(url, open=False), **kwargs)
+        return cls(
+            AsyncConnectionPool(url, check=AsyncConnectionPool.check_connection, open=False),
+            **kwargs,
+        )
 
     def __init__(
         self,
@@ -748,6 +751,13 @@ class PostgresQueue(Queue):
     async def _get_connection(self) -> t.AsyncGenerator:
         assert self.connection
         async with self.connection_lock:
+            try:
+                # Pool normally performs this check when getting a connection.
+                await self.pool.check_connection(self.connection)
+            except OperationalError:
+                # The connection is bad so return it to the pool and get a new one.
+                await self.pool.putconn(self.connection)
+                self.connection = await self.pool.getconn()
             yield self.connection
 
     @asynccontextmanager
@@ -759,7 +769,6 @@ class PostgresQueue(Queue):
         yield enter_result
 
     async def _release_job(self, key: str) -> None:
-        assert self.connection
         self.released.append(key)
         if self.connection_lock.locked():
             return
@@ -779,5 +788,5 @@ class PostgresQueue(Queue):
                 ),
                 {"keys": self.released},
             )
-            await self.connection.commit()
+            await conn.commit()
         self.released.clear()
