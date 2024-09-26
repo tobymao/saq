@@ -718,3 +718,14 @@ class TestPostgresQueue(TestQueue):
             )
             result = await cursor.fetchone()
             self.assertIsNone(result)
+
+    async def test_bad_connection(self) -> None:
+        job = await self.enqueue("test")
+        original_connection = self.queue.connection
+        await self.queue.connection.close()
+        # Test dequeue still works
+        self.assertEqual((await self.dequeue()), job)
+        # Check queue has a new connection
+        self.assertNotEqual(original_connection, self.queue.connection)
+
+        await self.queue.pool.putconn(original_connection)
