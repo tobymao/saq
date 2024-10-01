@@ -314,7 +314,6 @@ class PostgresQueue(Queue):
                 SQL(
                     dedent(
                         """
-                        -- Fetch active and aborting jobs without advisory locks
                         WITH locks AS (
                           SELECT objid
                           FROM pg_locks
@@ -323,7 +322,9 @@ class PostgresQueue(Queue):
                             AND objsubid = 2 -- key is int pair, not single bigint
                         )
                         SELECT key, job, objid
-                        FROM {jobs_table} LEFT OUTER JOIN locks ON lock_key = objid
+                        FROM {jobs_table}
+                        LEFT OUTER JOIN locks
+                            ON lock_key = objid
                         WHERE queue = %(queue)s
                           AND status IN ('active', 'aborting');
                         """
@@ -337,25 +338,26 @@ class PostgresQueue(Queue):
                 },
             )
             results = await cursor.fetchall()
-            for key, job_bytes, objid in results:
-                job = self.deserialize(job_bytes)
-                assert job
-                if objid and not job.stuck:
-                    continue
 
-                swept.append(key)
-                await self.abort(job, error="swept")
+        for key, job_bytes, objid in results:
+            job = self.deserialize(job_bytes)
+            assert job
+            if objid and not job.stuck:
+                continue
 
-                try:
-                    await job.refresh(abort)
-                except asyncio.TimeoutError:
-                    logger.info("Could not abort job %s", key)
+            swept.append(key)
+            await self.abort(job, error="swept")
 
-                logger.info("Sweeping job %s", job.info(logger.isEnabledFor(logging.DEBUG)))
-                if job.retryable:
-                    await self.retry(job, error="swept")
-                else:
-                    await self.finish(job, Status.ABORTED, error="swept")
+            try:
+                await job.refresh(abort)
+            except asyncio.TimeoutError:
+                logger.info("Could not abort job %s", key)
+
+            logger.info("Sweeping job %s", job.info(logger.isEnabledFor(logging.DEBUG)))
+            if job.retryable:
+                await self.retry(job, error="swept")
+            else:
+                await self.finish(job, Status.ABORTED, error="swept")
         return swept
 
     async def listen(
@@ -543,8 +545,7 @@ class PostgresQueue(Queue):
             async with self.cond:
                 await self.cond.wait()
 
-            for job in await self._dequeue():
-                await self.queue.put(job)
+            await self._dequeue()
 
     async def _enqueue(self, job: Job) -> Job | None:
         async with self.pool.connection() as conn, conn.cursor() as cursor:
@@ -693,10 +694,9 @@ class PostgresQueue(Queue):
                 # Error because task_done() called too many times, which happens in unit tests
                 pass
 
-    async def _dequeue(self) -> list[Job]:
+    async def _dequeue(self) -> None:
         if not self.waiting:
-            return []
-        jobs = []
+            return
         async with self._get_connection() as conn, conn.cursor() as cursor, conn.transaction():
             await cursor.execute(
                 SQL(
@@ -730,12 +730,10 @@ class PostgresQueue(Queue):
                 },
             )
             results = await cursor.fetchall()
-            for result in results:
-                job = self.deserialize(result[0])
-                if job:
-                    await self.update(job, status=Status.ACTIVE, connection=conn)
-                    jobs.append(job)
-        return jobs
+        for result in results:
+            job = self.deserialize(result[0])
+            if job:
+                await self.queue.put(job)
 
     async def _notify(
         self, channel: str, payload: t.Any, connection: AsyncConnection | None = None
