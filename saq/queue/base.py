@@ -413,11 +413,9 @@ class Queue(ABC):
 
         await asyncio.wait_for(task, timeout=timeout)
 
-        jobs: list[Job | None]
-        jobs = await asyncio.gather(*[self.job(job_key) for job_key in job_keys])
+        results = []
 
-        results: list[t.Any] = []
-        for job in jobs:
+        for job in await self.jobs(job_keys):
             if job is None:
                 continue
             if job.status in UNSUCCESSFUL_TERMINAL_STATUSES:
