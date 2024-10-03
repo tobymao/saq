@@ -102,7 +102,7 @@ class TestWorker(unittest.IsolatedAsyncioTestCase):
         await job.refresh()
         self.assertEqual(job.status, Status.ACTIVE)
         task.cancel()
-        await asyncio.sleep(0.05)
+        await task
         await job.refresh()
         self.assertEqual(job.status, Status.QUEUED)
 
@@ -401,14 +401,17 @@ class TestWorker(unittest.IsolatedAsyncioTestCase):
     @mock.patch("saq.worker.logger")
     async def test_abort(self, mock_logger: MagicMock) -> None:
         job = await self.enqueue("sleeper", sleep=60)
-        asyncio.create_task(self.worker.process())
 
         # wait for the job to actually start
         def callback(job_key: str, status: Status) -> bool:
             self.assertEqual(job.key, job_key)
             return status == Status.ACTIVE
 
-        await self.queue.listen([job.key], callback)
+        listen = asyncio.create_task(self.queue.listen([job.key], callback))
+        await asyncio.sleep(0)
+        asyncio.create_task(self.worker.process())
+        await listen
+
         self.assertEqual(await self.queue.count("queued"), 0)
         self.assertEqual(await self.queue.count("incomplete"), 1)
         self.assertEqual(await self.queue.count("active"), 1)

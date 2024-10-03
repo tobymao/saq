@@ -9,13 +9,13 @@ import logging
 import json
 import time
 import typing as t
-from collections import defaultdict
 
 from saq.errors import MissingDependencyError
 from saq.job import (
     Job,
     Status,
 )
+from saq.multiplexer import Multiplexer
 from saq.queue.base import Queue, logger
 from saq.utils import millis, now, seconds
 
@@ -41,9 +41,6 @@ if t.TYPE_CHECKING:
         QueueStats,
         VersionTuple,
     )
-
-    # PubSubMultiplexer Queue
-    Q = asyncio.Queue[dict]
 
 ID_PREFIX = "saq:job:"
 
@@ -373,33 +370,20 @@ class RedisQueue(Queue):
             timeout: if timeout is truthy, wait for timeout seconds
         """
         job_ids = [self.job_id(job_key) for job_key in job_keys]
+
         if not job_ids:
             return
 
-        queue = await self._pubsub.subscribe(*job_ids)
-
-        async def listen() -> None:
-            while True:
-                message = await queue.get()
-                queue.task_done()
-                job_id = message["channel"].decode("utf-8")
-                job_key = self.job_key_from_id(job_id)
-                status = Status[message["data"].decode("utf-8").upper()]
-                if asyncio.iscoroutinefunction(callback):
-                    stop = await callback(job_key, status)
-                else:
-                    stop = callback(job_key, status)
-
-                if stop:
-                    break
-
-        try:
-            if timeout:
-                await asyncio.wait_for(listen(), timeout)
+        async for message in self._pubsub.listen(*job_ids, timeout=timeout):
+            job_id = message["channel"]
+            job_key = self.job_key_from_id(job_id)
+            status = Status[message["data"].decode("utf-8").upper()]
+            if asyncio.iscoroutinefunction(callback):
+                stop = await callback(job_key, status)
             else:
-                await listen()
-        finally:
-            await self._pubsub.unsubscribe(queue)
+                stop = callback(job_key, status)
+            if stop:
+                break
 
     async def finish_abort(self, job: Job) -> None:
         await self.redis.delete(job.abort_id)
@@ -490,7 +474,7 @@ class RedisQueue(Queue):
         return job
 
 
-class PubSubMultiplexer:
+class PubSubMultiplexer(Multiplexer):
     """
     Handle multiple in-process channels over a single Redis channel.
 
@@ -502,54 +486,24 @@ class PubSubMultiplexer:
     the queue and handle message routing in-process.
     """
 
-    def __init__(self, pubsub: PubSub, prefix: str):
+    def __init__(self, pubsub: PubSub, prefix: str) -> None:
+        super().__init__()
         self.prefix = prefix
         self.pubsub = pubsub
-        self._subscriptions: t.Dict[bytes, t.Set[Q]] = defaultdict(set)
-        self._queues: t.Dict[Q, t.Set[bytes]] = {}
-        self._daemon_task: t.Optional[asyncio.Task] = None
-        self._lock = asyncio.Lock()
 
-    async def _daemon(self) -> None:
+    async def _start(self) -> None:
+        await self.pubsub.psubscribe(f"{self.prefix}*")
+
         while True:
             try:
                 message = await self.pubsub.get_message(timeout=None)  # type: ignore
                 if message and message["type"] == "pmessage":
-                    for queue in self._subscriptions[message["channel"]]:
-                        queue.put_nowait(message)
+                    message["channel"] = message["channel"].decode("utf-8")
+                    self.publish(message["channel"], message)
             except asyncio.CancelledError:
                 return
             except Exception:
                 logger.exception("Failed to consume message")
 
-    async def start(self) -> None:
-        if not self._daemon_task:
-            async with self._lock:
-                if not self._daemon_task:
-                    await self.pubsub.psubscribe(f"{self.prefix}*")
-                    self._daemon_task = asyncio.create_task(self._daemon())
-
-    async def close(self) -> None:
+    async def _close(self) -> None:
         await self.pubsub.punsubscribe()
-        if self._daemon_task:
-            self._daemon_task.cancel()
-            await self._daemon_task
-            self._daemon_task = None
-            self._subscriptions.clear()
-            self._queues.clear()
-
-    async def subscribe(self, *channels: str) -> Q:
-        await self.start()
-        queue: Q = asyncio.Queue()
-
-        # Use bytes so the daemon needs to do less work
-        bchannels = [c.encode() for c in channels]
-
-        self._queues[queue] = set(bchannels)
-        for channel in bchannels:
-            self._subscriptions[channel].add(queue)
-        return queue
-
-    async def unsubscribe(self, queue: Q) -> None:
-        for channel in self._queues.pop(queue, []):
-            self._subscriptions[channel].remove(queue)

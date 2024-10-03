@@ -151,6 +151,8 @@ class Worker:
 
             for signum in self.SIGNALS:
                 loop.remove_signal_handler(signum)
+        except asyncio.CancelledError:
+            pass
         finally:
             logger.info("Worker shutting down")
 
@@ -166,7 +168,6 @@ class Worker:
         all_tasks = list(self.tasks)
         self.tasks.clear()
         await cancel_tasks(all_tasks)
-        await self.queue.stop()
 
     async def schedule(self, lock: int = 1) -> None:
         for cron_job in self.cron_jobs:
@@ -202,7 +203,6 @@ class Worker:
 
                 await asyncio.sleep(sleep)
 
-        await self.queue.upkeep()
         return [
             asyncio.create_task(poll(self.abort, self.timers["abort"])),
             asyncio.create_task(poll(self.schedule, self.timers["schedule"])),
@@ -232,8 +232,7 @@ class Worker:
 
             if task and not task.done():
                 task_data["aborted"] = job.error if job.error else ""
-                task.cancel()
-                await asyncio.gather(task, return_exceptions=True)
+                await cancel_tasks([task])
 
             await self.queue.finish_abort(job)
             logger.info("Aborting %s", job.id)
