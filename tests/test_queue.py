@@ -104,10 +104,10 @@ class TestQueue(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await self.count("active"), 1)
 
         task = asyncio.get_running_loop().create_task(self.dequeue())
-        await self.enqueue("test")
         await asyncio.sleep(0.1)
-        self.assertEqual(await self.count("queued"), 0)
+        await self.enqueue("test")
         await task
+        self.assertEqual(await self.count("queued"), 0)
 
     async def test_dequeue_fifo(self) -> None:
         await cleanup_queue(self.queue)
@@ -258,8 +258,8 @@ class TestQueue(unittest.IsolatedAsyncioTestCase):
             counter["x"] += 1
             return counter["x"] == 2
 
-        task = asyncio.create_task(self.queue.listen([job.key], listen, timeout=0.1))
-        await asyncio.sleep(0)
+        task = asyncio.create_task(self.queue.listen([job.key], listen, timeout=1))
+        await asyncio.sleep(0.1)
         await self.queue.update(job)
         await self.queue.update(job)
         await task
@@ -720,11 +720,11 @@ class TestPostgresQueue(TestQueue):
 
     async def test_bad_connection(self) -> None:
         job = await self.enqueue("test")
-        original_connection = self.queue.connection
-        await self.queue.connection.close()
+        original_connection = self.queue._dequeue_conn
+        await original_connection.close()
         # Test dequeue still works
         self.assertEqual((await self.dequeue()), job)
         # Check queue has a new connection
-        self.assertNotEqual(original_connection, self.queue.connection)
+        self.assertNotEqual(original_connection, self.queue._dequeue_conn)
 
         await self.queue.pool.putconn(original_connection)

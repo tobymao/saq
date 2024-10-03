@@ -26,7 +26,6 @@ async def create_postgres_queue(**kwargs: t.Any) -> PostgresQueue:
         ),
     )
     await queue.connect()
-    await queue.upkeep()
     await asyncio.sleep(0.1)  # Give some time for the tasks to start
     return queue
 
@@ -34,7 +33,6 @@ async def create_postgres_queue(**kwargs: t.Any) -> PostgresQueue:
 async def cleanup_queue(queue: Queue) -> None:
     if isinstance(queue, RedisQueue):
         await queue.redis.flushdb()
-    await queue.stop()
     await queue.disconnect()
 
 
@@ -42,6 +40,7 @@ async def setup_postgres() -> None:
     async with await psycopg.AsyncConnection.connect(
         "postgres://postgres@localhost", autocommit=True
     ) as conn:
+        await conn.execute(f"DROP SCHEMA IF EXISTS {POSTGRES_TEST_SCHEMA} CASCADE")
         await conn.execute(f"CREATE SCHEMA IF NOT EXISTS {POSTGRES_TEST_SCHEMA}")
 
 

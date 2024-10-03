@@ -18,7 +18,7 @@ from saq.job import (
     Status,
     get_default_job_key,
 )
-from saq.utils import cancel_tasks, now, uuid1
+from saq.utils import now, uuid1
 
 if t.TYPE_CHECKING:
     from collections.abc import AsyncIterator, Iterable, Sequence
@@ -68,7 +68,6 @@ class Queue(ABC):
         self._dump = dump or json.dumps
         self._load = load or json.loads
         self._before_enqueues: dict[int, BeforeEnqueueType] = {}
-        self.tasks: set[asyncio.Task[t.Any]] = set()
 
     def job_id(self, job_key: str) -> str:
         return job_key
@@ -166,15 +165,6 @@ class Queue(ABC):
         from saq.queue.http import HttpQueue
 
         return HttpQueue.from_url(url, **kwargs)
-
-    async def upkeep(self) -> None:
-        """Start various upkeep tasks async."""
-
-    async def stop(self) -> None:
-        """Stop the queue and cleanup."""
-        all_tasks = list(self.tasks)
-        self.tasks.clear()
-        await cancel_tasks(all_tasks)
 
     async def connect(self) -> None:
         pass
@@ -406,7 +396,7 @@ class Queue(ABC):
         task = asyncio.create_task(self.listen(pending_job_keys, callback, timeout=None))
 
         try:
-            await asyncio.gather(*[self.enqueue(job_or_func, **kw) for kw in iter_kwargs])
+            await asyncio.gather(*(self.enqueue(job_or_func, **kw) for kw in iter_kwargs))
         except Exception:
             task.cancel()
             raise
