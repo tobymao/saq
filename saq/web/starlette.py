@@ -12,7 +12,7 @@ from starlette.exceptions import HTTPException
 from starlette.requests import Request
 from starlette.responses import FileResponse, JSONResponse, Response
 from starlette.routing import Mount, Route
-from starlette.staticfiles import NotModifiedResponse, PathLike, StaticFiles
+from starlette.staticfiles import PathLike, StaticFiles
 from starlette.types import Scope
 
 from saq.job import Job
@@ -32,17 +32,21 @@ class GZStaticFiles(StaticFiles):
     ) -> Response:
         # Check if the client accepts gzip or Brotli encoding
         headers = Headers(scope=scope)
-        encoding = headers.get('accept-encoding', '')
+        encoding = headers.get("accept-encoding", "")
+
+        # Convert path to string if it's not already
+        path_str = str(path)
 
         # Path to the file in the static directory
-        full_path = os.path.join(self.directory, path)
+        full_path = os.path.join(str(self.directory), path_str)
 
-        if 'gzip' in encoding and os.path.exists(full_path + '.gz'):
+        if "gzip" in encoding and os.path.exists(full_path + ".gz"):
             # Serve Gzip compressed file
-            return FileResponse(full_path + '.gz', headers={'Content-Encoding': 'gzip'})
+            return FileResponse(full_path + ".gz", headers={"Content-Encoding": "gzip"})
 
         # Serve the original file
-        return await super().get_response(path, scope)
+        return await super().get_response(path_str, scope)
+
 
 async def views(request: Request) -> Response:
     return Response(content=render(root_path=ROOT_PATH), media_type="text/html")
