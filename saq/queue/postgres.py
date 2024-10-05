@@ -46,6 +46,7 @@ except ModuleNotFoundError as e:
 
 CHANNEL = "saq:{}"
 ENQUEUE = "saq:enqueue"
+DEQUEUE = "saq:dequeue"
 JOBS_TABLE = "saq_jobs"
 STATS_TABLE = "saq_stats"
 
@@ -126,14 +127,11 @@ class PostgresQueue(Queue):
                 )
 
     async def connect(self) -> None:
-        if self._dequeue_conn:
-            # If connection exists, connect() was already called
+        if self.pool._opened:
             return
 
         await self.pool.open()
         await self.pool.resize(min_size=self.min_size, max_size=self.max_size)
-        # Reserve a connection for dequeue and advisory locks
-        self._dequeue_conn = await self.pool.getconn()
         await self.init_db()
 
     def serialize(self, job: Job) -> bytes | str:
@@ -531,8 +529,9 @@ class PostgresQueue(Queue):
                 )
             else:
                 async with self._listen_lock:
-                    async for _ in self._listener.listen(ENQUEUE, timeout=timeout):
-                        await self._dequeue()
+                    async for payload in self._listener.listen(ENQUEUE, DEQUEUE, timeout=timeout):
+                        if payload["key"] == ENQUEUE:
+                            await self._dequeue()
 
                         if not self._job_queue.empty():
                             job = self._job_queue.get_nowait()
@@ -546,6 +545,53 @@ class PostgresQueue(Queue):
             self._job_queue.task_done()
 
         return job
+
+    async def _dequeue(self) -> None:
+        if self._dequeue_lock.locked():
+            return
+
+        async with self._dequeue_lock:
+            async with self._get_dequeue_conn() as conn, conn.cursor() as cursor, conn.transaction():
+                if not self._waiting:
+                    return
+                await cursor.execute(
+                    SQL(
+                        dedent(
+                            """
+                            WITH locked_job AS (
+                              SELECT key, lock_key
+                              FROM {jobs_table}
+                              WHERE status = 'queued'
+                                AND queue = %(queue)s
+                                AND %(now)s >= scheduled
+                              ORDER BY scheduled
+                              LIMIT %(limit)s
+                              FOR UPDATE SKIP LOCKED
+                            )
+                            UPDATE {jobs_table} SET status = 'active'
+                            FROM locked_job
+                            WHERE {jobs_table}.key = locked_job.key
+                              AND pg_try_advisory_lock({job_lock_keyspace}, locked_job.lock_key)
+                            RETURNING job
+                            """
+                        )
+                    ).format(
+                        jobs_table=self.jobs_table,
+                        job_lock_keyspace=self.job_lock_keyspace,
+                    ),
+                    {
+                        "queue": self.name,
+                        "now": math.ceil(seconds(now())),
+                        "limit": self._waiting,
+                    },
+                )
+                results = await cursor.fetchall()
+
+            for result in results:
+                self._job_queue.put_nowait(self.deserialize(result[0]))
+
+            if results:
+                await self._notify(DEQUEUE)
 
     async def _enqueue(self, job: Job) -> Job | None:
         async with self.pool.connection() as conn, conn.cursor() as cursor:
@@ -676,49 +722,6 @@ class PostgresQueue(Queue):
                 await self.notify(job, conn)
             await self._release_job(key)
 
-    async def _dequeue(self) -> None:
-        if self._dequeue_lock.locked():
-            return
-
-        async with self._dequeue_lock:
-            async with self._get_dequeue_conn() as conn, conn.cursor() as cursor, conn.transaction():
-                if not self._waiting:
-                    return
-                await cursor.execute(
-                    SQL(
-                        dedent(
-                            """
-                            WITH locked_job AS (
-                              SELECT key, lock_key
-                              FROM {jobs_table}
-                              WHERE status = 'queued'
-                                AND queue = %(queue)s
-                                AND %(now)s >= scheduled
-                              ORDER BY scheduled
-                              LIMIT %(limit)s
-                              FOR UPDATE SKIP LOCKED
-                            )
-                            UPDATE {jobs_table} SET status = 'active'
-                            FROM locked_job
-                            WHERE {jobs_table}.key = locked_job.key
-                              AND pg_try_advisory_lock({job_lock_keyspace}, locked_job.lock_key)
-                            RETURNING job
-                            """
-                        )
-                    ).format(
-                        jobs_table=self.jobs_table,
-                        job_lock_keyspace=self.job_lock_keyspace,
-                    ),
-                    {
-                        "queue": self.name,
-                        "now": math.ceil(seconds(now())),
-                        "limit": self._waiting,
-                    },
-                )
-                results = await cursor.fetchall()
-            for result in results:
-                self._job_queue.put_nowait(self.deserialize(result[0]))
-
     async def _notify(
         self, key: str, data: t.Any | None = None, connection: AsyncConnection | None = None
     ) -> None:
@@ -736,14 +739,16 @@ class PostgresQueue(Queue):
 
     @asynccontextmanager
     async def _get_dequeue_conn(self) -> t.AsyncGenerator:
-        assert self._dequeue_conn
         async with self._connection_lock:
-            try:
-                # Pool normally performs this check when getting a connection.
-                await self.pool.check_connection(self._dequeue_conn)
-            except OperationalError:
-                # The connection is bad so return it to the pool and get a new one.
-                await self.pool.putconn(self._dequeue_conn)
+            if self._dequeue_conn:
+                try:
+                    # Pool normally performs this check when getting a connection.
+                    await self.pool.check_connection(self._dequeue_conn)
+                except OperationalError:
+                    # The connection is bad so return it to the pool and get a new one.
+                    await self.pool.putconn(self._dequeue_conn)
+                    self._dequeue_conn = await self.pool.getconn()
+            else:
                 self._dequeue_conn = await self.pool.getconn()
             yield self._dequeue_conn
 
