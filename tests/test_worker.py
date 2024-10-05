@@ -482,6 +482,22 @@ class TestWorker(unittest.IsolatedAsyncioTestCase):
         await asyncio.sleep(6)
         self.assertEqual(state["counter"], 0)
 
+    async def test_cron_solo_worker(self) -> None:
+        state = {"counter": 0}
+
+        async def handler(_ctx: Context) -> None:
+            state["counter"] += 1
+
+        self.worker = Worker(
+            self.queue,
+            functions=[],
+            cron_jobs=[CronJob(handler, cron="* * * * * */1")],
+            concurrency=1,
+        )
+        asyncio.create_task(self.worker.start())
+        await asyncio.sleep(2)
+        self.assertGreater(state["counter"], 0)
+
 
 class TestWorkerRedisQueue(TestWorker):
     async def asyncSetUp(self) -> None:

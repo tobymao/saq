@@ -720,7 +720,10 @@ class TestPostgresQueue(TestQueue):
 
     async def test_bad_connection(self) -> None:
         job = await self.enqueue("test")
-        original_connection = self.queue._dequeue_conn
+
+        async with self.queue._get_dequeue_conn() as original_connection:
+            pass
+
         await original_connection.close()
         # Test dequeue still works
         self.assertEqual((await self.dequeue()), job)
