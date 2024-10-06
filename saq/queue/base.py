@@ -157,9 +157,8 @@ class Queue(ABC):
 
             return RedisQueue.from_url(url, **kwargs)
         if url.startswith("postgres+asyncpg"):
-            from saq.queue.postgres_asyncpg import PostgresQueue
-
-            return PostgresQueue.from_url(url.replace("postgres+asyncpg", "postgres"), **kwargs)
+            from saq.queue.postgres_asyncpg import PostgresAsyncpgQueue
+            return PostgresAsyncpgQueue.from_url(url.replace("postgres+asyncpg", "postgres"), **kwargs)
         if url.startswith("postgres"):
             from saq.queue.postgres import PostgresQueue
 

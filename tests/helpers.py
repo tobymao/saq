@@ -6,7 +6,7 @@ import psycopg
 
 from saq.queue import Queue
 from saq.queue.postgres import PostgresQueue
-from saq.queue.postgres_asyncpg import PostgresQueue as AsyncpgPostgresQueue
+from saq.queue.postgres_asyncpg import PostgresAsyncpgQueue as AsyncpgPostgresQueue
 from saq.queue.redis import RedisQueue
 
 POSTGRES_TEST_SCHEMA = "test_saq"
@@ -62,9 +62,8 @@ async def create_postgres_asyncpg_queue(**kwargs: t.Any) -> AsyncpgPostgresQueue
             f"postgres+asyncpg://postgres@localhost?options=--search_path%3D{POSTGRES_TEST_SCHEMA}",
             **kwargs,
         ),
-    ) 
+    )  
     await queue.connect()
-    await queue.upkeep()
     await asyncio.sleep(0.1)  # Give some time for the tasks to start
     return queue
 

@@ -30,7 +30,7 @@ if t.TYPE_CHECKING:
     from unittest.mock import MagicMock
 
     from saq.queue.postgres import PostgresQueue
-    from saq.queue.postgres_asyncpg import PostgresQueue as AsyncpgPostgresQueue
+    from saq.queue.postgres_asyncpg import PostgresAsyncpgQueue as AsyncpgPostgresQueue
     from saq.queue.redis import RedisQueue
     from saq.types import Context, CountKind, Function
 
