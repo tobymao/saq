@@ -908,9 +908,9 @@ class TestAsyncpgPostgresQueue(TestQueue):
                     """
                 SELECT stats
                 FROM {}
-                WHERE worker_id = %s
+                WHERE worker_id = $1
                 """.format(self.queue.stats_table),
-                (self.queue.uuid,),
+                self.queue.uuid
             )
             self.assertIsNone(result)
 
@@ -924,9 +924,9 @@ class TestAsyncpgPostgresQueue(TestQueue):
                     """
                 SELECT stats
                 FROM {}
-                WHERE worker_id = %s
+                WHERE worker_id = $1
                 """.format(self.queue.stats_table),
-                (self.queue.uuid,),
+                self.queue.uuid
             )
             self.assertIsNotNone(result)
 
@@ -934,19 +934,19 @@ class TestAsyncpgPostgresQueue(TestQueue):
         query =  """
         SELECT count(*)
         FROM {} JOIN pg_locks ON lock_key = objid
-        WHERE key = $key
+        WHERE key = $1
           AND classid = {}
           AND objsubid = 2 -- key is int pair, not single bigint
         """.format(self.queue.jobs_table, self.queue.job_lock_keyspace)
         job = await self.enqueue("test")
         await self.dequeue()
         async with self.queue.pool.acquire() as conn :
-            result = await conn.fetchval(query, {"key": job.key})
+            result = await conn.fetchval(query, job.key)
             self.assertEqual(result, 1)
 
         await self.finish(job, Status.COMPLETE, result=1)
         async with self.queue.pool.acquire() as conn :
-            result = await conn.execute(query, {"key": job.key})
+            result = await conn.execute(query, job.key)
             self.assertEqual(result, (0,))
 
     async def test_load_dump_pickle(self) -> None:
@@ -1025,12 +1025,13 @@ class TestAsyncpgPostgresQueue(TestQueue):
 
     async def test_bad_connection(self) -> None:
         job = await self.enqueue("test")
-        original_connection = self.queue.connection
-        await self.queue.connection.close()
+        original_connection = self.queue._dequeue_conn
+        if self.queue._dequeue_conn:
+            await self.queue._dequeue_conn.close()
         # Test dequeue still works
         self.assertEqual((await self.dequeue()), job)
         # Check queue has a new connection
-        self.assertNotEqual(original_connection, self.queue.connection)
+        self.assertNotEqual(original_connection,self.queue._dequeue_conn)
  
 
     async def test_group_key(self) -> None:
