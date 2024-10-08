@@ -7,7 +7,6 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import math
 import time
 import typing as t
 from contextlib import asynccontextmanager
@@ -211,7 +210,7 @@ class PostgresQueue(Queue):
                             """
                         )
                     ).format(jobs_table=self.jobs_table),
-                    {"queue": self.name, "now": math.ceil(seconds(now()))},
+                    {"queue": self.name, "now": seconds(now())},
                 )
             elif kind == "active":
                 await cursor.execute(
@@ -288,7 +287,7 @@ class PostgresQueue(Queue):
                 ),
                 {
                     "queue": self.name,
-                    "now": math.ceil(seconds(now())),
+                    "now": seconds(now()),
                 },
             )
 
@@ -306,7 +305,7 @@ class PostgresQueue(Queue):
                     stats_table=self.stats_table,
                 ),
                 {
-                    "now": math.ceil(seconds(now())),
+                    "now": seconds(now()),
                 },
             )
 
@@ -581,7 +580,7 @@ class PostgresQueue(Queue):
                     ),
                     {
                         "queue": self.name,
-                        "now": math.ceil(seconds(now())),
+                        "now": seconds(now()),
                         "limit": self._waiting,
                     },
                 )
@@ -620,7 +619,7 @@ class PostgresQueue(Queue):
                     "job": self.serialize(job),
                     "queue": self.name,
                     "status": job.status,
-                    "scheduled": job.scheduled or seconds(now()),
+                    "scheduled": job.scheduled or int(seconds(now())),
                 },
             )
 
