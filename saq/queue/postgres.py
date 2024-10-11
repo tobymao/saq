@@ -119,7 +119,16 @@ class PostgresQueue(Queue):
         self._listen_lock = asyncio.Lock()
 
     async def init_db(self) -> None:
-        async with self.pool.connection() as conn, conn.cursor() as cursor:
+        async with self.pool.connection() as conn, conn.cursor() as cursor, conn.transaction():
+            await cursor.execute(
+                SQL("SELECT pg_try_advisory_lock(%(key1)s, 0)"),
+                {"key1": self.saq_lock_keyspace},
+            )
+            result = await cursor.fetchone()
+
+            if result and not result[0]:
+                return
+
             for statement in DDL_STATEMENTS:
                 await cursor.execute(
                     SQL(statement).format(jobs_table=self.jobs_table, stats_table=self.stats_table)
