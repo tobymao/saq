@@ -570,7 +570,7 @@ class TestPostgresQueue(TestQueue):
         job2 = await self.enqueue("test", ttl=60)
         await self.queue.finish(job1, Status.COMPLETE)
         await self.queue.finish(job2, Status.COMPLETE)
-        await asyncio.sleep(1)
+        await asyncio.sleep(1.5)
 
         await self.queue.sweep()
         with self.assertRaisesRegex(RuntimeError, "doesn't exist"):
@@ -581,7 +581,7 @@ class TestPostgresQueue(TestQueue):
     async def test_sweep_stats(self) -> None:
         # Stats are deleted
         await self.queue.stats(ttl=1)
-        await asyncio.sleep(1)
+        await asyncio.sleep(1.5)
         await self.queue.sweep()
         async with self.queue.pool.connection() as conn, conn.cursor() as cursor:
             await cursor.execute(
