@@ -95,6 +95,13 @@ class PostgresAsyncpgQueue(Queue):
 
     async def init_db(self) -> None:
         async with self.with_connection() as conn, conn.transaction():
+            cursor = await conn.cursor(
+                 "SELECT pg_try_advisory_lock($1, 0)",  self.saq_lock_keyspace,
+            )
+            result = await cursor.fetchrow()
+
+            if result and not result[0]:
+                return
             for statement in DDL_STATEMENTS:
                 await conn.execute(
                     statement.format(
