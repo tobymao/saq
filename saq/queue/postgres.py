@@ -11,7 +11,6 @@ import time
 import typing as t
 from contextlib import asynccontextmanager
 from textwrap import dedent
-
 from saq.errors import MissingDependencyError
 from saq.job import (
     Job,
@@ -23,8 +22,7 @@ from saq.queue.postgres_ddl import DDL_STATEMENTS
 from saq.utils import now, seconds
 
 if t.TYPE_CHECKING:
-    from collections.abc import Iterable
-
+    from collections.abc import AsyncGenerator, Iterable
     from saq.types import (
         CountKind,
         ListenCallback,
@@ -131,7 +129,7 @@ class PostgresQueue(Queue):
     @asynccontextmanager
     async def with_connection(
         self, connection: PoolConnectionProxy | None = None
-    ) -> t.AsyncGenerator[PoolConnectionProxy]:
+    ) -> AsyncGenerator[PoolConnectionProxy]:
         async with self.nullcontext(connection) if connection else self.pool.acquire() as conn:  # type: ignore[attr-defined]
             yield conn
 
@@ -216,7 +214,7 @@ class PostgresQueue(Queue):
             if kind == "queued":
                 result = await conn.fetchval(
                     dedent(f"""
-                    SELECT count(*) 
+                    SELECT count(*)
                     FROM {self.jobs_table}
                     WHERE status = 'queued'
                       AND queue = $1
@@ -227,7 +225,7 @@ class PostgresQueue(Queue):
             elif kind == "active":
                 result = await conn.fetchval(
                     dedent(f"""
-                    SELECT count(*) 
+                    SELECT count(*)
                     FROM {self.jobs_table}
                     WHERE status = 'active'
                       AND queue = $1
@@ -237,7 +235,7 @@ class PostgresQueue(Queue):
             elif kind == "incomplete":
                 result = await conn.fetchval(
                     dedent(f"""
-                    SELECT count(*) 
+                    SELECT count(*)
                     FROM {self.jobs_table}
                     WHERE status IN ('new', 'deferred', 'queued', 'active')
                       AND queue = $1
@@ -259,7 +257,7 @@ class PostgresQueue(Queue):
 
         if not self._has_sweep_lock:
             # Attempt to get the sweep lock and hold on to it
-            async with self._get_dequeue_conn() as conn:
+            async with self._get_dequeue_conn() as conn, conn.transaction():
                 result = await conn.fetchval(
                     dedent("SELECT pg_try_advisory_lock($1, hashtext($2))"),
                     self.saq_lock_keyspace,
@@ -654,7 +652,7 @@ class PostgresQueue(Queue):
             await conn.execute(f"NOTIFY \"{self._channel}\", '{json.dumps(payload)}'")
 
     @asynccontextmanager
-    async def _get_dequeue_conn(self) -> t.AsyncGenerator:
+    async def _get_dequeue_conn(self) -> AsyncGenerator:
         async with self._connection_lock:
             if self._dequeue_conn:
                 try:
@@ -670,7 +668,7 @@ class PostgresQueue(Queue):
             yield self._dequeue_conn
 
     @asynccontextmanager
-    async def nullcontext(self, enter_result: ContextT) -> t.AsyncGenerator[ContextT]:
+    async def nullcontext(self, enter_result: ContextT) -> AsyncGenerator[ContextT]:
         """Async version of contextlib.nullcontext
 
         Async support has been added to contextlib.nullcontext in Python 3.10.
