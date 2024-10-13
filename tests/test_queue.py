@@ -721,14 +721,9 @@ class TestPostgresQueue(TestQueue):
             result = await cursor.fetchone()
             self.assertIsNone(result)
 
-    @mock.patch("saq.utils.time")
-    async def test_cron_job_close_to_target(self, mock_time: MagicMock) -> None:
-        mock_time.time.return_value = 1000.5
-        await self.enqueue("test", scheduled=1001)
-
-        # The job is scheduled to run at 1001, but we're running at 1000.5
-        # so it should not be picked up
-        job = await self.queue.dequeue(timeout=1)
+    async def test_cron_job_close_to_target(self) -> None:
+        await self.enqueue("test", scheduled=time.time() + 0.5)
+        job = await self.queue.dequeue(timeout=0.1)
         assert not job
 
     async def test_bad_connection(self) -> None:
@@ -762,7 +757,6 @@ class TestPostgresQueue(TestQueue):
         assert await self.enqueue("test", priority=-1)
         self.assertEqual(await self.count("queued"), 1)
         assert not await self.queue.dequeue(0.01)
-
 
 class TestAsyncpgPostgresQueue(TestQueue):
     async def asyncSetUp(self) -> None:
