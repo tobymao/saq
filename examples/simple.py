@@ -19,7 +19,10 @@ async def cron_job(ctx):
     print("executing cron job")
 
 
+queue = Queue.from_url("postgres://postgres@localhost")
+
 settings = {
+    "queue": queue,
     "functions": [sleeper, adder],
     "concurrency": 100,
     "cron_jobs": [CronJob(cron_job, cron="* * * * * */5")],
@@ -33,7 +36,6 @@ settings = {
 
 
 async def enqueue(func, **kwargs):
-    queue = Queue.from_url("redis://localhost")
     for _ in range(10000):
         await queue.enqueue(func, **{k: v() for k, v in kwargs.items()})
 

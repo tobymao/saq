@@ -2,7 +2,7 @@ import asyncio
 import sys
 import time
 
-from benchmarks.funcs import *
+from funcs import *
 
 
 SEM = asyncio.Semaphore(20)
@@ -68,6 +68,8 @@ async def bench_saq(url: str):
     while await queue.count("incomplete"):
         await asyncio.sleep(0.1)
     print(f"SAQ process {N} sleep {time.time() - now}")
+    await worker.stop()
+    await queue.disconnect()
 
 
 def bench_rq():

@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import contextvars
 import logging
-import time
 import typing as t
 import unittest
 from unittest import mock
@@ -522,8 +521,7 @@ class TestWorkerPostgresQueue(TestWorker):
         self.skipTest("Not implemented")
 
     @mock.patch("saq.worker.logger")
-    @mock.patch("saq.utils.time")
-    async def test_cron(self, mock_time: MagicMock, mock_logger: MagicMock) -> None:
+    async def test_cron(self, mock_logger: MagicMock) -> None:
         with self.assertRaises(ValueError):
             Worker(
                 self.queue,
@@ -534,15 +532,15 @@ class TestWorkerPostgresQueue(TestWorker):
         worker = Worker(
             self.queue,
             functions=functions,
-            cron_jobs=[CronJob(cron, cron="* * * * *")],
+            cron_jobs=[CronJob(cron, cron="* * * * * *")],
         )
         self.assertEqual(await self.queue.count("queued"), 0)
         self.assertEqual(await self.queue.count("incomplete"), 0)
         await worker.schedule()
         self.assertEqual(await self.queue.count("queued"), 0)
         self.assertEqual(await self.queue.count("incomplete"), 1)
+        await asyncio.sleep(1)
 
-        mock_time.time.return_value = time.time() + 60
         self.assertEqual(await self.queue.count("queued"), 1)
         self.assertEqual(await self.queue.count("incomplete"), 1)
 
