@@ -80,7 +80,7 @@ class PostgresQueue(Queue):
         min_size: int = 4,
         max_size: int = 20,
         **kwargs: t.Any,
-    ) -> PostgresQueue: 
+    ) -> PostgresQueue:
         """Create a queue from a postgres url.
 
         Args:
@@ -90,8 +90,8 @@ class PostgresQueue(Queue):
             max_size: maximum pool size. (default 20)
                 If greater than 0, this limits the maximum number of connections to Postgres.
                 Otherwise, maintain `min_size` number of connections.
-            
-        """ 
+
+        """
         return cls(create_pool(dsn=url, min_size=min_size, max_size=max_size), **kwargs)
 
     def __init__(
@@ -111,7 +111,7 @@ class PostgresQueue(Queue):
 
         self.jobs_table = jobs_table
         self.stats_table = stats_table
-        self.pool = pool 
+        self.pool = pool
         self.poll_interval = poll_interval
         self.saq_lock_keyspace = saq_lock_keyspace
         self.job_lock_keyspace = job_lock_keyspace
@@ -132,15 +132,14 @@ class PostgresQueue(Queue):
     async def with_connection(
         self, connection: PoolConnectionProxy | None = None
     ) -> t.AsyncGenerator[PoolConnectionProxy]:
-        async with self.nullcontext(
-            connection
-        ) if connection else self.pool.acquire() as conn:  # type: ignore[attr-defined]
+        async with self.nullcontext(connection) if connection else self.pool.acquire() as conn:  # type: ignore[attr-defined]
             yield conn
 
     async def init_db(self) -> None:
         async with self.with_connection() as conn, conn.transaction():
             cursor = await conn.cursor(
-                 "SELECT pg_try_advisory_lock($1, 0)",  self.saq_lock_keyspace,
+                "SELECT pg_try_advisory_lock($1, 0)",
+                self.saq_lock_keyspace,
             )
             result = await cursor.fetchrow()
 
@@ -148,10 +147,8 @@ class PostgresQueue(Queue):
                 return
             for statement in DDL_STATEMENTS:
                 await conn.execute(
-                    statement.format(
-                        jobs_table=self.jobs_table, stats_table=self.stats_table
-                    )
-                ) 
+                    statement.format(jobs_table=self.jobs_table, stats_table=self.stats_table)
+                )
 
     async def connect(self) -> None:
         if self._dequeue_conn:
@@ -225,7 +222,7 @@ class PostgresQueue(Queue):
                       AND queue = $1
                       AND NOW() >= TO_TIMESTAMP(scheduled)
                     """),
-                    self.name, 
+                    self.name,
                 )
             elif kind == "active":
                 result = await conn.fetchval(
@@ -259,7 +256,7 @@ class PostgresQueue(Queue):
     async def sweep(self, lock: int = 60, abort: float = 5.0) -> list[str]:
         """Delete jobs and stats past their expiration and sweep stuck jobs"""
         swept = []
-        
+
         if not self._has_sweep_lock:
             # Attempt to get the sweep lock and hold on to it
             async with self._get_dequeue_conn() as conn:
@@ -273,7 +270,7 @@ class PostgresQueue(Queue):
                 return []
             self._has_sweep_lock = True
 
-        async with self.with_connection() as conn, conn.transaction(): 
+        async with self.with_connection() as conn, conn.transaction():
             await conn.execute(
                 dedent(f"""
                 -- Delete expired jobs
@@ -282,14 +279,14 @@ class PostgresQueue(Queue):
                 AND status IN ('aborted', 'complete', 'failed')
                 AND NOW() >= TO_TIMESTAMP(expire_at)
                 """),
-                self.name, 
+                self.name,
             )
             await conn.execute(
                 dedent(f"""
                 -- Delete expired stats
                 DELETE FROM {self.stats_table}
                 WHERE NOW() >= TO_TIMESTAMP(expire_at);
-                """), 
+                """),
             )
             results = await conn.fetch(
                 dedent(
@@ -354,9 +351,7 @@ class PostgresQueue(Queue):
             if stop:
                 break
 
-    async def notify(
-        self, job: Job, connection: PoolConnectionProxy | None = None
-    ) -> None:
+    async def notify(self, job: Job, connection: PoolConnectionProxy | None = None) -> None:
         await self._notify(job.key, job.status, connection)
 
     async def update(
@@ -400,15 +395,13 @@ class PostgresQueue(Queue):
 
     async def job(self, job_key: str) -> Job | None:
         async with self.with_connection() as conn, conn.transaction():
-            cursor = await conn.cursor(
-                f"SELECT job FROM {self.jobs_table} WHERE key = $1", job_key
-            )
+            cursor = await conn.cursor(f"SELECT job FROM {self.jobs_table} WHERE key = $1", job_key)
             record = await cursor.fetchrow()
             return self.deserialize(record.get("job")) if record else None
 
     async def jobs(self, job_keys: Iterable[str]) -> t.List[Job | None]:
         keys = list(job_keys)
-        results: dict[str, bytes | None]  = {}
+        results: dict[str, bytes | None] = {}
         async with self.with_connection() as conn, conn.transaction():
             async for record in conn.cursor(
                 f"SELECT key, job FROM {self.jobs_table} WHERE key = ANY($1)", keys
@@ -607,7 +600,7 @@ class PostgresQueue(Queue):
                 {"FOR UPDATE" if for_update else ""}
                 """),
                 key,
-            ) 
+            )
             assert result
             return result
 
@@ -643,7 +636,7 @@ class PostgresQueue(Queue):
                     """),
                     key,
                 )
-                await self.notify(job, conn) 
+                await self.notify(job, conn)
         await self._release_job(key)
 
     async def _notify(

@@ -8,18 +8,17 @@ import typing as t
 import unittest
 from unittest import mock
 
-from psycopg.sql import SQL
 
 from saq.job import Job, Status
 from saq.queue import JobError, Queue
 from saq.utils import uuid1
 from saq.worker import Worker
 from tests.helpers import (
-    cleanup_queue, 
+    cleanup_queue,
     create_postgres_queue,
     create_redis_queue,
-    setup_postgres, 
-    teardown_postgres, 
+    setup_postgres,
+    teardown_postgres,
 )
 
 
@@ -583,12 +582,13 @@ class TestPostgresQueue(TestQueue):
         await asyncio.sleep(1.5)
         await self.queue.sweep()
         async with self.queue.pool.acquire() as conn, conn.transaction():
-            cursor  = await conn.cursor("""
+            cursor = await conn.cursor(
+                """
                 SELECT stats
                 FROM {}
                 WHERE worker_id = $1
                 """.format(self.queue.stats_table),
-                self.queue.uuid
+                self.queue.uuid,
             )
             self.assertIsNone(await cursor.fetchrow())
 
@@ -597,19 +597,18 @@ class TestPostgresQueue(TestQueue):
         await asyncio.sleep(1)
         await self.queue.sweep()
         async with self.queue.pool.acquire() as conn, conn.transaction():
-            cursor  = await conn.cursor(
-
-                    """
+            cursor = await conn.cursor(
+                """
                 SELECT stats
                 FROM {}
                 WHERE worker_id = $1
                 """.format(self.queue.stats_table),
-                self.queue.uuid
+                self.queue.uuid,
             )
             self.assertIsNotNone(await cursor.fetchrow())
 
     async def test_job_lock(self) -> None:
-        query =  """
+        query = """
         SELECT count(*)
         FROM {} JOIN pg_locks ON lock_key = objid
         WHERE key = $1
@@ -632,11 +631,12 @@ class TestPostgresQueue(TestQueue):
         job = await self.enqueue("test")
 
         async with self.queue.pool.acquire() as conn, conn.transaction():
-            result = await conn.fetchrow("""
+            result = await conn.fetchrow(
+                """
                 SELECT job
                 FROM {}
                 WHERE key =$1
-                """ .format(self.queue.jobs_table),
+                """.format(self.queue.jobs_table),
                 job.key,
             )
             assert result
@@ -655,15 +655,14 @@ class TestPostgresQueue(TestQueue):
         await self.finish(job, Status.COMPLETE)
         async with self.queue.pool.acquire() as conn:
             result = await conn.fetchval(
-
-                    """
+                """
                 SELECT expire_at
                 FROM {}
                 WHERE key = $1
                 """.format(self.queue.jobs_table),
                 job.key,
             )
-            self.assertEqual(result,5)
+            self.assertEqual(result, 5)
 
     @mock.patch("saq.utils.time")
     async def test_finish_ttl_neutral(self, mock_time: MagicMock) -> None:
@@ -671,17 +670,16 @@ class TestPostgresQueue(TestQueue):
         job = await self.enqueue("test", ttl=0)
         await self.dequeue()
         await self.finish(job, Status.COMPLETE)
-        async with self.queue.pool.acquire() as conn :
+        async with self.queue.pool.acquire() as conn:
             result = await conn.fetchval(
-
-                    """
+                """
                 SELECT expire_at
                 FROM {}
                 WHERE key = $1
-                """ .format(self.queue.jobs_table),
+                """.format(self.queue.jobs_table),
                 job.key,
             )
-            self.assertEqual(result,None)
+            self.assertEqual(result, None)
 
     @mock.patch("saq.utils.time")
     async def test_finish_ttl_negative(self, mock_time: MagicMock) -> None:
@@ -689,13 +687,13 @@ class TestPostgresQueue(TestQueue):
         job = await self.enqueue("test", ttl=-1)
         await self.dequeue()
         await self.finish(job, Status.COMPLETE)
-        async with self.queue.pool.acquire() as conn :
+        async with self.queue.pool.acquire() as conn:
             result = await conn.fetchval(
-            """
+                """
                 SELECT expire_at
                 FROM {}
                 WHERE key = $1
-                """ .format(self.queue.jobs_table),
+                """.format(self.queue.jobs_table),
                 job.key,
             )
             self.assertIsNone(result)
@@ -713,7 +711,7 @@ class TestPostgresQueue(TestQueue):
         # Test dequeue still works
         self.assertEqual((await self.dequeue()), job)
         # Check queue has a new connection
-        self.assertNotEqual(original_connection,self.queue._dequeue_conn)
+        self.assertNotEqual(original_connection, self.queue._dequeue_conn)
 
     async def test_group_key(self) -> None:
         job1 = await self.enqueue("test", group_key=1)

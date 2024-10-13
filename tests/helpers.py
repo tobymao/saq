@@ -2,7 +2,6 @@ import asyncio
 import typing as t
 
 import asyncpg
-import psycopg
 
 from saq.queue import Queue
 from saq.queue.postgres import PostgresQueue
