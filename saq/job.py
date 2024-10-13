@@ -101,14 +101,16 @@ class Job:
     Don't set these, but you can read them.
 
     Parameters:
-        attempts (int): number of attempts a job has had
-        completed (int): job completion time epoch seconds
-        queued (int): job enqueued time epoch seconds
-        started (int): job started time epoch seconds
-        touched (int): job touched/updated time epoch seconds
+        attempts: number of attempts a job has had
+        completed: job completion time epoch seconds
+        queued: job enqueued time epoch seconds
+        started: job started time epoch seconds
+        touched: job touched/updated time epoch seconds
         result: payload containing the results, this is the return of the function provided, must be serializable, defaults to json
-        error (str | None): stack trace if a runtime error occurs
-        status (Status): Status Enum, default to Status.New
+        error: stack trace if a runtime error occurs
+        status: Status Enum, default to Status.New
+        priority: The priority of a job, only available in postgres.
+        group_key: Only one job per group can be active at any time, only available in postgres.
     """
 
     function: str
@@ -131,6 +133,8 @@ class Job:
     result: t.Any = None
     error: str | None = None
     status: Status = Status.NEW
+    priority: int = 0
+    group_key: str | None = None
     meta: dict[t.Any, t.Any] = dataclasses.field(default_factory=dict)
 
     _EXCLUDE_NON_FULL = {

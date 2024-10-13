@@ -72,6 +72,7 @@ class PostgresQueue(Queue):
         saq_lock_keyspace: The first of two advisory lock keys used by SAQ. (default 0)
             SAQ uses advisory locks for coordinating tasks between its workers, e.g. sweeping.
         job_lock_keyspace: The first of two advisory lock keys used for jobs. (default 1)
+        priorities: The priority range to dequeue (default (0, 32767))
     """
 
     @classmethod
@@ -95,6 +96,7 @@ class PostgresQueue(Queue):
         poll_interval: int = 1,
         saq_lock_keyspace: int = 0,
         job_lock_keyspace: int = 1,
+        priorities: tuple[int, int] = (0, 32767),
     ) -> None:
         super().__init__(name=name, dump=dump, load=load)
 
@@ -106,6 +108,7 @@ class PostgresQueue(Queue):
         self.poll_interval = poll_interval
         self.saq_lock_keyspace = saq_lock_keyspace
         self.job_lock_keyspace = job_lock_keyspace
+        self._priorities = priorities
 
         self._job_queue: asyncio.Queue = asyncio.Queue()
         self._waiting = 0  # Internal counter of worker tasks waiting for dequeue
@@ -165,11 +168,10 @@ class PostgresQueue(Queue):
                     dedent(
                         """
                         SELECT worker_id, stats FROM {stats_table}
-                        WHERE %(now)s <= expire_at
+                        WHERE NOW() <= TO_TIMESTAMP(expire_at)
                         """
                     )
                 ).format(stats_table=self.stats_table),
-                {"now": seconds(now())},
             )
             results = await cursor.fetchall()
         workers: dict[str, dict[str, t.Any]] = dict(results)
@@ -212,14 +214,15 @@ class PostgresQueue(Queue):
                     SQL(
                         dedent(
                             """
-                            SELECT count(*) FROM {jobs_table}
+                            SELECT count(*)
+                            FROM {jobs_table}
                             WHERE status = 'queued'
                               AND queue = %(queue)s
-                              AND %(now)s >= scheduled
+                              AND NOW() >= TO_TIMESTAMP(scheduled)
                             """
                         )
                     ).format(jobs_table=self.jobs_table),
-                    {"queue": self.name, "now": seconds(now())},
+                    {"queue": self.name},
                 )
             elif kind == "active":
                 await cursor.execute(
@@ -287,7 +290,7 @@ class PostgresQueue(Queue):
                         DELETE FROM {jobs_table}
                         WHERE queue = %(queue)s
                           AND status IN ('aborted', 'complete', 'failed')
-                          AND %(now)s >= expire_at;
+                          AND NOW() >= TO_TIMESTAMP(expire_at);
                         """
                     )
                 ).format(
@@ -296,7 +299,6 @@ class PostgresQueue(Queue):
                 ),
                 {
                     "queue": self.name,
-                    "now": seconds(now()),
                 },
             )
 
@@ -306,16 +308,13 @@ class PostgresQueue(Queue):
                         """
                         -- Delete expired stats
                         DELETE FROM {stats_table}
-                        WHERE %(now)s >= expire_at;
+                        WHERE NOW() >= TO_TIMESTAMP(expire_at);
                         """
                     )
                 ).format(
                     jobs_table=self.jobs_table,
                     stats_table=self.stats_table,
                 ),
-                {
-                    "now": seconds(now()),
-                },
             )
 
             await cursor.execute(
@@ -571,8 +570,16 @@ class PostgresQueue(Queue):
                               FROM {jobs_table}
                               WHERE status = 'queued'
                                 AND queue = %(queue)s
-                                AND %(now)s >= scheduled
-                              ORDER BY scheduled
+                                AND NOW() >= TO_TIMESTAMP(scheduled)
+                                AND priority BETWEEN %(plow)s AND %(phigh)s
+                                AND group_key NOT IN (
+                                  SELECT DISTINCT group_key
+                                  FROM {jobs_table}
+                                  WHERE status = 'active'
+                                    AND queue = %(queue)s
+                                    AND group_key IS NOT NULL
+                                )
+                              ORDER BY priority, scheduled
                               LIMIT %(limit)s
                               FOR UPDATE SKIP LOCKED
                             )
@@ -589,8 +596,9 @@ class PostgresQueue(Queue):
                     ),
                     {
                         "queue": self.name,
-                        "now": seconds(now()),
                         "limit": self._waiting,
+                        "plow": self._priorities[0],
+                        "phigh": self._priorities[1],
                     },
                 )
                 results = await cursor.fetchall()
@@ -607,13 +615,31 @@ class PostgresQueue(Queue):
                 SQL(
                     dedent(
                         """
-                        INSERT INTO {jobs_table} (key, job, queue, status, scheduled)
-                        VALUES (%(key)s, %(job)s, %(queue)s, %(status)s, %(scheduled)s)
+                        INSERT INTO {jobs_table} (
+                          key,
+                          job,
+                          queue,
+                          status,
+                          priority,
+                          group_key,
+                          scheduled
+                        )
+                        VALUES (
+                          %(key)s,
+                          %(job)s,
+                          %(queue)s,
+                          %(status)s,
+                          %(priority)s,
+                          %(group_key)s,
+                          %(scheduled)s
+                        )
                         ON CONFLICT (key) DO UPDATE
                         SET
                           job = %(job)s,
                           queue = %(queue)s,
                           status = %(status)s,
+                          priority = %(priority)s,
+                          group_key = %(group_key)s,
                           scheduled = %(scheduled)s,
                           expire_at = null
                         WHERE
@@ -628,6 +654,8 @@ class PostgresQueue(Queue):
                     "job": self.serialize(job),
                     "queue": self.name,
                     "status": job.status,
+                    "priority": job.priority,
+                    "group_key": job.group_key,
                     "scheduled": job.scheduled or int(seconds(now())),
                 },
             )
@@ -645,16 +673,16 @@ class PostgresQueue(Queue):
                     dedent(
                         """
                         INSERT INTO {stats_table} (worker_id, stats, expire_at)
-                        VALUES (%(worker_id)s, %(stats)s, %(expire_at)s)
+                        VALUES (%(worker_id)s, %(stats)s, EXTRACT(EPOCH FROM NOW()) + %(ttl)s)
                         ON CONFLICT (worker_id) DO UPDATE
-                        SET stats = %(stats)s, expire_at = %(expire_at)s
+                        SET stats = %(stats)s, expire_at = EXTRACT(EPOCH FROM NOW()) + %(ttl)s
                         """
                     )
                 ).format(stats_table=self.stats_table),
                 {
                     "worker_id": self.uuid,
                     "stats": json.dumps(stats),
-                    "expire_at": seconds(now()) + ttl,
+                    "ttl": ttl,
                 },
             )
 
