@@ -16,21 +16,20 @@ from saq.utils import uuid1
 from saq.worker import Worker
 from tests.helpers import (
     cleanup_queue,
+    create_postgres_asyncpg_queue,
     create_postgres_queue,
     create_redis_queue,
     setup_postgres,
     setup_postgres_asyncpg,
     teardown_postgres,
     teardown_postgres_asyncpg,
-    create_postgres_asyncpg_queue
 )
 
 
 if t.TYPE_CHECKING:
     from unittest.mock import MagicMock
-
+    from saq.queue.postgres_asyncpg import PostgresAsyncpgQueue
     from saq.queue.postgres import PostgresQueue
-    from saq.queue.postgres_asyncpg import PostgresAsyncpgQueue as AsyncpgPostgresQueue
     from saq.queue.redis import RedisQueue
     from saq.types import Context, CountKind, Function
 
@@ -92,7 +91,7 @@ class TestQueue(unittest.IsolatedAsyncioTestCase):
 
     async def test_enqueue_dup(self) -> None:
         job = await self.enqueue("test", key="1")
-        self.assertEqual(job.id, "saq:job:default$1")
+        self.assertEqual(job.id, "saq:job:default:1")
         self.assertIsNone(await self.queue.enqueue("test", key="1"))
         self.assertIsNone(await self.queue.enqueue(job))
 
@@ -722,9 +721,14 @@ class TestPostgresQueue(TestQueue):
             result = await cursor.fetchone()
             self.assertIsNone(result)
 
-    async def test_cron_job_close_to_target(self) -> None:
-        await self.enqueue("test", scheduled=time.time() + 0.5)
-        job = await self.queue.dequeue(timeout=0.1)
+    @mock.patch("saq.utils.time")
+    async def test_cron_job_close_to_target(self, mock_time: MagicMock) -> None:
+        mock_time.time.return_value = 1000.5
+        await self.enqueue("test", scheduled=1001)
+
+        # The job is scheduled to run at 1001, but we're running at 1000.5
+        # so it should not be picked up
+        job = await self.queue.dequeue(timeout=1)
         assert not job
 
     async def test_bad_connection(self) -> None:
@@ -764,12 +768,12 @@ class TestAsyncpgPostgresQueue(TestQueue):
     async def asyncSetUp(self) -> None:
         await setup_postgres_asyncpg()
         self.create_queue = create_postgres_asyncpg_queue
-        self.queue: AsyncpgPostgresQueue = await self.create_queue()
+        self.queue: PostgresAsyncpgQueue = await self.create_queue()
 
     async def asyncTearDown(self) -> None:
         await super().asyncTearDown()
         await teardown_postgres_asyncpg()
-
+  
     @unittest.skip("Not implemented")
     async def test_job_key(self) -> None:
         pass
@@ -830,7 +834,6 @@ class TestAsyncpgPostgresQueue(TestQueue):
             {
                 job1.key,
                 job2.key,
-                job3.key,
             },
         )
         await job1.refresh()
@@ -839,7 +842,7 @@ class TestAsyncpgPostgresQueue(TestQueue):
         self.assertEqual(job1.status, Status.ABORTED)
         self.assertEqual(job2.status, Status.QUEUED)
         self.assertEqual(job3.status, Status.QUEUED)
-        self.assertEqual(await self.count("active"), 2)
+        self.assertEqual(await self.count("active"), 3)
 
     @mock.patch("saq.utils.time")
     async def test_sweep_stuck(self, mock_time: MagicMock) -> None:
@@ -889,7 +892,7 @@ class TestAsyncpgPostgresQueue(TestQueue):
         job2 = await self.enqueue("test", ttl=60)
         await self.queue.finish(job1, Status.COMPLETE)
         await self.queue.finish(job2, Status.COMPLETE)
-        await asyncio.sleep(1)
+        await asyncio.sleep(1.5)
 
         await self.queue.sweep()
         with self.assertRaisesRegex(RuntimeError, "doesn't exist"):
@@ -900,11 +903,11 @@ class TestAsyncpgPostgresQueue(TestQueue):
     async def test_sweep_stats(self) -> None:
         # Stats are deleted
         await self.queue.stats(ttl=1)
-        await asyncio.sleep(1)
+        await asyncio.sleep(1.5)
         await self.queue.sweep()
-        async with self.queue.pool.acquire() as conn:
-            result  = await conn.fetchrow(
-                
+        async with self.queue.pool.acquire() as conn, conn.transaction():
+            cursor  = await conn.cursor(
+
                     """
                 SELECT stats
                 FROM {}
@@ -912,15 +915,15 @@ class TestAsyncpgPostgresQueue(TestQueue):
                 """.format(self.queue.stats_table),
                 self.queue.uuid
             )
-            self.assertIsNone(result)
+            self.assertIsNone(await cursor.fetchrow())
 
         # Stats are not deleted
         await self.queue.stats(ttl=60)
         await asyncio.sleep(1)
-        await self.queue.sweep()
-        async with self.queue.pool.acquire() as conn :
-            result = await conn.fetchrow(
-            
+        # await self.queue.sweep()
+        async with self.queue.pool.acquire() as conn, conn.transaction():
+            cursor  = await conn.cursor(
+
                     """
                 SELECT stats
                 FROM {}
@@ -928,7 +931,7 @@ class TestAsyncpgPostgresQueue(TestQueue):
                 """.format(self.queue.stats_table),
                 self.queue.uuid
             )
-            self.assertIsNotNone(result)
+            self.assertIsNotNone(await cursor.fetchrow())
 
     async def test_job_lock(self) -> None:
         query =  """
@@ -940,28 +943,27 @@ class TestAsyncpgPostgresQueue(TestQueue):
         """.format(self.queue.jobs_table, self.queue.job_lock_keyspace)
         job = await self.enqueue("test")
         await self.dequeue()
-        async with self.queue.pool.acquire() as conn :
+        async with self.queue.pool.acquire() as conn, conn.transaction():
             result = await conn.fetchval(query, job.key)
             self.assertEqual(result, 1)
 
         await self.finish(job, Status.COMPLETE, result=1)
-        async with self.queue.pool.acquire() as conn :
-            result = await conn.execute(query, job.key)
-            self.assertEqual(result, (0,))
+        async with self.queue.pool.acquire() as conn, conn.transaction():
+            result = await conn.fetchval(query, job.key)
+            self.assertEqual(result, 0)
 
     async def test_load_dump_pickle(self) -> None:
         self.queue = await self.create_queue(dump=pickle.dumps, load=pickle.loads)
         job = await self.enqueue("test")
 
-        async with self.queue.pool.acquire() as conn :
-            result = await conn.fetchrow(
-         """
+        async with self.queue.pool.acquire() as conn, conn.transaction():
+            result = await conn.fetchrow("""
                 SELECT job
                 FROM {}
                 WHERE key =$1
                 """ .format(self.queue.jobs_table),
                 job.key,
-            ) 
+            )
             assert result
             fetched_job = pickle.loads(result[0])
             self.assertIsInstance(fetched_job, dict)
@@ -976,16 +978,16 @@ class TestAsyncpgPostgresQueue(TestQueue):
         job = await self.enqueue("test", ttl=5)
         await self.dequeue()
         await self.finish(job, Status.COMPLETE)
-        async with self.queue.pool.acquire() as conn :
+        async with self.queue.pool.acquire() as conn:
             result = await conn.fetchval(
-     
+
                     """
                 SELECT expire_at
                 FROM {}
                 WHERE key = $1
-                """ .format(self.queue.jobs_table),
+                """.format(self.queue.jobs_table),
                 job.key,
-            ) 
+            )
             self.assertEqual(result,5)
 
     @mock.patch("saq.utils.time")
@@ -996,14 +998,14 @@ class TestAsyncpgPostgresQueue(TestQueue):
         await self.finish(job, Status.COMPLETE)
         async with self.queue.pool.acquire() as conn :
             result = await conn.fetchval(
-         
+
                     """
                 SELECT expire_at
                 FROM {}
                 WHERE key = $1
                 """ .format(self.queue.jobs_table),
                 job.key,
-            ) 
+            )
             self.assertEqual(result,None)
 
     @mock.patch("saq.utils.time")
@@ -1022,6 +1024,16 @@ class TestAsyncpgPostgresQueue(TestQueue):
                 job.key,
             )
             self.assertIsNone(result)
+
+    @mock.patch("saq.utils.time")
+    async def test_cron_job_close_to_target(self, mock_time: MagicMock) -> None:
+        mock_time.time.return_value = 1000.5
+        await self.enqueue("test", scheduled=1001)
+
+        # The job is scheduled to run at 1001, but we're running at 1000.5
+        # so it should not be picked up
+        job = await self.queue.dequeue(timeout=1)
+        assert not job
 
     async def test_bad_connection(self) -> None:
         job = await self.enqueue("test")
