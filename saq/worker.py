@@ -10,6 +10,7 @@ import logging
 import os
 import signal
 import traceback
+import threading
 import typing as t
 
 from croniter import croniter
@@ -58,6 +59,8 @@ class Worker:
             sweep: how often to clean up stuck jobs
             abort: how often to check if a job is aborted
         dequeue_timeout: how long it will wait to dequeue
+        burst: whether to stop the worker once all jobs have been processed
+        max_burst_jobs: the maximum number of jobs to process in burst mode
     """
 
     SIGNALS = [signal.SIGINT, signal.SIGTERM] if os.name != "nt" else [signal.SIGTERM]
@@ -75,6 +78,8 @@ class Worker:
         after_process: ReceivesContext | Collection[ReceivesContext] | None = None,
         timers: PartialTimersDict | None = None,
         dequeue_timeout: float = 0,
+        burst: bool = False,
+        max_burst_jobs: int | None = None,
     ) -> None:
         self.queue = queue
         self.concurrency = concurrency
@@ -102,6 +107,19 @@ class Worker:
         self.tasks: set[Task[t.Any]] = set()
         self.job_task_contexts: dict[Job, JobTaskContext] = {}
         self.dequeue_timeout = dequeue_timeout
+        self.burst = burst
+        self.max_burst_jobs = max_burst_jobs
+        self.burst_jobs_processed = 0
+        self.burst_jobs_processed_lock = threading.Lock()
+        self.burst_condition_met = False
+
+        if self.burst:
+            if self.dequeue_timeout <= 0:
+                raise ValueError(
+                    "dequeue_timeout must be a positive value greater than 0 when the burst mode is enabled"
+                )
+            if self.max_burst_jobs is not None:
+                self.concurrency = min(self.concurrency, self.max_burst_jobs)
 
         for job in self.cron_jobs:
             if not croniter.is_valid(job.cron):
@@ -237,7 +255,7 @@ class Worker:
             await self.queue.finish_abort(job)
             logger.info("Aborting %s", job.id)
 
-    async def process(self) -> None:
+    async def process(self) -> bool:
         context: Context | None = None
         job: Job | None = None
 
@@ -245,7 +263,7 @@ class Worker:
             job = await self.queue.dequeue(self.dequeue_timeout)
 
             if job is None:
-                return
+                return False
 
             job.started = now()
             job.status = Status.ACTIVE
@@ -289,15 +307,36 @@ class Worker:
                     await self._after_process(context)
                 except (Exception, asyncio.CancelledError):
                     logger.exception("Failed to run after process hook")
+        return True
 
     def _process(self, previous_task: Task | None = None) -> None:
         if previous_task:
             self.tasks.discard(previous_task)
 
+            if self.burst and self._check_burst(previous_task):
+                if not any(t.get_name() == "process" for t in self.tasks):
+                    # Stop the worker if all process tasks are done
+                    self.event.set()
+                return
+
         if not self.event.is_set():
-            new_task = asyncio.create_task(self.process())
+            new_task = asyncio.create_task(self.process(), name="process")
             self.tasks.add(new_task)
             new_task.add_done_callback(self._process)
+
+    def _check_burst(self, previous_task: Task) -> bool:
+        if self.burst_condition_met:
+            return self.burst_condition_met
+
+        job_dequeued = previous_task.result()
+        if not job_dequeued:
+            self.burst_condition_met = True
+        elif self.max_burst_jobs is not None:
+            with self.burst_jobs_processed_lock:
+                self.burst_jobs_processed += 1
+                if self.burst_jobs_processed >= self.max_burst_jobs:
+                    self.burst_condition_met = True
+        return self.burst_condition_met
 
 
 def ensure_coroutine_function_many(
