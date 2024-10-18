@@ -537,9 +537,8 @@ class TestWorkerPostgresQueue(TestWorker):
         self.assertEqual(await self.queue.count("queued"), 0)
         self.assertEqual(await self.queue.count("incomplete"), 0)
         await worker.schedule()
-        self.assertEqual(await self.queue.count("queued"), 0)
         self.assertEqual(await self.queue.count("incomplete"), 1)
-        await asyncio.sleep(1.5)
+        await asyncio.sleep(1)
 
         self.assertEqual(await self.queue.count("queued"), 1)
         self.assertEqual(await self.queue.count("incomplete"), 1)

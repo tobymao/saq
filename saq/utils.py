@@ -19,6 +19,10 @@ def now() -> int:
     return int(time.time() * 1000)
 
 
+def now_seconds() -> float:
+    return time.time()
+
+
 def uuid1() -> str:
     """Generates a string representation of a UUID1"""
     return str(uuid.uuid1())
