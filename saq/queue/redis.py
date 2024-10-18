@@ -17,7 +17,7 @@ from saq.job import (
 )
 from saq.multiplexer import Multiplexer
 from saq.queue.base import Queue, logger
-from saq.utils import millis, now, seconds
+from saq.utils import millis, now, now_seconds
 
 try:
     from redis import asyncio as aioredis
@@ -211,7 +211,7 @@ class RedisQueue(Queue):
             job_id.decode("utf-8")
             for job_id in await self._schedule_script(
                 keys=[self._schedule, self._incomplete, self._queued],
-                args=[lock, seconds(now())],
+                args=[lock, now_seconds()],
             )
             or []
         ]

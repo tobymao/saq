@@ -20,7 +20,7 @@ from saq.job import (
 from saq.multiplexer import Multiplexer
 from saq.queue.base import Queue, logger
 from saq.queue.postgres_ddl import DDL_STATEMENTS
-from saq.utils import now, seconds
+from saq.utils import now, now_seconds
 
 if t.TYPE_CHECKING:
     from collections.abc import Iterable
@@ -218,11 +218,11 @@ class PostgresQueue(Queue):
                             FROM {jobs_table}
                             WHERE status = 'queued'
                               AND queue = %(queue)s
-                              AND NOW() >= TO_TIMESTAMP(scheduled)
+                              AND %(now)s >= scheduled
                             """
                         )
                     ).format(jobs_table=self.jobs_table),
-                    {"queue": self.name},
+                    {"queue": self.name, "now": now_seconds()},
                 )
             elif kind == "active":
                 await cursor.execute(
@@ -282,6 +282,8 @@ class PostgresQueue(Queue):
             self._has_sweep_lock = True
 
         async with self.pool.connection() as conn, conn.cursor() as cursor:
+            now_ts = now_seconds()
+
             await cursor.execute(
                 SQL(
                     dedent(
@@ -290,16 +292,14 @@ class PostgresQueue(Queue):
                         DELETE FROM {jobs_table}
                         WHERE queue = %(queue)s
                           AND status IN ('aborted', 'complete', 'failed')
-                          AND NOW() >= TO_TIMESTAMP(expire_at);
+                          AND %(now)s >= expire_at;
                         """
                     )
                 ).format(
                     jobs_table=self.jobs_table,
                     stats_table=self.stats_table,
                 ),
-                {
-                    "queue": self.name,
-                },
+                {"queue": self.name, "now": now_ts},
             )
 
             await cursor.execute(
@@ -308,13 +308,14 @@ class PostgresQueue(Queue):
                         """
                         -- Delete expired stats
                         DELETE FROM {stats_table}
-                        WHERE NOW() >= TO_TIMESTAMP(expire_at);
+                        WHERE %(now)s >= expire_at;
                         """
                     )
                 ).format(
                     jobs_table=self.jobs_table,
                     stats_table=self.stats_table,
                 ),
+                {"now": now_ts},
             )
 
             await cursor.execute(
@@ -570,7 +571,7 @@ class PostgresQueue(Queue):
                               FROM {jobs_table}
                               WHERE status = 'queued'
                                 AND queue = %(queue)s
-                                AND NOW() >= TO_TIMESTAMP(scheduled)
+                                AND %(now)s >= scheduled
                                 AND priority BETWEEN %(plow)s AND %(phigh)s
                                 AND group_key NOT IN (
                                   SELECT DISTINCT group_key
@@ -596,6 +597,7 @@ class PostgresQueue(Queue):
                     ),
                     {
                         "queue": self.name,
+                        "now": now_seconds(),
                         "limit": self._waiting,
                         "plow": self._priorities[0],
                         "phigh": self._priorities[1],
@@ -656,7 +658,7 @@ class PostgresQueue(Queue):
                     "status": job.status,
                     "priority": job.priority,
                     "group_key": job.group_key,
-                    "scheduled": job.scheduled or int(seconds(now())),
+                    "scheduled": job.scheduled or int(now_seconds()),
                 },
             )
 
@@ -722,7 +724,7 @@ class PostgresQueue(Queue):
         if next_retry_delay:
             scheduled = time.time() + next_retry_delay
         else:
-            scheduled = job.scheduled or seconds(now())
+            scheduled = job.scheduled or now_seconds()
 
         await self.update(job, scheduled=int(scheduled), expire_at=None)
 
@@ -741,7 +743,7 @@ class PostgresQueue(Queue):
             connection
         ) if connection else self.pool.connection() as conn, conn.cursor() as cursor:
             if job.ttl >= 0:
-                expire_at = seconds(now()) + job.ttl if job.ttl > 0 else None
+                expire_at = now_seconds() + job.ttl if job.ttl > 0 else None
                 await self.update(job, status=status, expire_at=expire_at, connection=conn)
             else:
                 await cursor.execute(

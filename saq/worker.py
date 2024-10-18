@@ -16,7 +16,7 @@ from croniter import croniter
 
 from saq.job import Status
 from saq.queue import Queue
-from saq.utils import cancel_tasks, millis, now, seconds
+from saq.utils import cancel_tasks, millis, now, now_seconds
 
 if t.TYPE_CHECKING:
     from asyncio import Task
@@ -174,7 +174,7 @@ class Worker:
             kwargs = cron_job.__dict__.copy()
             function = kwargs.pop("function").__qualname__
             kwargs["key"] = f"cron:{function}" if kwargs.pop("unique") else None
-            scheduled = croniter(kwargs.pop("cron"), seconds(now())).get_next()
+            scheduled = croniter(kwargs.pop("cron"), now_seconds()).get_next()
 
             await self.queue.enqueue(
                 function,
