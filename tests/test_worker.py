@@ -497,6 +497,50 @@ class TestWorker(unittest.IsolatedAsyncioTestCase):
         await asyncio.sleep(2)
         self.assertGreater(state["counter"], 0)
 
+    async def test_burst(self) -> None:
+        with self.assertRaises(ValueError):
+            # dequeue_timeout must be set when burst is True
+            Worker(self.queue, functions=functions, burst=True)
+
+        worker = Worker(
+            self.queue, functions=functions, burst=True, dequeue_timeout=0.1, concurrency=1
+        )
+        worker_task = asyncio.create_task(worker.start())
+        job_a = await self.enqueue("noop")
+        job_b = await self.enqueue("noop")
+        await job_a.refresh(0)
+        await job_b.refresh(0)
+        self.assertEqual(job_a.status, Status.COMPLETE)
+        self.assertEqual(job_b.status, Status.COMPLETE)
+
+        await asyncio.sleep(0.5)
+        self.assertTrue(worker.event.is_set())
+        await worker_task
+
+    async def test_max_burst_jobs(self) -> None:
+        worker = Worker(
+            self.queue,
+            functions=functions,
+            burst=True,
+            max_burst_jobs=1,
+            dequeue_timeout=0.1,
+        )
+        worker_task = asyncio.create_task(worker.start())
+        job_a = await self.enqueue("noop")
+        job_b = await self.enqueue("noop")
+        job_c = await self.enqueue("noop")
+
+        await asyncio.sleep(0.5)
+        self.assertTrue(worker.event.is_set())
+        await worker_task
+
+        await job_a.refresh()
+        await job_b.refresh()
+        await job_c.refresh()
+        self.assertEqual(job_a.status, Status.COMPLETE)
+        self.assertEqual(job_b.status, Status.QUEUED)
+        self.assertEqual(job_c.status, Status.QUEUED)
+
 
 class TestWorkerRedisQueue(TestWorker):
     async def asyncSetUp(self) -> None:
