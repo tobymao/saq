@@ -145,6 +145,8 @@ class PostgresQueue(Queue):
         await self.pool.resize(min_size=self.min_size, max_size=self.max_size)
         await self.init_db()
 
+        await super().connect()
+
     def serialize(self, job: Job) -> bytes | str:
         """Ensure serialized job is in bytes because the job column is of type BYTEA."""
         serialized = self._dump(job.to_dict())
