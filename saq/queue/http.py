@@ -10,7 +10,7 @@ import typing as t
 
 from saq.errors import MissingDependencyError
 from saq.job import Job, Status
-from saq.queue.base import Queue, logger
+from saq.queue.base import Queue
 
 if t.TYPE_CHECKING:
     from collections.abc import Iterable
@@ -144,12 +144,9 @@ class HttpQueue(Queue):
     async def _send(self, kind: str, **kwargs: t.Any) -> str:
         assert self.session
 
-        try:
-            async with self.session.post(self.url, json={"kind": kind, **kwargs}) as resp:
-                return await resp.text()
-        except Exception as e:
-            logger.debug(e)
-            return ""
+        async with self.session.post(self.url, json={"kind": kind, **kwargs}) as resp:
+            resp.raise_for_status()
+            return await resp.text()
 
     async def _enqueue(self, job: Job) -> Job | None:
         return self.deserialize(await self._send("enqueue", job=self.serialize(job)))
