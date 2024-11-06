@@ -135,6 +135,7 @@ class HttpQueue(Queue):
     async def connect(self) -> None:
         if not self.session:
             self.session = ClientSession(**self.session_kwargs)
+        await super().connect()
 
     async def disconnect(self) -> None:
         if self.session:
