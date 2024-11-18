@@ -136,6 +136,7 @@ class Job:
     priority: int = 0
     group_key: str | None = None
     meta: dict[t.Any, t.Any] = dataclasses.field(default_factory=dict)
+    show_full_info: bool = False
 
     _EXCLUDE_NON_FULL = {
         "kwargs",
@@ -180,7 +181,7 @@ class Job:
         return f"Job<{kwargs}>"
 
     def __repr__(self) -> str:
-        return self.info(True)
+        return self.info(self.show_full_info)
 
     def __hash__(self) -> int:
         return hash(self.key)
