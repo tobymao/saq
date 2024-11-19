@@ -98,7 +98,9 @@ class HttpProxy:
                 return json.dumps(await self.queue.sweep(lock=req["lock"], abort=req["abort"]))
             if kind == "info":
                 return json.dumps(
-                    await self.queue.info(jobs=req["job"], offset=req["offset"], limit=req["limit"])
+                    await self.queue.info(
+                        jobs=req["jobs"], offset=req["offset"], limit=req["limit"]
+                    )
                 )
             if kind == "write_stats":
                 await self.queue.write_stats(req["stats"], ttl=req["ttl"])

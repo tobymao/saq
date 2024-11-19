@@ -497,6 +497,10 @@ class TestWorker(unittest.IsolatedAsyncioTestCase):
         await asyncio.sleep(2)
         self.assertGreater(state["counter"], 0)
 
+    async def test_info(self) -> None:
+        info = await self.queue.info()
+        assert info
+
     async def test_burst(self) -> None:
         with self.assertRaises(ValueError):
             # dequeue_timeout must be set when burst is True
