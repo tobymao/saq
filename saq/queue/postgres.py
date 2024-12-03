@@ -10,6 +10,7 @@ import logging
 import time
 import typing as t
 from contextlib import asynccontextmanager
+from functools import cached_property
 from textwrap import dedent
 
 from saq.errors import MissingDependencyError
@@ -110,7 +111,6 @@ class PostgresQueue(Queue):
         self.job_lock_keyspace = job_lock_keyspace
         self._priorities = priorities
 
-        self._job_queue: asyncio.Queue = asyncio.Queue()
         self._waiting = 0  # Internal counter of worker tasks waiting for dequeue
         self._dequeue_conn: AsyncConnection | None = None
         self._connection_lock = asyncio.Lock()
@@ -822,6 +822,10 @@ class PostgresQueue(Queue):
             )
             await conn.commit()
         self._releasing.clear()
+
+    @cached_property
+    def _job_queue(self) -> asyncio.Queue:
+        return asyncio.Queue()
 
 
 class ListenMultiplexer(Multiplexer):
