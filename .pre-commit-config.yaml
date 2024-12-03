@@ -19,6 +19,7 @@ repos:
         entry: ruff format
           --force-exclude
           --line-length 100
+          --target-version "py38"
         language: python
         types_or: [python, pyi]
         require_serial: true
