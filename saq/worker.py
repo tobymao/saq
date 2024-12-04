@@ -9,9 +9,11 @@ import contextvars
 import logging
 import os
 import signal
+import sys
 import traceback
 import threading
 import typing as t
+from concurrent.futures import ThreadPoolExecutor
 
 from croniter import croniter
 
@@ -83,13 +85,14 @@ class Worker:
     ) -> None:
         self.queue = queue
         self.concurrency = concurrency
-        self.startup = ensure_coroutine_function_many(startup) if startup else None
-        self.shutdown = ensure_coroutine_function_many(shutdown) if shutdown else None
+        self.pool = ThreadPoolExecutor()
+        self.startup = ensure_coroutine_function_many(startup, self.pool) if startup else None
+        self.shutdown = ensure_coroutine_function_many(shutdown, self.pool) if shutdown else None
         self.before_process = (
-            ensure_coroutine_function_many(before_process) if before_process else None
+            ensure_coroutine_function_many(before_process, self.pool) if before_process else None
         )
         self.after_process = (
-            ensure_coroutine_function_many(after_process) if after_process else None
+            ensure_coroutine_function_many(after_process, self.pool) if after_process else None
         )
         self.timers: TimersDict = {
             "schedule": 1,
@@ -187,6 +190,11 @@ class Worker:
         self.tasks.clear()
         await cancel_tasks(all_tasks)
 
+        if sys.version_info[0:2] < (3, 9):
+            self.pool.shutdown()
+        else:
+            self.pool.shutdown(cancel_futures=True)
+
     async def schedule(self, lock: int = 1) -> None:
         for cron_job in self.cron_jobs:
             kwargs = cron_job.__dict__.copy()
@@ -247,13 +255,13 @@ class Worker:
 
             task_data: JobTaskContext = self.job_task_contexts.get(job, {})
             task = task_data.get("task")
+            logger.info("Aborting %s", job.id)
 
             if task and not task.done():
-                task_data["aborted"] = job.error if job.error else ""
+                task_data["aborted"] = "abort" if job.error is None else job.error
                 await cancel_tasks([task])
 
             await self.queue.finish_abort(job)
-            logger.info("Aborting %s", job.id)
 
     async def process(self) -> bool:
         context: Context | None = None
@@ -273,7 +281,7 @@ class Worker:
             await self._before_process(context)
             logger.info("Processing %s", job.info(logger.isEnabledFor(logging.DEBUG)))
 
-            function = ensure_coroutine_function(self.functions[job.function])
+            function = ensure_coroutine_function(self.functions[job.function], self.pool)
             task = asyncio.create_task(function(context, **(job.kwargs or {})))
             self.job_task_contexts[job] = {"task": task, "aborted": None}
             result = await asyncio.wait_for(task, job.timeout if job.timeout else None)
@@ -281,7 +289,7 @@ class Worker:
         except asyncio.CancelledError:
             if job:
                 aborted = self.job_task_contexts.get(job, {}).get("aborted")
-                if aborted:
+                if aborted is not None:
                     await job.finish(Status.ABORTED, error=aborted)
                 else:
                     await job.retry("cancelled")
@@ -340,23 +348,29 @@ class Worker:
 
 
 def ensure_coroutine_function_many(
-    func: Callable | Collection[Callable],
+    func: Callable | Collection[Callable], pool: ThreadPoolExecutor
 ) -> t.List[Callable[..., Coroutine]]:
     if callable(func):
-        return [ensure_coroutine_function(func)]
-    return [ensure_coroutine_function(f) for f in func]
+        return [ensure_coroutine_function(func, pool)]
+    return [ensure_coroutine_function(f, pool) for f in func]
 
 
-def ensure_coroutine_function(func: Callable) -> Callable[..., Coroutine]:
+def ensure_coroutine_function(func: Callable, pool: ThreadPoolExecutor) -> Callable[..., Coroutine]:
     if asyncio.iscoroutinefunction(func):
         return func
 
     async def wrapped(*args: t.Any, **kwargs: t.Any) -> t.Any:
-        loop = asyncio.get_running_loop()
-        ctx = contextvars.copy_context()
-        return await loop.run_in_executor(
-            executor=None, func=lambda: ctx.run(func, *args, **kwargs)
-        )
+        try:
+            ctx = contextvars.copy_context()
+            future = pool.submit(lambda: ctx.run(func, *args, **kwargs))
+            return await asyncio.wrap_future(future)
+        except asyncio.CancelledError:
+            try:
+                # job has already been cancelled, swallow all errors
+                await asyncio.wrap_future(future)
+            except Exception:
+                pass
+            raise
 
     return wrapped
 
