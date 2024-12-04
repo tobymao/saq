@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import contextvars
 import logging
+import time
 import typing as t
 import unittest
 from unittest import mock
@@ -10,7 +11,7 @@ from unittest import mock
 from aiohttp import web
 from aiohttp.test_utils import AioHTTPTestCase
 
-from saq.job import CronJob, Job, Status
+from saq.job import CronJob, Job, Status, ACTIVE_STATUSES
 from saq.queue import Queue
 from saq.queue.http import HttpProxy
 from saq.queue.redis import RedisQueue
@@ -544,6 +545,50 @@ class TestWorker(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(job_a.status, Status.COMPLETE)
         self.assertEqual(job_b.status, Status.QUEUED)
         self.assertEqual(job_c.status, Status.QUEUED)
+
+    async def test_sync_cancel(self) -> None:
+        state = {"counter": 0}
+
+        def work(ctx=None):
+            time.sleep(0.2)
+            if ctx:
+                job = ctx["job"]
+                asyncio.run(job.refresh())
+                if job.status not in ACTIVE_STATUSES:
+                    return
+            state["counter"] += 1
+
+        def no_cancel(ctx):
+            work()
+
+        def yes_cancel(ctx):
+            work(ctx)
+
+        worker = Worker(
+            self.queue,
+            functions=[
+                ("no_cancel", no_cancel),
+                ("yes_cancel", yes_cancel),
+            ],
+        )
+
+        job = await self.enqueue("yes_cancel")
+        asyncio.create_task(worker.process())
+        await asyncio.sleep(0.1)
+        await job.update(status=Status.ABORTING)
+        await worker.abort(0)
+        await job.refresh()
+        self.assertEqual(job.status, Status.ABORTED)
+        self.assertEqual(state["counter"], 0)
+
+        job = await self.enqueue("no_cancel")
+        asyncio.create_task(worker.process())
+        await asyncio.sleep(0.1)
+        await job.update(status=Status.ABORTING)
+        await worker.abort(0)
+        await job.refresh()
+        self.assertEqual(job.status, Status.ABORTED)
+        self.assertEqual(state["counter"], 1)
 
 
 class TestWorkerRedisQueue(TestWorker):
