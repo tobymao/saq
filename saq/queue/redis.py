@@ -358,7 +358,7 @@ class RedisQueue(Queue):
         if job_id is not None:
             return await self._get_job_by_id(job_id)
 
-
+        return None
 
     async def listen(
         self,
