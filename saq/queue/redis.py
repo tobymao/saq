@@ -21,6 +21,7 @@ from saq.utils import millis, now, now_seconds
 
 try:
     from redis import asyncio as aioredis
+    from redis.exceptions import TimeoutError as RedisTimeoutError
 except ModuleNotFoundError as e:
     raise MissingDependencyError(
         "Missing dependencies for Redis. Install them with `pip install saq[redis]`."
@@ -335,25 +336,29 @@ class RedisQueue(Queue):
                 await self.redis.lrem(self._active, 0, job.id)
 
     async def dequeue(self, timeout: float = 0) -> Job | None:
-        if await self.version() < (6, 2, 0):
-            job_id = await self.redis.brpoplpush(
-                self._queued,
-                self._active,
-                timeout,  # type:ignore[arg-type]
-            )
-        else:
-            job_id = await self.redis.blmove(
-                self._queued,
-                self._active,
-                timeout,
-                "LEFT",
-                "RIGHT",
-            )
+        try:
+            if await self.version() < (6, 2, 0):
+                job_id = await self.redis.brpoplpush(
+                    self._queued,
+                    self._active,
+                    timeout,  # type:ignore[arg-type]
+                )
+            else:
+                job_id = await self.redis.blmove(
+                    self._queued,
+                    self._active,
+                    timeout,
+                    "LEFT",
+                    "RIGHT",
+                )
+        except RedisTimeoutError:
+            logger.debug("Dequeue timed out")
+            return None
+
         if job_id is not None:
             return await self._get_job_by_id(job_id)
 
-        logger.debug("Dequeue timed out")
-        return None
+
 
     async def listen(
         self,
