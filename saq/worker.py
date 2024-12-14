@@ -76,6 +76,7 @@ class Worker:
         cron_jobs: Collection[CronJob] | None = None,
         startup: ReceivesContext | Collection[ReceivesContext] | None = None,
         shutdown: ReceivesContext | Collection[ReceivesContext] | None = None,
+        shutdown_timeout: float = 60,
         before_process: ReceivesContext | Collection[ReceivesContext] | None = None,
         after_process: ReceivesContext | Collection[ReceivesContext] | None = None,
         timers: PartialTimersDict | None = None,
@@ -88,6 +89,7 @@ class Worker:
         self.pool = ThreadPoolExecutor()
         self.startup = ensure_coroutine_function_many(startup, self.pool) if startup else None
         self.shutdown = ensure_coroutine_function_many(shutdown, self.pool) if shutdown else None
+        self.shutdown_timeout = shutdown_timeout
         self.before_process = (
             ensure_coroutine_function_many(before_process, self.pool) if before_process else None
         )
@@ -176,16 +178,37 @@ class Worker:
             pass
         finally:
             logger.info("Worker shutting down")
-
-            if self.shutdown:
-                for s in self.shutdown:
-                    await s(self.context)
-
             await self.stop()
 
     async def stop(self) -> None:
         """Stop the worker and cleanup."""
         self.event.set()
+        stop_ex = None
+        try:
+            await asyncio.shield(
+                wf := asyncio.create_task(
+                    asyncio.wait_for(self._stop(), timeout=self.shutdown_timeout)
+                )
+            )
+        except asyncio.CancelledError:
+            wf.cancel()
+            try:
+                [stop_ex] = await asyncio.gather(wf, return_exceptions=True)
+            except asyncio.CancelledError as ex:
+                stop_ex = ex
+            raise
+        except BaseException as ex:
+            stop_ex = ex
+            raise
+        finally:
+            if stop_ex:
+                logger.error("Error worker shutting down", exc_info=stop_ex)
+
+    async def _stop(self) -> None:
+        if self.shutdown:
+            for s in self.shutdown:
+                await s(self.context)
+
         all_tasks = list(self.tasks)
         self.tasks.clear()
         await cancel_tasks(all_tasks)
