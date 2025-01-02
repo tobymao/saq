@@ -219,7 +219,7 @@ class Job:
         Returns the duration of the job given kind.
 
         Args:
-            Kind (DurationKind): The kind of duration type, can be:
+            kind (DurationKind): The kind of duration type, can be:
                 * `process` (how long it took to process)
                 * `start` (how long it took to start)
                 * `total`

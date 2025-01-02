@@ -45,12 +45,23 @@ class JobTaskContext(t.TypedDict, total=False):
     "If this task has been aborted, this is the reason"
 
 
+class WorkerInfo(t.TypedDict):
+    """
+    Worker Info
+    """
+
+    queue_key: t.Optional[str]
+    ip_address: t.Optional[str]
+    stats: dict[str, t.Any]
+    metadata: t.Optional[dict[str, t.Any]]
+
+
 class QueueInfo(t.TypedDict):
     """
     Queue Info
     """
 
-    workers: dict[str, dict[str, t.Any]]
+    workers: dict[str, WorkerInfo]
     "Worker information"
     name: str
     "Queue name"
@@ -93,6 +104,8 @@ class TimersDict(t.TypedDict):
     "How often to clean up stuck jobs in seconds (default 60)"
     abort: int
     "How often to check if a job is aborted in seconds (default 1)"
+    metadata: int
+    "How often to write worker metadata in seconds (default 60)"
 
 
 class PartialTimersDict(TimersDict, total=False):

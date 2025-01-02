@@ -210,7 +210,11 @@ class TestQueue(unittest.IsolatedAsyncioTestCase):
     async def test_info(self) -> None:
         queue2 = await self.create_queue(name=self.queue.name)
         self.addAsyncCleanup(cleanup_queue, queue2)
-        worker = Worker(self.queue, functions=functions)
+        worker = Worker(
+            self.queue,
+            functions=functions,
+            metadata={"foo": "bar"},
+        )
         info = await self.queue.info(jobs=True)
         self.assertEqual(info["workers"], {})
         self.assertEqual(info["active"], 0)
@@ -223,12 +227,22 @@ class TestQueue(unittest.IsolatedAsyncioTestCase):
         await worker.process()
         await self.queue.stats()
         await queue2.stats()
+        await worker.metadata(3)
 
         info = await self.queue.info(jobs=True)
         self.assertEqual(set(info["workers"].keys()), {self.queue.uuid, queue2.uuid})
+        self.assertEqual(info["workers"][self.queue.uuid]["metadata"], {"foo": "bar"})
+        self.assertEqual(info["workers"][self.queue.uuid]["queue_key"], self.queue.name)
+        self.assertEqual(len(info["workers"][self.queue.uuid]["ip_address"].split(".")), 4)
+        assert info["workers"][self.queue.uuid]["stats"] is not None
         self.assertEqual(info["active"], 0)
         self.assertEqual(info["queued"], 1)
         self.assertEqual(len(info["jobs"]), 1)
+
+        time.sleep(4)
+        await worker.queue.sweep()
+        info = await self.queue.info(jobs=True)
+        self.assertEqual(info["workers"][self.queue.uuid]["metadata"], None)
 
     @mock.patch("saq.utils.time")
     async def test_schedule(self, mock_time: MagicMock) -> None:
