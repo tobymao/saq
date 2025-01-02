@@ -33,6 +33,7 @@ if t.TYPE_CHECKING:
         LoadType,
         QueueInfo,
         WorkerStats,
+        WorkerInfo,
     )
 
 try:
@@ -50,6 +51,7 @@ DEQUEUE = "saq:dequeue"
 JOBS_TABLE = "saq_jobs"
 STATS_TABLE = "saq_stats"
 VERSIONS_TABLE = "saq_versions"
+METADATA_TABLE = "saq_worker_metadata"
 
 
 class PostgresQueue(Queue):
@@ -93,6 +95,7 @@ class PostgresQueue(Queue):
         versions_table: str = VERSIONS_TABLE,
         jobs_table: str = JOBS_TABLE,
         stats_table: str = STATS_TABLE,
+        metadata_table: str = METADATA_TABLE,
         dump: DumpType | None = None,
         load: LoadType | None = None,
         min_size: int = 4,
@@ -107,6 +110,7 @@ class PostgresQueue(Queue):
         self.versions_table = Identifier(versions_table)
         self.jobs_table = Identifier(jobs_table)
         self.stats_table = Identifier(stats_table)
+        self.metadata_table = Identifier(metadata_table)
         self.pool = pool
         self.min_size = min_size
         self.max_size = max_size
@@ -148,6 +152,7 @@ class PostgresQueue(Queue):
             migrations = get_migrations(
                 jobs_table=self.jobs_table,
                 stats_table=self.stats_table,
+                worker_metadata_table=self.metadata_table,
             )
             target_version = migrations[-1][0]
             await cursor.execute(
@@ -218,20 +223,53 @@ class PostgresQueue(Queue):
         await self.pool.close()
         self._has_sweep_lock = False
 
+    async def write_worker_metadata(
+        self, worker_id: str, queue_key: str, metadata: t.Optional[dict], ttl: int
+    ) -> None:
+        async with self.pool.connection() as conn:
+            await conn.execute(
+                SQL(
+                    dedent(
+                        """
+                        INSERT INTO {worker_metadata_table} (worker_id, queue_key, metadata, expire_at)
+                        VALUES 
+                            (%(worker_id)s, %(queue_key)s, %(metadata)s, EXTRACT(EPOCH FROM NOW()) + %(ttl)s) 
+                        ON CONFLICT (worker_id) DO UPDATE
+                        SET metadata = %(metadata)s, queue_key = %(queue_key)s, expire_at = EXTRACT(EPOCH FROM NOW()) + %(ttl)s
+                        """
+                    )
+                ).format(worker_metadata_table=self.metadata_table),
+                {
+                    "worker_id": worker_id,
+                    "metadata": json.dumps(metadata),
+                    "queue_key": queue_key,
+                    "ttl": ttl,
+                },
+            )
+
     async def info(self, jobs: bool = False, offset: int = 0, limit: int = 10) -> QueueInfo:
         async with self.pool.connection() as conn, conn.cursor() as cursor:
             await cursor.execute(
                 SQL(
                     dedent(
                         """
-                        SELECT worker_id, stats FROM {stats_table}
-                        WHERE NOW() <= TO_TIMESTAMP(expire_at)
+                        SELECT stats.worker_id, stats.stats, meta.queue_key, meta.metadata
+                        FROM {stats_table} stats
+                        LEFT JOIN {worker_metadata_table} meta ON meta.worker_id = stats.worker_id
+                        WHERE NOW() <= TO_TIMESTAMP(stats.expire_at) 
                         """
                     )
-                ).format(stats_table=self.stats_table),
+                ).format(stats_table=self.stats_table, worker_metadata_table=self.metadata_table),
             )
             results = await cursor.fetchall()
-        workers: dict[str, dict[str, t.Any]] = dict(results)
+        workers: dict[str, WorkerInfo] = {
+            worker_id: {
+                "stats": stats,
+                "metadata": metadata,
+                "queue_key": queue_key,
+            }
+            for worker_id, stats, queue_key, metadata in results
+        }
 
         queued = await self.count("queued")
         active = await self.count("active")
@@ -371,6 +409,21 @@ class PostgresQueue(Queue):
                 ).format(
                     jobs_table=self.jobs_table,
                     stats_table=self.stats_table,
+                ),
+                {"now": now_ts},
+            )
+
+            await cursor.execute(
+                SQL(
+                    dedent(
+                        """
+                        -- Delete expired worker metadata
+                        DELETE FROM {worker_metadata_table}
+                        WHERE %(now)s >= expire_at;
+                        """
+                    )
+                ).format(
+                    worker_metadata_table=self.metadata_table,
                 ),
                 {"now": now_ts},
             )

@@ -40,6 +40,7 @@ if t.TYPE_CHECKING:
         QueueInfo,
         WorkerStats,
         VersionTuple,
+        WorkerInfo,
     )
 
 ID_PREFIX = "saq:job:"
@@ -133,12 +134,27 @@ class RedisQueue(Queue):
         worker_stats = await self.redis.mget(
             self.namespace(f"stats:{worker_uuid}") for worker_uuid in worker_uuids
         )
-
-        worker_info = {}
-        for worker_uuid, stats in zip(worker_uuids, worker_stats):
+        worker_metadata = await self.redis.mget(
+            self.namespace(f"metadata:{worker_uuid}") for worker_uuid in worker_uuids
+        )
+        workers: dict[str, WorkerInfo] = {}
+        worker_metadata_dict = dict(zip(worker_uuids, worker_metadata))
+        worker_stats_dict = dict(zip(worker_uuids, worker_stats))
+        for worker in worker_uuids:
+            workers[worker] = {
+                "queue_key": None,
+                "stats": None,
+                "metadata": None,
+            }
+            metadata = worker_metadata_dict[worker]
+            if metadata:
+                metadata_obj = json.loads(metadata)
+                workers[worker]["metadata"] = metadata_obj["metadata"]
+                workers[worker]["queue_key"] = metadata_obj["queue_key"]
+            stats = worker_stats_dict[worker]
             if stats:
                 stats_obj = json.loads(stats)
-                worker_info[worker_uuid] = stats_obj
+                workers[worker]["stats"] = stats_obj
 
         queued = await self.count("queued")
         active = await self.count("active")
@@ -166,7 +182,7 @@ class RedisQueue(Queue):
             job_info = []
 
         return {
-            "workers": worker_info,
+            "workers": workers,
             "name": self.name,
             "queued": queued,
             "active": active,
@@ -400,6 +416,14 @@ class RedisQueue(Queue):
                 .expire(self._stats, ttl)
                 .execute()
             )
+
+    async def write_worker_metadata(
+        self, worker_id: str, queue_key: str, metadata: t.Optional[dict], ttl: int
+    ) -> None:
+        async with self.redis.pipeline(transaction=True) as pipe:
+            key = self.namespace(f"metadata:{worker_id}")
+            metadata = {"queue_key": queue_key, "metadata": metadata}
+            await pipe.setex(key, ttl, json.dumps(metadata)).expire(key, ttl).execute()
 
     async def _retry(self, job: Job, error: str | None) -> None:
         job_id = job.id

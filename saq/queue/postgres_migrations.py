@@ -7,6 +7,7 @@ from textwrap import dedent
 def get_migrations(
     jobs_table: Identifier,
     stats_table: Identifier,
+    worker_metadata_table: Identifier,
 ) -> t.List[t.Tuple[int, t.List[Composed]]]:
     return [
         (
@@ -41,6 +42,21 @@ CREATE TABLE IF NOT EXISTS {stats_table} (
 );
 """)
                 ).format(stats_table=stats_table),
+            ],
+        ),
+        (
+            2,
+            [
+                SQL(
+                    dedent("""
+        CREATE TABLE IF NOT EXISTS {worker_metadata_table} (
+            worker_id TEXT PRIMARY KEY,
+            queue_key TEXT NOT NULL,
+            expire_at BIGINT NOT NULL,
+            metadata JSONB
+        );
+        """)
+                ).format(worker_metadata_table=worker_metadata_table),
             ],
         ),
     ]

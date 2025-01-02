@@ -144,6 +144,12 @@ class Queue(ABC):
         pass
 
     @abstractmethod
+    async def write_worker_metadata(
+        self, worker_id: str, queue_key: str, metadata: t.Optional[dict], ttl: int
+    ) -> None:
+        pass
+
+    @abstractmethod
     async def _retry(self, job: Job, error: str | None) -> None:
         pass
 
