@@ -132,7 +132,16 @@ class Queue(ABC):
         await job.finish(Status.ABORTED, error=job.error)
 
     @abstractmethod
-    async def write_stats(self, stats: QueueStats, ttl: int) -> None:
+    async def write_stats(self, worker_id: str, stats: QueueStats, ttl: int) -> None:
+        """
+        Returns & updates stats on the queue.
+
+        Args:
+            worker_id: The worker id, passed in rather than taken from the queue instance to ensure that the stats
+                are attributed to the worker and not the queue instance in the proxy server.
+            stats: The stats to write.
+            ttl: The time-to-live in seconds.
+        """
         pass
 
     @abstractmethod
@@ -194,8 +203,7 @@ class Queue(ABC):
             "aborted": self.aborted,
             "uptime": now() - self.started,
         }
-
-        await self.write_stats(stats, ttl)
+        await self.write_stats(self.uuid, stats, ttl)
         return stats
 
     def register_before_enqueue(self, callback: BeforeEnqueueType) -> None:
