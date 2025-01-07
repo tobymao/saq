@@ -3,10 +3,10 @@
 import unittest
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
-from saq import Queue
+from saq import Queue, Worker
 from saq.queue.http import HttpProxy
 from saq.types import Context
-from tests.helpers import setup_postgres, create_postgres_queue
+from tests.helpers import setup_postgres, create_postgres_queue, teardown_postgres
 import asyncio
 import threading
 
@@ -35,8 +35,13 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
 
 
 class TestQueue(unittest.IsolatedAsyncioTestCase):
-    async def test_http_proxy_with_two_workers(self) -> None:
+    async def asyncSetUp(self) -> None:
         await setup_postgres()
+
+    async def asyncTearDown(self) -> None:
+        await teardown_postgres()
+
+    async def test_http_proxy_with_two_workers(self) -> None:
         queue = await create_postgres_queue()
         proxy = HttpProxy(queue=queue)
 
@@ -53,9 +58,21 @@ class TestQueue(unittest.IsolatedAsyncioTestCase):
         queue2 = Queue.from_url("http://localhost:8080/")
         await queue2.connect()
 
-        await queue.stats()
-        await queue1.stats()
-        await queue2.stats()
+        worker = Worker(
+            queue=queue1,
+            functions=[echo],
+        )
+        await worker.stats()
+        worker2 = Worker(
+            queue=queue2,
+            functions=[echo],
+        )
+        await worker2.stats()
+        local_worker = Worker(
+            queue=queue,
+            functions=[echo],
+        )
+        await local_worker.stats()
 
         root_info = await queue.info()
         info1 = await queue1.info()
@@ -63,7 +80,7 @@ class TestQueue(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(root_info["workers"], info1["workers"])
         self.assertEqual(info1["workers"], info2["workers"])
-        self.assertEqual(info1["workers"].keys(), {queue.uuid, queue1.uuid, queue2.uuid})
+        self.assertEqual(info1["workers"].keys(), {worker.id, worker2.id, local_worker.id})
         self.assertEqual(info1["workers"].keys(), info2["workers"].keys())
 
         await queue1.disconnect()

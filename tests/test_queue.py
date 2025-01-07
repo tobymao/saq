@@ -193,6 +193,7 @@ class TestQueue(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(job.status, Status.QUEUED)
 
     async def test_stats(self) -> None:
+        worker = Worker(self.queue, functions=functions)
         for _ in range(10):
             await self.enqueue("test")
             job = await self.dequeue()
@@ -200,7 +201,7 @@ class TestQueue(unittest.IsolatedAsyncioTestCase):
             await job.finish(Status.ABORTED)
             await job.finish(Status.FAILED)
             await job.finish(Status.COMPLETE)
-        stats = await self.queue.stats()
+        stats = await worker.stats()
         self.assertEqual(stats["complete"], 10)
         self.assertEqual(stats["failed"], 10)
         self.assertEqual(stats["retried"], 10)
@@ -221,11 +222,10 @@ class TestQueue(unittest.IsolatedAsyncioTestCase):
         await self.enqueue("echo", a=1)
         await queue2.enqueue("echo", a=1)
         await worker.process()
-        await self.queue.stats()
-        await queue2.stats()
+        await worker.stats()
 
         info = await self.queue.info(jobs=True)
-        self.assertEqual(set(info["workers"].keys()), {self.queue.uuid, queue2.uuid})
+        self.assertEqual(set(info["workers"].keys()), {worker.id})
         self.assertEqual(info["active"], 0)
         self.assertEqual(info["queued"], 1)
         self.assertEqual(len(info["jobs"]), 1)
@@ -580,8 +580,9 @@ class TestPostgresQueue(TestQueue):
         self.assertEqual(job2.status, Status.COMPLETE)
 
     async def test_sweep_stats(self) -> None:
+        worker = Worker(self.queue, functions=functions)
         # Stats are deleted
-        await self.queue.stats(ttl=1)
+        await worker.stats(ttl=1)
         await asyncio.sleep(1.5)
         await self.queue.sweep()
         async with self.queue.pool.connection() as conn, conn.cursor() as cursor:
@@ -593,12 +594,12 @@ class TestPostgresQueue(TestQueue):
                 WHERE worker_id = %s
                 """
                 ).format(self.queue.stats_table),
-                (self.queue.uuid,),
+                (worker.id,),
             )
             self.assertIsNone(await cursor.fetchone())
 
         # Stats are not deleted
-        await self.queue.stats(ttl=60)
+        await worker.stats(ttl=60)
         await asyncio.sleep(1)
         await self.queue.sweep()
         async with self.queue.pool.connection() as conn, conn.cursor() as cursor:
@@ -610,7 +611,7 @@ class TestPostgresQueue(TestQueue):
                 WHERE worker_id = %s
                 """
                 ).format(self.queue.stats_table),
-                (self.queue.uuid,),
+                (worker.id,),
             )
             self.assertIsNotNone(await cursor.fetchone())
 

@@ -65,7 +65,7 @@ class QueueInfo(t.TypedDict):
 
 class QueueStats(t.TypedDict):
     """
-    Queue Stats
+    Queue Stats, could also be used for Worker Stats
     """
 
     complete: int
