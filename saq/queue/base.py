@@ -18,7 +18,7 @@ from saq.job import (
     Status,
     get_default_job_key,
 )
-from saq.utils import now, uuid1
+from saq.utils import now
 
 if t.TYPE_CHECKING:
     from collections.abc import AsyncIterator, Iterable, Sequence
@@ -30,7 +30,7 @@ if t.TYPE_CHECKING:
         DumpType,
         LoadType,
         QueueInfo,
-        QueueStats,
+        WorkerStats,
     )
 
 
@@ -59,7 +59,6 @@ class Queue(ABC):
         load: LoadType | None,
     ) -> None:
         self.name = name
-        self.uuid: str = uuid1()
         self.started: int = now()
         self.complete = 0
         self.failed = 0
@@ -132,7 +131,16 @@ class Queue(ABC):
         await job.finish(Status.ABORTED, error=job.error)
 
     @abstractmethod
-    async def write_stats(self, stats: QueueStats, ttl: int) -> None:
+    async def write_stats(self, worker_id: str, stats: WorkerStats, ttl: int) -> None:
+        """
+        Returns & updates stats on the queue.
+
+        Args:
+            worker_id: The worker id, passed in rather than taken from the queue instance to ensure that the stats
+                are attributed to the worker and not the queue instance in the proxy server.
+            stats: The stats to write.
+            ttl: The time-to-live in seconds.
+        """
         pass
 
     @abstractmethod
@@ -186,16 +194,24 @@ class Queue(ABC):
             raise ValueError(f"Job {job_dict} fetched by wrong queue: {self.name}")
         return Job(**job_dict, queue=self)
 
-    async def stats(self, ttl: int = 60) -> QueueStats:
-        stats: QueueStats = {
+    async def stats(self, worker_id: str, ttl: int = 60) -> WorkerStats:
+        """
+        Method to be used by workers to update stats.
+
+        Args:
+            worker_id: The worker id.
+            ttl: Time stats are valid for in seconds.
+
+        Returns: The stats.
+        """
+        stats: WorkerStats = {
             "complete": self.complete,
             "failed": self.failed,
             "retried": self.retried,
             "aborted": self.aborted,
             "uptime": now() - self.started,
         }
-
-        await self.write_stats(stats, ttl)
+        await self.write_stats(worker_id, stats, ttl)
         return stats
 
     def register_before_enqueue(self, callback: BeforeEnqueueType) -> None:
