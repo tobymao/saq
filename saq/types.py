@@ -63,9 +63,9 @@ class QueueInfo(t.TypedDict):
     "A truncated list containing the jobs that are scheduled to execute soonest"
 
 
-class QueueStats(t.TypedDict):
+class WorkerStats(t.TypedDict):
     """
-    Queue Stats, could also be used for Worker Stats
+    Worker Stats
     """
 
     complete: int

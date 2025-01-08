@@ -36,7 +36,7 @@ if t.TYPE_CHECKING:
         ReceivesContext,
         SettingsDict,
         TimersDict,
-        QueueStats,
+        WorkerStats,
     )
 
 
@@ -118,7 +118,7 @@ class Worker:
         self.burst_jobs_processed = 0
         self.burst_jobs_processed_lock = threading.Lock()
         self.burst_condition_met = False
-        self.id = id if id is not None else uuid1()
+        self.id = uuid1() if id is None else id
 
         if self.burst:
             if self.dequeue_timeout <= 0:
@@ -155,7 +155,6 @@ class Worker:
         """Start processing jobs and upkeep tasks."""
         logger.info("Worker starting: %s", repr(self.queue))
         logger.debug("Registered functions:\n%s", "\n".join(f"  {key}" for key in self.functions))
-        await self.stats()
 
         try:
             self.event = asyncio.Event()
@@ -218,7 +217,7 @@ class Worker:
         if scheduled:
             logger.info("Scheduled %s", scheduled)
 
-    async def stats(self, ttl: int = 60) -> QueueStats:
+    async def stats(self, ttl: int = 60) -> WorkerStats:
         return await self.queue.stats(self.id, ttl)
 
     async def upkeep(self) -> list[Task[None]]:

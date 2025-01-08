@@ -38,7 +38,7 @@ if t.TYPE_CHECKING:
         ListenCallback,
         LoadType,
         QueueInfo,
-        QueueStats,
+        WorkerStats,
         VersionTuple,
     )
 
@@ -389,7 +389,7 @@ class RedisQueue(Queue):
         await self.redis.delete(job.abort_id)
         await super().finish_abort(job)
 
-    async def write_stats(self, worker_id: str, stats: QueueStats, ttl: int) -> None:
+    async def write_stats(self, worker_id: str, stats: WorkerStats, ttl: int) -> None:
         current = now()
         async with self.redis.pipeline(transaction=True) as pipe:
             key = self.namespace(f"stats:{worker_id}")

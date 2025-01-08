@@ -30,7 +30,7 @@ if t.TYPE_CHECKING:
         DumpType,
         LoadType,
         QueueInfo,
-        QueueStats,
+        WorkerStats,
     )
 
 
@@ -131,7 +131,7 @@ class Queue(ABC):
         await job.finish(Status.ABORTED, error=job.error)
 
     @abstractmethod
-    async def write_stats(self, worker_id: str, stats: QueueStats, ttl: int) -> None:
+    async def write_stats(self, worker_id: str, stats: WorkerStats, ttl: int) -> None:
         """
         Returns & updates stats on the queue.
 
@@ -194,7 +194,7 @@ class Queue(ABC):
             raise ValueError(f"Job {job_dict} fetched by wrong queue: {self.name}")
         return Job(**job_dict, queue=self)
 
-    async def stats(self, worker_id: str, ttl: int = 60) -> QueueStats:
+    async def stats(self, worker_id: str, ttl: int = 60) -> WorkerStats:
         """
         Method to be used by workers to update stats.
 
@@ -204,7 +204,7 @@ class Queue(ABC):
 
         Returns: The stats.
         """
-        stats: QueueStats = {
+        stats: WorkerStats = {
             "complete": self.complete,
             "failed": self.failed,
             "retried": self.retried,

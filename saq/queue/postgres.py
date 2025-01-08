@@ -32,7 +32,7 @@ if t.TYPE_CHECKING:
         DumpType,
         LoadType,
         QueueInfo,
-        QueueStats,
+        WorkerStats,
     )
 
 try:
@@ -670,7 +670,7 @@ class PostgresQueue(Queue):
         logger.info("Enqueuing %s", job.info(logger.isEnabledFor(logging.DEBUG)))
         return job
 
-    async def write_stats(self, worker_id: str, stats: QueueStats, ttl: int) -> None:
+    async def write_stats(self, worker_id: str, stats: WorkerStats, ttl: int) -> None:
         async with self.pool.connection() as conn:
             await conn.execute(
                 SQL(
