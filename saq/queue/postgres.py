@@ -20,7 +20,7 @@ from saq.job import (
 )
 from saq.multiplexer import Multiplexer
 from saq.queue.base import Queue, logger
-from saq.queue.postgres_ddl import DDL_STATEMENTS
+from saq.queue.postgres_migrations import get_migrations
 from saq.utils import now, now_seconds
 
 if t.TYPE_CHECKING:
@@ -49,6 +49,7 @@ ENQUEUE = "saq:enqueue"
 DEQUEUE = "saq:dequeue"
 JOBS_TABLE = "saq_jobs"
 STATS_TABLE = "saq_stats"
+VERSIONS_TABLE = "saq_versions"
 
 
 class PostgresQueue(Queue):
@@ -58,6 +59,7 @@ class PostgresQueue(Queue):
     Args:
         pool: instance of psycopg_pool.AsyncConnectionPool
         name: name of the queue (default "default")
+        versions_table: name of the Postgres table SAQ will use to maintain migrations
         jobs_table: name of the Postgres table SAQ will write jobs to (default "saq_jobs")
         stats_table: name of the Postgres table SAQ will write stats to (default "saq_stats")
         dump: lambda that takes a dictionary and outputs bytes (default `json.dumps`)
@@ -88,6 +90,7 @@ class PostgresQueue(Queue):
         self,
         pool: AsyncConnectionPool,
         name: str = "default",
+        versions_table: str = VERSIONS_TABLE,
         jobs_table: str = JOBS_TABLE,
         stats_table: str = STATS_TABLE,
         dump: DumpType | None = None,
@@ -101,6 +104,7 @@ class PostgresQueue(Queue):
     ) -> None:
         super().__init__(name=name, dump=dump, load=load)
 
+        self.versions_table = Identifier(versions_table)
         self.jobs_table = Identifier(jobs_table)
         self.stats_table = Identifier(stats_table)
         self.pool = pool
@@ -128,14 +132,65 @@ class PostgresQueue(Queue):
                 {"key1": self.saq_lock_keyspace},
             )
             result = await cursor.fetchone()
-
             if result and not result[0]:
                 return
 
-            for statement in DDL_STATEMENTS:
-                await cursor.execute(
-                    SQL(statement).format(jobs_table=self.jobs_table, stats_table=self.stats_table)
-                )
+            await cursor.execute(
+                SQL(
+                    dedent("""
+            CREATE TABLE IF NOT EXISTS {versions_table} (
+                version INT 
+            );
+                        """)
+                ).format(versions_table=self.versions_table)
+            )
+
+            migrations = get_migrations(
+                jobs_table=self.jobs_table,
+                stats_table=self.stats_table,
+            )
+            target_version = migrations[-1][0]
+            await cursor.execute(
+                SQL(
+                    dedent(
+                        """
+                    SELECT version FROM {versions_table}
+                    """
+                    )
+                ).format(versions_table=self.versions_table),
+            )
+            result = await cursor.fetchone()
+            if result is not None:
+                current_version = result[0]
+                if current_version == target_version:
+                    return
+                if current_version > target_version:
+                    raise ValueError("The library version is behind the schema version.")
+
+            current = result[0] if result else 0
+            # Find the index of the next migration
+            index = next(
+                (i for i, migration in enumerate(migrations) if migration[0] > current),
+                None,  # default if not found
+            )
+            if index is None:
+                raise ValueError("Could not find the next migration.")
+            for migration in migrations[current:]:
+                for migration_statement in migration[1]:
+                    await cursor.execute(
+                        migration_statement,
+                    )
+
+            await cursor.execute(
+                SQL(
+                    dedent(
+                        """
+                            DELETE FROM {versions_table};
+                            INSERT INTO {versions_table} (version) VALUES ({target_version});
+                            """
+                    )
+                ).format(versions_table=self.versions_table, target_version=target_version),
+            )
 
     async def connect(self) -> None:
         if self.pool._opened:
