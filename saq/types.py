@@ -97,14 +97,12 @@ class TimersDict(t.TypedDict):
 
     schedule: int
     "How often we poll to schedule jobs in seconds (default 1)"
-    stats: int
-    "How often to update stats in seconds (default 10)"
+    worker_info: int
+    "How often to update worker info, stats and metadata in seconds (default 10)"
     sweep: int
     "How often to clean up stuck jobs in seconds (default 60)"
     abort: int
     "How often to check if a job is aborted in seconds (default 1)"
-    metadata: int
-    "How often to write worker metadata in seconds (default 60)"
 
 
 class PartialTimersDict(TimersDict, total=False):

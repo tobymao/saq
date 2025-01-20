@@ -10,7 +10,6 @@ class TestMigrations(unittest.TestCase):
         migrations = get_migrations(
             Identifier("jobs_table"),
             Identifier("stats_table"),
-            Identifier("worker_metadata_table"),
         )
         versions = [migration[0] for migration in migrations]
         assert versions == sorted(versions)
@@ -20,7 +19,6 @@ class TestMigrations(unittest.TestCase):
         migrations = get_migrations(
             Identifier("jobs_table"),
             Identifier("stats_table"),
-            Identifier("worker_metadata_table"),
         )
         versions = [migration[0] for migration in migrations]
         assert max(versions) <= len(migrations)

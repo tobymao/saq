@@ -31,6 +31,7 @@ if t.TYPE_CHECKING:
         LoadType,
         QueueInfo,
         WorkerStats,
+        WorkerInfo,
     )
 
 
@@ -131,22 +132,23 @@ class Queue(ABC):
         await job.finish(Status.ABORTED, error=job.error)
 
     @abstractmethod
-    async def write_stats(self, worker_id: str, stats: WorkerStats, ttl: int) -> None:
+    async def write_worker_info(
+        self,
+        worker_id: str,
+        info: WorkerInfo,
+        ttl: int,
+    ) -> None:
         """
-        Returns & updates stats on the queue.
+        Write stats and metadata for a worker.
 
         Args:
             worker_id: The worker id, passed in rather than taken from the queue instance to ensure that the stats
                 are attributed to the worker and not the queue instance in the proxy server.
+            queue_key: The key of the queue.
+            metadata: The metadata to write.
             stats: The stats to write.
             ttl: The time-to-live in seconds.
         """
-        pass
-
-    @abstractmethod
-    async def write_worker_metadata(
-        self, worker_id: str, queue_key: str, metadata: t.Optional[dict], ttl: int
-    ) -> None:
         pass
 
     @abstractmethod
@@ -200,15 +202,19 @@ class Queue(ABC):
             raise ValueError(f"Job {job_dict} fetched by wrong queue: {self.name}")
         return Job(**job_dict, queue=self)
 
-    async def stats(self, worker_id: str, ttl: int = 60) -> WorkerStats:
+    async def worker_info(
+        self, worker_id: str, queue_key: str, metadata: t.Optional[dict] = None, ttl: int = 60
+    ) -> WorkerInfo:
         """
-        Method to be used by workers to update stats.
+        Method to be used by workers to update worker info.
 
         Args:
             worker_id: The worker id.
             ttl: Time stats are valid for in seconds.
+            queue_key: The key of the queue.
+            metadata: The metadata to write.
 
-        Returns: The stats.
+        Returns: Worker info.
         """
         stats: WorkerStats = {
             "complete": self.complete,
@@ -217,8 +223,17 @@ class Queue(ABC):
             "aborted": self.aborted,
             "uptime": now() - self.started,
         }
-        await self.write_stats(worker_id, stats, ttl)
-        return stats
+        info: WorkerInfo = {
+            "stats": stats,
+            "queue_key": queue_key,
+            "metadata": metadata,
+        }
+        await self.write_worker_info(
+            worker_id,
+            info,
+            ttl=ttl,
+        )
+        return info
 
     def register_before_enqueue(self, callback: BeforeEnqueueType) -> None:
         self._before_enqueues[id(callback)] = callback
