@@ -38,8 +38,8 @@ if t.TYPE_CHECKING:
         ListenCallback,
         LoadType,
         QueueInfo,
-        WorkerStats,
         VersionTuple,
+        WorkerInfo,
     )
 
 ID_PREFIX = "saq:job:"
@@ -130,15 +130,15 @@ class RedisQueue(Queue):
             *_, worker_uuid = key_str.split(":")
             worker_uuids.append(worker_uuid)
 
-        worker_stats = await self.redis.mget(
-            self.namespace(f"stats:{worker_uuid}") for worker_uuid in worker_uuids
+        worker_metadata = await self.redis.mget(
+            self.namespace(f"worker_info:{worker_uuid}") for worker_uuid in worker_uuids
         )
-
-        worker_info = {}
-        for worker_uuid, stats in zip(worker_uuids, worker_stats):
-            if stats:
-                stats_obj = json.loads(stats)
-                worker_info[worker_uuid] = stats_obj
+        workers: dict[str, WorkerInfo] = {}
+        worker_metadata_dict = dict(zip(worker_uuids, worker_metadata))
+        for worker in worker_uuids:
+            metadata = worker_metadata_dict.get(worker)
+            if metadata:
+                workers[worker] = json.loads(metadata)
 
         queued = await self.count("queued")
         active = await self.count("active")
@@ -166,7 +166,7 @@ class RedisQueue(Queue):
             job_info = []
 
         return {
-            "workers": worker_info,
+            "workers": workers,
             "name": self.name,
             "queued": queued,
             "active": active,
@@ -389,12 +389,17 @@ class RedisQueue(Queue):
         await self.redis.delete(job.abort_id)
         await super().finish_abort(job)
 
-    async def write_stats(self, worker_id: str, stats: WorkerStats, ttl: int) -> None:
+    async def write_worker_info(
+        self,
+        worker_id: str,
+        info: WorkerInfo,
+        ttl: int,
+    ) -> None:
         current = now()
         async with self.redis.pipeline(transaction=True) as pipe:
-            key = self.namespace(f"stats:{worker_id}")
+            key = self.namespace(f"worker_info:{worker_id}")
             await (
-                pipe.setex(key, ttl, json.dumps(stats))
+                pipe.setex(key, ttl, json.dumps(info))
                 .zremrangebyscore(self._stats, 0, current)
                 .zadd(self._stats, {key: current + millis(ttl)})
                 .expire(self._stats, ttl)

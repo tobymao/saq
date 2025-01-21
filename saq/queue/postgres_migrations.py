@@ -43,4 +43,17 @@ CREATE TABLE IF NOT EXISTS {stats_table} (
                 ).format(stats_table=stats_table),
             ],
         ),
+        (
+            2,
+            [
+                SQL(
+                    dedent("""
+ALTER TABLE {stats_table} ADD COLUMN IF NOT EXISTS metadata JSONB;
+ALTER TABLE {stats_table} ADD COLUMN IF NOT EXISTS queue_key TEXT;
+CREATE INDEX IF NOT EXISTS saq_stats_expire_at_idx ON {stats_table} (expire_at);
+CREATE INDEX IF NOT EXISTS saq_stats_queue_key_idx ON {stats_table} (queue_key);
+        """)
+                ).format(stats_table=stats_table),
+            ],
+        ),
     ]

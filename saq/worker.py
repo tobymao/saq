@@ -36,11 +36,14 @@ if t.TYPE_CHECKING:
         ReceivesContext,
         SettingsDict,
         TimersDict,
-        WorkerStats,
+        WorkerInfo,
     )
 
 
 logger = logging.getLogger("saq")
+
+# Type that represents arbitrary json
+JsonDict = t.Dict[str, t.Any]
 
 
 class Worker:
@@ -59,12 +62,13 @@ class Worker:
         after_process: async function to call after a job processes
         timers: dict with various timer overrides in seconds
             schedule: how often we poll to schedule jobs
-            stats: how often to update stats
+            worker_info: how often to update worker info, stats and metadata
             sweep: how often to clean up stuck jobs
             abort: how often to check if a job is aborted
         dequeue_timeout: how long it will wait to dequeue
         burst: whether to stop the worker once all jobs have been processed
         max_burst_jobs: the maximum number of jobs to process in burst mode
+        metadata: arbitrary data to pass to the worker which it will register with saq
     """
 
     SIGNALS = [signal.SIGINT, signal.SIGTERM] if os.name != "nt" else [signal.SIGTERM]
@@ -85,6 +89,7 @@ class Worker:
         dequeue_timeout: float = 0,
         burst: bool = False,
         max_burst_jobs: int | None = None,
+        metadata: t.Optional[JsonDict] = None,
     ) -> None:
         self.queue = queue
         self.concurrency = concurrency
@@ -99,7 +104,7 @@ class Worker:
         )
         self.timers: TimersDict = {
             "schedule": 1,
-            "stats": 10,
+            "worker_info": 10,
             "sweep": 60,
             "abort": 1,
         }
@@ -118,6 +123,7 @@ class Worker:
         self.burst_jobs_processed = 0
         self.burst_jobs_processed_lock = threading.Lock()
         self.burst_condition_met = False
+        self._metadata = metadata
         self.id = uuid1() if id is None else id
 
         if self.burst:
@@ -217,8 +223,10 @@ class Worker:
         if scheduled:
             logger.info("Scheduled %s", scheduled)
 
-    async def stats(self, ttl: int = 60) -> WorkerStats:
-        return await self.queue.stats(self.id, ttl)
+    async def worker_info(self, ttl: int = 60) -> WorkerInfo:
+        return await self.queue.worker_info(
+            self.id, queue_key=self.queue.name, metadata=self._metadata, ttl=ttl
+        )
 
     async def upkeep(self) -> list[Task[None]]:
         """Start various upkeep tasks async."""
@@ -240,7 +248,13 @@ class Worker:
             asyncio.create_task(poll(self.abort, self.timers["abort"])),
             asyncio.create_task(poll(self.schedule, self.timers["schedule"])),
             asyncio.create_task(poll(self.queue.sweep, self.timers["sweep"])),
-            asyncio.create_task(poll(self.stats, self.timers["stats"], self.timers["stats"] + 1)),
+            asyncio.create_task(
+                poll(
+                    self.worker_info,
+                    self.timers["worker_info"],
+                    self.timers["worker_info"] + 1,
+                )
+            ),
         ]
 
     async def abort(self, abort_threshold: float) -> None:

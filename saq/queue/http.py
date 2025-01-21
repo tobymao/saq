@@ -7,7 +7,6 @@ from __future__ import annotations
 import json
 import typing as t
 
-
 from saq.errors import MissingDependencyError
 from saq.job import Job, Status
 from saq.queue.base import Queue
@@ -18,7 +17,7 @@ if t.TYPE_CHECKING:
     from saq.types import (
         CountKind,
         QueueInfo,
-        WorkerStats,
+        WorkerInfo,
     )
 
 try:
@@ -102,9 +101,15 @@ class HttpProxy:
                         jobs=req["jobs"], offset=req["offset"], limit=req["limit"]
                     )
                 )
-            if kind == "write_stats":
-                await self.queue.write_stats(
-                    worker_id=req["worker_id"], stats=req["stats"], ttl=req["ttl"]
+            if kind == "write_worker_info":
+                await self.queue.write_worker_info(
+                    worker_id=req["worker_id"],
+                    info={
+                        "stats": req["stats"],
+                        "queue_key": req["queue_key"],
+                        "metadata": req["metadata"],
+                    },
+                    ttl=req["ttl"],
                 )
                 return None
         raise ValueError(f"Invalid request {body}")
@@ -208,8 +213,20 @@ class HttpQueue(Queue):
     async def dequeue(self, timeout: float = 0) -> Job | None:
         return self.deserialize(await self._send("dequeue", timeout=timeout))
 
-    async def write_stats(self, worker_id: str, stats: WorkerStats, ttl: int) -> None:
-        await self._send("write_stats", worker_id=worker_id, stats=stats, ttl=ttl)
+    async def write_worker_info(
+        self,
+        worker_id: str,
+        info: WorkerInfo,
+        ttl: int,
+    ) -> None:
+        await self._send(
+            "write_worker_info",
+            worker_id=worker_id,
+            stats=info["stats"],
+            ttl=ttl,
+            queue_key=info["queue_key"],
+            metadata=info["metadata"],
+        )
 
     async def info(self, jobs: bool = False, offset: int = 0, limit: int = 10) -> QueueInfo:
         return json.loads(await self._send("info", jobs=jobs, offset=offset, limit=limit))

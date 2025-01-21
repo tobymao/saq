@@ -48,17 +48,17 @@ class TestQueue(unittest.IsolatedAsyncioTestCase):
             queue=queue1,
             functions=[echo],
         )
-        await worker.stats()
+        await worker.worker_info()
         worker2 = Worker(
             queue=queue2,
             functions=[echo],
         )
-        await worker2.stats()
+        await worker2.worker_info()
         local_worker = Worker(
             queue=self.queue,
             functions=[echo],
         )
-        await local_worker.stats()
+        await local_worker.worker_info()
 
         root_info = await self.queue.info()
         info1 = await queue1.info()

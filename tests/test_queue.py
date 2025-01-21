@@ -201,17 +201,21 @@ class TestQueue(unittest.IsolatedAsyncioTestCase):
             await job.finish(Status.ABORTED)
             await job.finish(Status.FAILED)
             await job.finish(Status.COMPLETE)
-        stats = await worker.stats()
-        self.assertEqual(stats["complete"], 10)
-        self.assertEqual(stats["failed"], 10)
-        self.assertEqual(stats["retried"], 10)
-        self.assertEqual(stats["aborted"], 10)
-        self.assertGreater(stats["uptime"], 0)
+        worker_info = await worker.worker_info()
+        self.assertEqual(worker_info["stats"]["complete"], 10)
+        self.assertEqual(worker_info["stats"]["failed"], 10)
+        self.assertEqual(worker_info["stats"]["retried"], 10)
+        self.assertEqual(worker_info["stats"]["aborted"], 10)
+        self.assertGreater(worker_info["stats"]["uptime"], 0)
 
     async def test_info(self) -> None:
         queue2 = await self.create_queue(name=self.queue.name)
         self.addAsyncCleanup(cleanup_queue, queue2)
-        worker = Worker(self.queue, functions=functions)
+        worker = Worker(
+            self.queue,
+            functions=functions,
+            metadata={"foo": "bar"},
+        )
         info = await self.queue.info(jobs=True)
         self.assertEqual(info["workers"], {})
         self.assertEqual(info["active"], 0)
@@ -222,13 +226,23 @@ class TestQueue(unittest.IsolatedAsyncioTestCase):
         await self.enqueue("echo", a=1)
         await queue2.enqueue("echo", a=1)
         await worker.process()
-        await worker.stats()
+        await worker.worker_info(3)
 
         info = await self.queue.info(jobs=True)
         self.assertEqual(set(info["workers"].keys()), {worker.id})
+        self.assertEqual(info["workers"][worker.id]["metadata"], {"foo": "bar"})
+        self.assertEqual(info["workers"][worker.id]["queue_key"], self.queue.name)
+        assert info["workers"][worker.id]["stats"] is not None
         self.assertEqual(info["active"], 0)
         self.assertEqual(info["queued"], 1)
         self.assertEqual(len(info["jobs"]), 1)
+
+        time.sleep(4)
+        info = await self.queue.info(jobs=True)
+        self.assertEqual(info["workers"], {})
+        await worker.queue.sweep()
+        info = await self.queue.info(jobs=True)
+        self.assertEqual(info["workers"], {})
 
     @mock.patch("saq.utils.time")
     async def test_schedule(self, mock_time: MagicMock) -> None:
@@ -582,7 +596,7 @@ class TestPostgresQueue(TestQueue):
     async def test_sweep_stats(self) -> None:
         worker = Worker(self.queue, functions=functions)
         # Stats are deleted
-        await worker.stats(ttl=1)
+        await worker.worker_info(ttl=1)
         await asyncio.sleep(1.5)
         await self.queue.sweep()
         async with self.queue.pool.connection() as conn, conn.cursor() as cursor:
@@ -599,7 +613,7 @@ class TestPostgresQueue(TestQueue):
             self.assertIsNone(await cursor.fetchone())
 
         # Stats are not deleted
-        await worker.stats(ttl=60)
+        await worker.worker_info(ttl=60)
         await asyncio.sleep(1)
         await self.queue.sweep()
         async with self.queue.pool.connection() as conn, conn.cursor() as cursor:

@@ -32,7 +32,7 @@ if t.TYPE_CHECKING:
         DumpType,
         LoadType,
         QueueInfo,
-        WorkerStats,
+        WorkerInfo,
     )
 
 try:
@@ -224,14 +224,24 @@ class PostgresQueue(Queue):
                 SQL(
                     dedent(
                         """
-                        SELECT worker_id, stats FROM {stats_table}
-                        WHERE NOW() <= TO_TIMESTAMP(expire_at)
-                        """
+                        SELECT worker_id, stats, queue_key, metadata
+                        FROM {stats_table} 
+                        WHERE expire_at >= EXTRACT(EPOCH FROM NOW())
+                            AND queue_key = %(queue)s
+                            """
                     )
                 ).format(stats_table=self.stats_table),
+                {"queue": self.name},
             )
             results = await cursor.fetchall()
-        workers: dict[str, dict[str, t.Any]] = dict(results)
+        workers: dict[str, WorkerInfo] = {
+            worker_id: {
+                "stats": stats,
+                "metadata": metadata,
+                "queue_key": queue_key,
+            }
+            for worker_id, stats, queue_key, metadata in results
+        }
 
         queued = await self.count("queued")
         active = await self.count("active")
@@ -725,23 +735,30 @@ class PostgresQueue(Queue):
         logger.info("Enqueuing %s", job.info(logger.isEnabledFor(logging.DEBUG)))
         return job
 
-    async def write_stats(self, worker_id: str, stats: WorkerStats, ttl: int) -> None:
+    async def write_worker_info(
+        self,
+        worker_id: str,
+        info: WorkerInfo,
+        ttl: int,
+    ) -> None:
         async with self.pool.connection() as conn:
             await conn.execute(
                 SQL(
                     dedent(
                         """
-                        INSERT INTO {stats_table} (worker_id, stats, expire_at)
-                        VALUES (%(worker_id)s, %(stats)s, EXTRACT(EPOCH FROM NOW()) + %(ttl)s)
+                        INSERT INTO {stats_table} (worker_id, stats, queue_key, metadata, expire_at)
+                        VALUES (%(worker_id)s, %(stats)s, %(queue_key)s, %(metadata)s, EXTRACT(EPOCH FROM NOW()) + %(ttl)s)
                         ON CONFLICT (worker_id) DO UPDATE
-                        SET stats = %(stats)s, expire_at = EXTRACT(EPOCH FROM NOW()) + %(ttl)s
+                        SET stats = %(stats)s, queue_key = %(queue_key)s, metadata = %(metadata)s, expire_at = EXTRACT(EPOCH FROM NOW()) + %(ttl)s
                         """
                     )
                 ).format(stats_table=self.stats_table),
                 {
                     "worker_id": worker_id,
-                    "stats": json.dumps(stats),
+                    "stats": json.dumps(info["stats"]),
                     "ttl": ttl,
+                    "queue_key": info["queue_key"],
+                    "metadata": json.dumps(info["metadata"]),
                 },
             )
 
