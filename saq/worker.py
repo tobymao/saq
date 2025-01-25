@@ -14,12 +14,13 @@ import traceback
 import threading
 import typing as t
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timezone, tzinfo
 
 from croniter import croniter
 
 from saq.job import Status
 from saq.queue import Queue
-from saq.utils import cancel_tasks, millis, now, now_seconds, uuid1
+from saq.utils import cancel_tasks, millis, now, uuid1
 
 if t.TYPE_CHECKING:
     from asyncio import Task
@@ -56,6 +57,7 @@ class Worker:
         functions: list of async functions
         concurrency: number of jobs to process concurrently
         cron_jobs: List of CronJob instances.
+        cron_tz: timezone for cron scheduler
         startup: async function to call on startup
         shutdown: async function to call on shutdown
         before_process: async function to call before a job processes
@@ -81,6 +83,7 @@ class Worker:
         id: t.Optional[str] = None,
         concurrency: int = 10,
         cron_jobs: Collection[CronJob] | None = None,
+        cron_tz: tzinfo = timezone.utc,
         startup: ReceivesContext | Collection[ReceivesContext] | None = None,
         shutdown: ReceivesContext | Collection[ReceivesContext] | None = None,
         before_process: ReceivesContext | Collection[ReceivesContext] | None = None,
@@ -114,6 +117,7 @@ class Worker:
         functions = set(functions)
         self.functions: dict[str, Function] = {}
         self.cron_jobs: Collection[CronJob] = cron_jobs or []
+        self.cron_tz: tzinfo = cron_tz
         self.context: Context = {"worker": self}
         self.tasks: set[Task[t.Any]] = set()
         self.job_task_contexts: dict[Job, JobTaskContext] = {}
@@ -210,7 +214,8 @@ class Worker:
             kwargs = cron_job.__dict__.copy()
             function = kwargs.pop("function").__qualname__
             kwargs["key"] = f"cron:{function}" if kwargs.pop("unique") else None
-            scheduled = croniter(kwargs.pop("cron"), now_seconds()).get_next()
+            start_time = datetime.now(self.cron_tz)
+            scheduled = croniter(kwargs.pop("cron"), start_time).get_next()
 
             await self.queue.enqueue(
                 function,
