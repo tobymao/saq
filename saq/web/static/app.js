@@ -20,7 +20,7 @@ window.addEventListener("popstate", event => renderPage())
 
 const handle_error = function(error) {
   console.log(error)
-  return {error: error.toString()}
+  return { error: error.toString() }
 }
 
 const apiPath = function(path) {
@@ -78,7 +78,7 @@ const link = function(data, children) {
     event.target.blur()
   }
 
-  return h("a", Object.assign({on: {click: handler}}, data), children)
+  return h("a", Object.assign({ on: { click: handler } }, data), children)
 }
 
 const format_time = time => time ? new Date(time).toLocaleString() : ""
@@ -96,9 +96,9 @@ const home_view = function(data) {
           h("th", "Workers"),
         ]),
       ]),
-      h("tbody", {attrs: {role: "grid"}}, data.queues.map(queue =>
+      h("tbody", { attrs: { role: "grid" } }, data.queues.map(queue =>
         h("tr", [
-          h("td", link({props: {href: root_path + "/queues/" + queue.name}}, queue.name)),
+          h("td", link({ props: { href: root_path + "/queues/" + queue.name } }, queue.name)),
           h("td", queue.active),
           h("td", queue.queued),
           h("td", queue.scheduled),
@@ -150,7 +150,7 @@ const queue_view = function(data, queue_name) {
       ])),
     ]),
     h("h2", "Workers"),
-    h("table", {attrs: {role: "grid"}}, [
+    h("table", { attrs: { role: "grid" } }, [
       h("thead", [
         h("tr", [
           h("th", "Worker"),
@@ -163,19 +163,19 @@ const queue_view = function(data, queue_name) {
       h("tbody", Object.entries(queue.workers).map(([name, worker]) =>
         h("tr", [
           h("td", name),
-          h("td", worker.complete),
-          h("td", worker.retried),
-          h("td", worker.failed),
-          h("td", worker.uptime / 1000),
+          h("td", worker.stats.complete),
+          h("td", worker.stats.retried),
+          h("td", worker.stats.failed),
+          h("td", worker.stats.uptime / 1000),
         ])
       )),
     ]),
     h("h2", "Jobs"),
-    h("table", {attrs: {role: "grid"}}, [
+    h("table", { attrs: { role: "grid" } }, [
       h("thead", h("tr", [h("th", "Key"), ...job_headers()])),
       h("tbody", queue.jobs.map(job =>
         h("tr", [
-          link({props: {href: root_path + "/queues/" + queue_name + "/jobs/" + job.key}}, h("td", job.key)),
+          link({ props: { href: root_path + "/queues/" + queue_name + "/jobs/" + job.key } }, h("td", job.key)),
           ...job_columns(job),
         ])
       )),
@@ -188,14 +188,14 @@ const job_view = function(data, queue_name, job_key) {
   const buttons = [button(
     "Retry",
     event => post(root_path + "/queues/" + queue_name + "/jobs/" + job_key + "/retry"),
-    {style: {marginRight: "1rem"}},
+    { style: { marginRight: "1rem" } },
   )]
 
   if (!job.completed) {
     buttons.push(button(
       "Abort",
-      event => post(root_path +  "/queues/" + queue_name + "/jobs/" + job_key + "/abort"),
-      {style: {borderColor: "#d81b60", backgroundColor: "#d81b60"}},
+      event => post(root_path + "/queues/" + queue_name + "/jobs/" + job_key + "/abort"),
+      { style: { borderColor: "#d81b60", backgroundColor: "#d81b60" } },
     ))
   }
 
@@ -214,16 +214,16 @@ const job_view = function(data, queue_name, job_key) {
       ])),
       h("tbody", h("tr", [
         ...job_columns(job),
-        h("td", link({props: {href: "/queues/" + job.queue}}, job.queue)),
-        h("td", h("progress", {props: {value: job.progress || 0, max: 1.0}})),
+        h("td", link({ props: { href: "/queues/" + job.queue } }, job.queue)),
+        h("td", h("progress", { props: { value: job.progress || 0, max: 1.0 } })),
         h("td", job.attempts),
       ])),
     ])),
-    h("details", {props: {open: true}}, [
+    h("details", { props: { open: true } }, [
       h("summary", "Result"),
       h("p", job.result),
     ]),
-    h("details", {props: {open: true}}, [
+    h("details", { props: { open: true } }, [
       h("summary", "Error"),
       h("p", job.error),
     ]),
@@ -233,19 +233,19 @@ const job_view = function(data, queue_name, job_key) {
 const error_view = function(error) {
   return h("div", [
     h("h1", "Error"),
-    h("pre", {style: {padding: "1rem"}}, error),
+    h("pre", { style: { padding: "1rem" } }, error),
   ])
 }
 
 const root_path_1 = root_path + '/'
 
 let routes = {}
-routes[root_path + '/'] = {view: home_view, data: "/queues"}
-routes[root_path + '/queues/:queue_id'] = {view: queue_view}
-routes[root_path + '/queues/:queue_id/jobs/:job_id'] = {view: job_view}
+routes[root_path + '/'] = { view: home_view, data: "/queues" }
+routes[root_path + '/queues/:queue_id'] = { view: queue_view }
+routes[root_path + '/queues/:queue_id/jobs/:job_id'] = { view: job_view }
 
 routes = Object.keys(routes)
-  .sort(function(a, b){ return b.length - a.length; })
+  .sort(function(a, b) { return b.length - a.length; })
   .map(function(path) {
     return {
       path: new RegExp("^" + path.replace(/:[^\\s/]+/g, "([^\\/]+)") + "$"),
@@ -266,9 +266,9 @@ const page = async function(path) {
 
   return h("div", [
     h("nav.container", [
-      h("ul", h("li", link({props: {href: root_path + "/"}}, h("strong", "SAQ")))),
+      h("ul", h("li", link({ props: { href: root_path + "/" } }, h("strong", "SAQ")))),
       h("ul", [
-        h("li", h("a", {props: {href: "https://saq-py.readthedocs.io"}}, "Docs")),
+        h("li", h("a", { props: { href: "https://saq-py.readthedocs.io" } }, "Docs")),
       ]),
     ]),
     h("main.container", view),
