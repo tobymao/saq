@@ -6,10 +6,12 @@ import logging
 import time
 import typing as t
 import unittest
+from datetime import datetime, timedelta, timezone
 from unittest import mock
 
 from aiohttp import web
 from aiohttp.test_utils import AioHTTPTestCase
+from time_machine import travel
 
 from saq.job import CronJob, Job, Status, ACTIVE_STATUSES
 from saq.queue import Queue
@@ -368,35 +370,44 @@ class TestWorker(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(job.result, 1)
 
     @mock.patch("saq.worker.logger")
-    @mock.patch("saq.utils.time")
-    async def test_cron(self, mock_time: MagicMock, mock_logger: MagicMock) -> None:
+    async def test_cron(self, mock_logger: MagicMock) -> None:
         with self.assertRaises(ValueError):
             Worker(
                 self.queue,
                 functions=functions,
-                cron_jobs=[CronJob(cron, cron="x")],
+                cron_jobs=[CronJob(sleeper, cron="x")],
             )
 
-        mock_time.time.return_value = 1
-        worker = Worker(
-            self.queue,
-            functions=functions,
-            cron_jobs=[CronJob(cron, cron="* * * * *", kwargs={"param": 1})],
-        )
-        self.assertEqual(await self.queue.count("queued"), 0)
-        self.assertEqual(await self.queue.count("incomplete"), 0)
-        await worker.schedule()
-        self.assertEqual(await self.queue.count("queued"), 0)
-        self.assertEqual(await self.queue.count("incomplete"), 1)
+        with travel(datetime(2025, 1, 1, 0, 0, 1, tzinfo=timezone.utc), tick=True) as traveller:
+            worker = Worker(
+                self.queue,
+                functions=functions,
+                cron_jobs=[CronJob(sleeper, cron="* 12 * * *", kwargs={"sleep": 5})],
+                cron_tz=timezone(offset=timedelta(hours=-3)),  # 3 hours behind (UTC-3)
+            )
+            await worker.queue.connect()
+            self.assertEqual(await self.queue.count("incomplete"), 0)
+            asyncio.create_task(worker.start())
+            await asyncio.sleep(1)
+            self.assertEqual(await self.queue.count("incomplete"), 1)
 
-        mock_time.time.return_value = 60
-        await asyncio.sleep(1)
-        await worker.schedule()
-        self.assertEqual(await self.queue.count("queued"), 1)
-        self.assertEqual(await self.queue.count("incomplete"), 1)
-        # Remove if statement when schedule is implemented for Postgres queue
-        if isinstance(self.queue, RedisQueue):
-            mock_logger.info.assert_any_call("Scheduled %s", ["saq:job:default:cron:cron"])
+            traveller.move_to(
+                datetime(2025, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
+            )  # noon UTC
+            await asyncio.sleep(2)
+            self.assertEqual(await self.queue.count("active"), 0)
+
+            traveller.move_to(
+                datetime(2025, 1, 1, 15, 0, 0, tzinfo=timezone.utc)
+            )  # noon in tz
+            await asyncio.sleep(2)
+            self.assertEqual(await self.queue.count("active"), 1)
+
+            # Remove if statement when schedule is implemented for Postgres queue
+            if isinstance(self.queue, RedisQueue):
+                mock_logger.info.assert_any_call(
+                    "Scheduled %s", ["saq:job:default:cron:sleeper"]
+                )
 
     @mock.patch("saq.worker.logger")
     async def test_abort(self, mock_logger: MagicMock) -> None:
