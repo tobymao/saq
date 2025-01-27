@@ -391,23 +391,17 @@ class TestWorker(unittest.IsolatedAsyncioTestCase):
             await asyncio.sleep(1)
             self.assertEqual(await self.queue.count("incomplete"), 1)
 
-            traveller.move_to(
-                datetime(2025, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
-            )  # noon UTC
+            traveller.move_to(datetime(2025, 1, 1, 12, 0, 0, tzinfo=timezone.utc))  # noon UTC
             await asyncio.sleep(2)
             self.assertEqual(await self.queue.count("active"), 0)
 
-            traveller.move_to(
-                datetime(2025, 1, 1, 15, 0, 0, tzinfo=timezone.utc)
-            )  # noon in tz
+            traveller.move_to(datetime(2025, 1, 1, 15, 0, 0, tzinfo=timezone.utc))  # noon in tz
             await asyncio.sleep(2)
             self.assertEqual(await self.queue.count("active"), 1)
 
             # Remove if statement when schedule is implemented for Postgres queue
             if isinstance(self.queue, RedisQueue):
-                mock_logger.info.assert_any_call(
-                    "Scheduled %s", ["saq:job:default:cron:sleeper"]
-                )
+                mock_logger.info.assert_any_call("Scheduled %s", ["saq:job:default:cron:sleeper"])
 
     @mock.patch("saq.worker.logger")
     async def test_abort(self, mock_logger: MagicMock) -> None:
