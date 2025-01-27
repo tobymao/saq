@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import typing as t
 from collections.abc import Collection
-
+from typing_extensions import Required, TypedDict
 
 if t.TYPE_CHECKING:
     from asyncio import Task
@@ -14,10 +14,9 @@ if t.TYPE_CHECKING:
     from saq.job import CronJob, Job, Status
     from saq.worker import Worker
     from saq.queue import Queue
-    from typing_extensions import Required
 
 
-class Context(t.TypedDict, total=False):
+class Context(TypedDict, total=False):
     """
     Task context.
 
@@ -34,7 +33,7 @@ class Context(t.TypedDict, total=False):
     "Exception raised by the task if any"
 
 
-class JobTaskContext(t.TypedDict, total=False):
+class JobTaskContext(TypedDict, total=False):
     """
     Jobs Task Context
     """
@@ -45,7 +44,7 @@ class JobTaskContext(t.TypedDict, total=False):
     "If this task has been aborted, this is the reason"
 
 
-class WorkerInfo(t.TypedDict):
+class WorkerInfo(TypedDict):
     """
     Worker Info
     """
@@ -55,7 +54,7 @@ class WorkerInfo(t.TypedDict):
     metadata: t.Optional[dict[str, t.Any]]
 
 
-class QueueInfo(t.TypedDict):
+class QueueInfo(TypedDict):
     """
     Queue Info
     """
@@ -73,7 +72,7 @@ class QueueInfo(t.TypedDict):
     "A truncated list containing the jobs that are scheduled to execute soonest"
 
 
-class WorkerStats(t.TypedDict):
+class WorkerStats(TypedDict):
     """
     Worker Stats
     """
@@ -90,7 +89,7 @@ class WorkerStats(t.TypedDict):
     "Queue uptime in milliseconds"
 
 
-class TimersDict(t.TypedDict):
+class TimersDict(TypedDict):
     """
     Timers Dictionary
     """
@@ -111,7 +110,7 @@ class PartialTimersDict(TimersDict, total=False):
     """
 
 
-class SettingsDict(t.TypedDict, total=False):
+class SettingsDict(TypedDict, total=False):
     """
     Settings
     """
