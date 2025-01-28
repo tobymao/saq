@@ -382,14 +382,16 @@ class TestWorker(unittest.IsolatedAsyncioTestCase):
             worker = Worker(
                 self.queue,
                 functions=functions,
-                cron_jobs=[CronJob(sleeper, cron="* 12 * * *", kwargs={"sleep": 5})],
+                cron_jobs=[CronJob(sleeper, cron="* 12 * * *", kwargs={"sleep": 3})],
                 cron_tz=timezone(offset=timedelta(hours=-3)),  # 3 hours behind (UTC-3)
             )
             await worker.queue.connect()
             self.assertEqual(await self.queue.count("incomplete"), 0)
+            self.assertEqual(await self.queue.count("queued"), 0)
             asyncio.create_task(worker.start())
             await asyncio.sleep(1)
             self.assertEqual(await self.queue.count("incomplete"), 1)
+            self.assertEqual(await self.queue.count("queued"), 0)
 
             traveller.move_to(datetime(2025, 1, 1, 12, 0, 0, tzinfo=timezone.utc))  # noon UTC
             await asyncio.sleep(2)
