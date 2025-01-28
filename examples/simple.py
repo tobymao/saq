@@ -36,6 +36,8 @@ settings = {
 
 
 async def enqueue(func, **kwargs):
+    await queue.connect()
+
     for _ in range(10000):
         await queue.enqueue(func, **{k: v() for k, v in kwargs.items()})
 
