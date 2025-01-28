@@ -48,6 +48,7 @@ setup(
             "pre-commit",
             "redis>=4.2,<6.0",
             "ruff",
+            "time-machine",
             "types-croniter",
             "types-redis",
             "types-setuptools",
