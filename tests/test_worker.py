@@ -389,7 +389,7 @@ class TestWorker(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(await self.queue.count("incomplete"), 0)
             self.assertEqual(await self.queue.count("queued"), 0)
             asyncio.create_task(worker.start())
-            await asyncio.sleep(1)
+            await asyncio.sleep(0.5)
             self.assertEqual(await self.queue.count("incomplete"), 1)
             self.assertEqual(await self.queue.count("queued"), 0)
 
@@ -404,6 +404,8 @@ class TestWorker(unittest.IsolatedAsyncioTestCase):
             # Remove if statement when schedule is implemented for Postgres queue
             if isinstance(self.queue, RedisQueue):
                 mock_logger.info.assert_any_call("Scheduled %s", ["saq:job:default:cron:sleeper"])
+
+            await worker.stop()
 
     @mock.patch("saq.worker.logger")
     async def test_abort(self, mock_logger: MagicMock) -> None:
