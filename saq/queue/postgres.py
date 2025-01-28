@@ -139,7 +139,7 @@ class PostgresQueue(Queue):
                 SQL(
                     dedent("""
             CREATE TABLE IF NOT EXISTS {versions_table} (
-                version INT 
+                version INT
             );
                         """)
                 ).format(versions_table=self.versions_table)
@@ -225,10 +225,10 @@ class PostgresQueue(Queue):
                     dedent(
                         """
                         SELECT worker_id, stats, queue_key, metadata
-                        FROM {stats_table} 
+                        FROM {stats_table}
                         WHERE expire_at >= EXTRACT(EPOCH FROM NOW())
-                            AND queue_key = %(queue)s
-                            """
+                          AND queue_key = %(queue)s
+                        """
                     )
                 ).format(stats_table=self.stats_table),
                 {"queue": self.name},
@@ -255,9 +255,11 @@ class PostgresQueue(Queue):
                             """
                             SELECT job FROM {jobs_table}
                             WHERE status IN ('new', 'deferred', 'queued', 'active')
+                              AND queue = %(queue)s
                             """
                         )
                     ).format(jobs_table=self.jobs_table),
+                    {"queue": self.name},
                 )
                 results = await cursor.fetchall()
             deserialized_jobs = (self.deserialize(result[0]) for result in results)
@@ -504,11 +506,11 @@ class PostgresQueue(Queue):
                         """
                         SELECT job
                         FROM {jobs_table}
-                        WHERE key = %(key)s
+                        WHERE key = %(key)s AND queue = %(queue)s
                         """
                     )
                 ).format(jobs_table=self.jobs_table),
-                {"key": job_key},
+                {"key": job_key, "queue": self.name},
             )
             job = await cursor.fetchone()
             if job:
