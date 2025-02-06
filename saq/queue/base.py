@@ -10,7 +10,9 @@ import logging
 import typing as t
 from abc import ABC, abstractmethod
 from contextlib import asynccontextmanager
+from urllib.parse import urlparse
 
+from saq.errors import InvalidUrlError
 from saq.job import (
     TERMINAL_STATUSES,
     UNSUCCESSFUL_TERMINAL_STATUSES,
@@ -172,20 +174,23 @@ class Queue(ABC):
 
     @staticmethod
     def from_url(url: str, **kwargs: t.Any) -> Queue:
-        """Create a queue with a Postgers or Redis url."""
-        if url.startswith("redis"):
+        """Create a queue with either a redis, postgres or http url."""
+        parsed_url = urlparse(url)
+        scheme = parsed_url.scheme.lower()
+        if scheme.startswith("redis"):
             from saq.queue.redis import RedisQueue
 
             return RedisQueue.from_url(url, **kwargs)
-
-        if url.startswith("postgres"):
+        elif scheme.startswith("postgres"):
             from saq.queue.postgres import PostgresQueue
 
             return PostgresQueue.from_url(url, **kwargs)
+        elif scheme.startswith("http"):
+            from saq.queue.http import HttpQueue
 
-        from saq.queue.http import HttpQueue
-
-        return HttpQueue.from_url(url, **kwargs)
+            return HttpQueue.from_url(url, **kwargs)
+        else:
+            raise InvalidUrlError(f"Invalid url: {url}")
 
     async def connect(self) -> None:
         self._loop = asyncio.get_running_loop()
