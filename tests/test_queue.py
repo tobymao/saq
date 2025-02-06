@@ -6,10 +6,12 @@ import pickle
 import time
 import typing as t
 import unittest
+from functools import partial
 from unittest import mock
 
 from psycopg.sql import SQL
 
+from saq.errors import InvalidUrlError
 from saq.job import Job, Status
 from saq.queue import JobError, Queue
 from saq.utils import uuid1
@@ -40,6 +42,18 @@ async def error(_ctx: Context) -> None:
 
 
 functions: list[Function] = [echo, error]
+
+
+class TestQueueError(unittest.IsolatedAsyncioTestCase):
+    queue: Queue
+    create_queue: t.Callable
+
+    async def asyncSetUp(self) -> None:
+        self.create_queue = partial(create_redis_queue, "scheme://localhost")
+
+    async def test_queue(self) -> None:
+        with self.assertRaises(InvalidUrlError):
+            self.queue: RedisQueue = await self.create_queue()
 
 
 class TestQueue(unittest.IsolatedAsyncioTestCase):

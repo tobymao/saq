@@ -659,7 +659,7 @@ class TestWorkerHttpQueue(AioHTTPTestCase, TestWorker):
         await super().asyncSetUp()
 
         async def create_http_queue():
-            queue = Queue.from_url("")
+            queue = Queue.from_url("http://")
             queue.session = self.client
             return queue
 
