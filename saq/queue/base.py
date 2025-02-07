@@ -67,6 +67,7 @@ class Queue(ABC):
         self.failed = 0
         self.retried = 0
         self.aborted = 0
+        self._connected = False
         self._dump = dump or json.dumps
         self._load = load or json.loads
         self._before_enqueues: dict[int, BeforeEnqueueType] = {}
@@ -79,9 +80,16 @@ class Queue(ABC):
     def loop(self) -> asyncio.AbstractEventLoop:
         return self._loop or asyncio.get_running_loop()
 
-    @abstractmethod
     async def disconnect(self) -> None:
-        pass
+        await self._disconnect()
+        self._connected = False
+
+    @abstractmethod
+    async def _disconnect(self) -> None: ...
+
+    async def connect(self) -> None:
+        self._connected = True
+        self._loop = asyncio.get_running_loop()
 
     @abstractmethod
     async def info(self, jobs: bool = False, offset: int = 0, limit: int = 10) -> QueueInfo:
@@ -191,9 +199,6 @@ class Queue(ABC):
             return HttpQueue.from_url(url, **kwargs)
         else:
             raise InvalidUrlError(f"Invalid url: {url}")
-
-    async def connect(self) -> None:
-        self._loop = asyncio.get_running_loop()
 
     def serialize(self, job: Job) -> bytes | str:
         return self._dump(job.to_dict())

@@ -15,30 +15,31 @@ if t.TYPE_CHECKING:
 
 
 class Multiplexer(ABC):
-    def __init__(self) -> None:
+    def __init__(self, can_start: t.Callable[[], bool]) -> None:
         self._subscriptions: t.Dict[str, t.Set[Q]] = defaultdict(set)
         self._queues: t.Dict[Q, t.Set[str]] = defaultdict(set)
         self._daemon_task: t.Optional[asyncio.Task] = None
         self._lock = asyncio.Lock()
+        self._can_start = can_start
 
     async def start(self) -> None:
         async with self._lock:
-            if not self._daemon_task:
+            if self._can_start() and not self._daemon_task:
                 self._daemon_task = asyncio.create_task(self._start())
 
     @abstractmethod
     async def _start(self) -> None: ...
 
-    async def _close(self) -> None:
+    async def _stop(self) -> None:
         pass
 
-    async def close(self) -> None:
+    async def stop(self) -> None:
         async with self._lock:
             if self._daemon_task:
                 self._daemon_task.cancel()
                 self._daemon_task = None
 
-            await self._close()
+            await self._stop()
             self._subscriptions.clear()
             self._queues.clear()
 
@@ -72,4 +73,4 @@ class Multiplexer(ABC):
             self._subscriptions[channel].remove(queue)
 
         if not self._queues:
-            await self.close()
+            await self.stop()

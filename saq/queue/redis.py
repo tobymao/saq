@@ -86,7 +86,9 @@ class RedisQueue(Queue):
         self._sweep = self.namespace("sweep")
         self._stats = self.namespace("stats")
         self._op_sem = asyncio.Semaphore(max_concurrent_ops)
-        self._pubsub = PubSubMultiplexer(redis.pubsub(), prefix=f"{ID_PREFIX}{self.name}")
+        self._pubsub = PubSubMultiplexer(
+            lambda: self._connected, redis.pubsub(), prefix=f"{ID_PREFIX}{self.name}"
+        )
 
     def __repr__(self) -> str:
         return f"{self.__class__.__name__}<redis={self.redis}, name='{self.name}'>"
@@ -100,8 +102,8 @@ class RedisQueue(Queue):
     def namespace(self, key: str) -> str:
         return ":".join(["saq", self.name, key])
 
-    async def disconnect(self) -> None:
-        await self._pubsub.close()
+    async def _disconnect(self) -> None:
+        await self._pubsub.stop()
         if hasattr(self.redis, "aclose"):
             await self.redis.aclose()
         else:
@@ -485,8 +487,8 @@ class PubSubMultiplexer(Multiplexer):
     the queue and handle message routing in-process.
     """
 
-    def __init__(self, pubsub: PubSub, prefix: str) -> None:
-        super().__init__()
+    def __init__(self, can_start: t.Callable[[], bool], pubsub: PubSub, prefix: str) -> None:
+        super().__init__(can_start)
         self.prefix = prefix
         self.pubsub = pubsub
 

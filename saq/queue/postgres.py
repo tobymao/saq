@@ -121,7 +121,7 @@ class PostgresQueue(Queue):
         self._releasing: list[str] = []
         self._has_sweep_lock = False
         self._channel = CHANNEL.format(self.name)
-        self._listener = ListenMultiplexer(self.pool, self._channel)
+        self._listener = ListenMultiplexer(lambda: self._connected, self.pool, self._channel)
         self._dequeue_lock = asyncio.Lock()
         self._listen_lock = asyncio.Lock()
 
@@ -209,14 +209,16 @@ class PostgresQueue(Queue):
             return serialized.encode("utf-8")
         return serialized
 
-    async def disconnect(self) -> None:
+    async def _disconnect(self) -> None:
         async with self._connection_lock:
-            if self._dequeue_conn:
+            if self._dequeue_conn and not self._dequeue_conn.closed:
                 await self._dequeue_conn.cancel_safe()
                 await self.pool.putconn(self._dequeue_conn)
                 self._dequeue_conn = None
-        await self.pool.close()
-        self._has_sweep_lock = False
+
+            await self._listener.stop()
+            await self.pool.close()
+            self._has_sweep_lock = False
 
     async def info(self, jobs: bool = False, offset: int = 0, limit: int = 10) -> QueueInfo:
         async with self.pool.connection() as conn, conn.cursor() as cursor:
@@ -903,8 +905,10 @@ class PostgresQueue(Queue):
 
 
 class ListenMultiplexer(Multiplexer):
-    def __init__(self, pool: AsyncConnectionPool, key: str) -> None:
-        super().__init__()
+    def __init__(
+        self, can_start: t.Callable[[], bool], pool: AsyncConnectionPool, key: str
+    ) -> None:
+        super().__init__(can_start)
         self.pool = pool
         self.key = key
 
