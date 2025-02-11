@@ -242,7 +242,7 @@ class Job:
     def stuck(self) -> bool:
         """Checks if an active job is passed its timeout or heartbeat."""
         current = now()
-        return (self.status == Status.ACTIVE) and bool(
+        return (self.status == Status.ACTIVE or self.status == Status.ABORTING) and bool(
             (self.timeout and seconds(current - self.started) > self.timeout)
             or (self.heartbeat and seconds(current - self.touched) > self.heartbeat)
         )

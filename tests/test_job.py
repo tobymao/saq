@@ -71,7 +71,10 @@ class TestJob(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.job.error, "error")
 
     async def test_stuck(self) -> None:
-        self.assertFalse(Job("", status=Status.ACTIVE, timeout=0).stuck)
+        self.assertFalse(Job("", status=Status.ACTIVE, timeout=0, started=0).stuck)
+        self.assertFalse(Job("", status=Status.COMPLETE, timeout=0, started=0).stuck)
+        self.assertTrue(Job("", status=Status.ACTIVE, timeout=1, started=0).stuck)
+        self.assertTrue(Job("", status=Status.ABORTING, timeout=1, started=0).stuck)
 
     async def test_update(self) -> None:
         self.assertEqual(self.job.attempts, 0)

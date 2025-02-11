@@ -274,7 +274,7 @@ class Worker:
             return
 
         for job in await self.queue.jobs(job.key for job in jobs):
-            if not job or job.status != Status.ABORTING:
+            if not job or job.status not in (Status.ABORTING, Status.ABORTED):
                 continue
 
             task_data: JobTaskContext = self.job_task_contexts.get(job, {})
