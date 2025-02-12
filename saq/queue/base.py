@@ -102,8 +102,15 @@ class Queue(ABC):
     async def notify(self, job: Job) -> None:
         pass
 
+    async def update(self, job: Job, **kwargs: t.Any) -> None:
+        job.touched = now()
+        for k, v in kwargs.items():
+            if hasattr(job, k):
+                setattr(job, k, v)
+        await self._update(job, **kwargs)
+
     @abstractmethod
-    async def update(self, job: Job) -> None:
+    async def _update(self, job: Job, status: Status | None = None, **kwargs: t.Any) -> None:
         pass
 
     @abstractmethod

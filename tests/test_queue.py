@@ -289,7 +289,10 @@ class TestQueue(unittest.IsolatedAsyncioTestCase):
         task = asyncio.create_task(self.queue.listen([job.key], listen, timeout=1))
         await asyncio.sleep(0.1)
         await self.queue.update(job)
+        self.assertEqual(job.status, Status.QUEUED)
+        job.status = Status.ACTIVE
         await self.queue.update(job)
+        self.assertEqual(job.status, Status.QUEUED)
         await task
         self.assertEqual(counter["x"], 2)
 
@@ -354,8 +357,7 @@ class TestQueue(unittest.IsolatedAsyncioTestCase):
             await self.queue.enqueue("test")
 
         async for job in self.queue.iter_jobs(batch_size=1):
-            job.status = Status.ACTIVE
-            await job.update()
+            await job.update(status=Status.ACTIVE)
             break
 
         self.assertEqual(9, len([job async for job in self.queue.iter_jobs()]))
@@ -435,9 +437,8 @@ class TestRedisQueue(TestQueue):
         job3 = await self.enqueue("test", timeout=1)
         for _ in range(4):
             job = await self.dequeue()
-            job.status = Status.ACTIVE
             job.started = 1000
-            await self.queue.update(job)
+            await self.queue.update(job, status=Status.ACTIVE)
         await self.dequeue()
 
         # missing job
@@ -569,9 +570,7 @@ class TestPostgresQueue(TestQueue):
         another_queue = await self.create_queue()
         for _ in range(2):
             job = await another_queue.dequeue()
-            job.status = Status.ACTIVE
-            job.started = 1000
-            await another_queue.update(job)
+            await another_queue.update(job, status=Status.ACTIVE, started=1000)
 
         # Disconnect another_queue to simulate worker going down
         await another_queue.disconnect()

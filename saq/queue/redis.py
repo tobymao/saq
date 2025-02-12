@@ -273,8 +273,11 @@ class RedisQueue(Queue):
     async def notify(self, job: Job) -> None:
         await self.redis.publish(job.id, job.status)
 
-    async def update(self, job: Job) -> None:
-        job.touched = now()
+    async def _update(self, job: Job, status: Status | None = None, **kwargs: t.Any) -> None:
+        if not status:
+            stored = await self.job(job.key)
+            status = stored.status if stored else None
+        job.status = status or job.status
         await self.redis.set(job.id, self.serialize(job))
         await self.notify(job)
 

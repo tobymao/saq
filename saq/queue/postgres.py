@@ -21,7 +21,7 @@ from saq.job import (
 from saq.multiplexer import Multiplexer
 from saq.queue.base import Queue, logger
 from saq.queue.postgres_migrations import get_migrations
-from saq.utils import now, now_seconds
+from saq.utils import now_seconds
 
 if t.TYPE_CHECKING:
     from collections.abc import Iterable
@@ -459,19 +459,18 @@ class PostgresQueue(Queue):
     async def notify(self, job: Job, connection: AsyncConnection | None = None) -> None:
         await self._notify(job.key, job.status, connection)
 
-    async def update(
-        self,
-        job: Job,
-        connection: AsyncConnection | None = None,
-        expire_at: float | None = -1,
-        **kwargs: t.Any,
-    ) -> None:
-        job.touched = now()
+    async def _update(self, job: Job, status: Status | None = None, **kwargs: t.Any) -> None:
+        expire_at = kwargs.pop("expire_at", -1)
+        connection = kwargs.pop("connection", None)
 
-        for k, v in kwargs.items():
-            setattr(job, k, v)
+        async with self.nullcontext(
+            connection
+        ) if connection else self.pool.connection() as conn, conn.transaction():
+            if not status:
+                status = await self.get_job_status(job.key, for_update=True, connection=conn)
 
-        async with self.nullcontext(connection) if connection else self.pool.connection() as conn:
+            job.status = status or job.status
+
             await conn.execute(
                 SQL(
                     dedent(
@@ -582,7 +581,7 @@ class PostgresQueue(Queue):
     async def abort(self, job: Job, error: str, ttl: float = 5) -> None:
         async with self.pool.connection() as conn:
             status = await self.get_job_status(job.key, for_update=True, connection=conn)
-            if status == Status.QUEUED:
+            if not status or status == Status.QUEUED:
                 await self.finish(job, Status.ABORTED, error=error, connection=conn)
             else:
                 await self.update(job, status=Status.ABORTING, error=error, connection=conn)
@@ -769,7 +768,7 @@ class PostgresQueue(Queue):
         key: str,
         for_update: bool = False,
         connection: AsyncConnection | None = None,
-    ) -> Status:
+    ) -> Status | None:
         async with self.nullcontext(
             connection
         ) if connection else self.pool.connection() as conn, conn.cursor() as cursor:
@@ -792,8 +791,9 @@ class PostgresQueue(Queue):
                 },
             )
             result = await cursor.fetchone()
-            assert result
-            return result[0]
+            if result:
+                return result[0]
+            return None
 
     async def _retry(self, job: Job, error: str | None) -> None:
         next_retry_delay = job.next_retry_delay()
@@ -802,7 +802,7 @@ class PostgresQueue(Queue):
         else:
             scheduled = job.scheduled or now_seconds()
 
-        await self.update(job, scheduled=int(scheduled), expire_at=None)
+        await self.update(job, status=Status.QUEUED, scheduled=int(scheduled), expire_at=None)
 
     async def _finish(
         self,

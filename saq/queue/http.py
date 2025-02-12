@@ -41,25 +41,23 @@ class HttpProxy:
 
     async def process(self, body: str) -> str | None:
         req = json.loads(body)
-        kind = req["kind"]
-        job = self.queue.deserialize(req.get("job"))
+        kind = req.pop("kind")
+        job = self.queue.deserialize(req.pop("job", None))
 
         if job:
             if kind == "enqueue":
                 return self.serialize(await self.queue.enqueue(job))
             if kind == "update":
-                await self.queue.update(job)
+                await self.queue._update(job, **req)
                 return None
             if kind == "finish":
-                await self.queue.finish(
-                    job, status=req["status"], result=req["result"], error=req["error"]
-                )
+                await self.queue.finish(job, **req)
                 return None
             if kind == "retry":
-                await self.queue.retry(job, error=req["error"])
+                await self.queue.retry(job, **req)
                 return None
             if kind == "abort":
-                await self.queue.abort(job, error=req["error"], ttl=req["ttl"])
+                await self.queue.abort(job, **req)
                 return None
             if kind == "finish_abort":
                 await self.queue.finish_abort(job)
@@ -69,48 +67,26 @@ class HttpProxy:
                 return None
         else:
             if kind == "dequeue":
-                return self.serialize(await self.queue.dequeue(req["timeout"]))
+                return self.serialize(await self.queue.dequeue(**req))
             if kind == "job":
-                return self.serialize(await self.queue.job(req["job_key"]))
+                return self.serialize(await self.queue.job(**req))
             if kind == "jobs":
                 return json.dumps(
-                    [
-                        job.to_dict() if job else None
-                        for job in await self.queue.jobs(req["job_keys"])
-                    ]
+                    [job.to_dict() if job else None for job in await self.queue.jobs(**req)]
                 )
             if kind == "iter_jobs":
-                return json.dumps(
-                    [
-                        job.to_dict()
-                        async for job in self.queue.iter_jobs(
-                            statuses=req["statuses"], batch_size=req["batch_size"]
-                        )
-                    ]
-                )
+                return json.dumps([job.to_dict() async for job in self.queue.iter_jobs(**req)])
 
             if kind == "count":
                 return json.dumps(await self.queue.count(req["count_kind"]))
             if kind == "schedule":
                 return json.dumps(await self.queue.schedule(req["lock"]))
             if kind == "sweep":
-                return json.dumps(await self.queue.sweep(lock=req["lock"], abort=req["abort"]))
+                return json.dumps(await self.queue.sweep(**req))
             if kind == "info":
-                return json.dumps(
-                    await self.queue.info(
-                        jobs=req["jobs"], offset=req["offset"], limit=req["limit"]
-                    )
-                )
+                return json.dumps(await self.queue.info(**req))
             if kind == "write_worker_info":
-                await self.queue.write_worker_info(
-                    worker_id=req["worker_id"],
-                    info={
-                        "stats": req["stats"],
-                        "queue_key": req["queue_key"],
-                        "metadata": req["metadata"],
-                    },
-                    ttl=req["ttl"],
-                )
+                await self.queue.write_worker_info(**req)
                 return None
         raise ValueError(f"Invalid request {body}")
 
@@ -179,8 +155,8 @@ class HttpQueue(Queue):
     async def notify(self, job: Job) -> None:
         await self._send("notify", job=self.serialize(job))
 
-    async def update(self, job: Job) -> None:
-        await self._send("update", job=self.serialize(job))
+    async def _update(self, job: Job, status: Status | None = None, **kwargs: t.Any) -> None:
+        await self._send("update", job=self.serialize(job), status=status, **kwargs)
 
     async def job(self, job_key: str) -> Job | None:
         return self.deserialize(await self._send("job", job_key=job_key))
@@ -222,10 +198,8 @@ class HttpQueue(Queue):
         await self._send(
             "write_worker_info",
             worker_id=worker_id,
-            stats=info["stats"],
             ttl=ttl,
-            queue_key=info["queue_key"],
-            metadata=info["metadata"],
+            info=info,
         )
 
     async def info(self, jobs: bool = False, offset: int = 0, limit: int = 10) -> QueueInfo:
