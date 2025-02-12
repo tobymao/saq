@@ -298,9 +298,8 @@ class Worker:
                 return False
 
             job.started = now()
-            job.status = Status.ACTIVE
             job.attempts += 1
-            await job.update()
+            await job.update(status=Status.ACTIVE)
             context = {**self.context, "job": job}
             await self._before_process(context)
             logger.info("Processing %s", job.info(logger.isEnabledFor(logging.DEBUG)))

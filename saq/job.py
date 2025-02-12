@@ -292,10 +292,10 @@ class Job:
         Updates the stored job in redis.
 
         Set properties with passed in kwargs.
+
+        If status is not explicitly passed in, the status will not update as this is usually controlled by the workers.
         """
-        for k, v in kwargs.items():
-            setattr(self, k, v)
-        await self.get_queue().update(self)
+        await self.get_queue().update(self, **kwargs)
 
     async def refresh(self, until_complete: float | None = None) -> None:
         """

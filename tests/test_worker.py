@@ -312,7 +312,7 @@ class TestWorker(unittest.IsolatedAsyncioTestCase):
             shutdown=[shutdown_a, shutdown_b],
         )
 
-        task = asyncio.create_task(worker.start())
+        asyncio.create_task(worker.start())
         job = await self.enqueue("noop")
         await job.refresh(0)
         self.assertEqual(job.result, 1)
@@ -321,11 +321,7 @@ class TestWorker(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(x["shutdown_a"], 0)
         self.assertEqual(x["shutdown_b"], 0)
 
-        task.cancel()
-        try:
-            await task
-        except asyncio.CancelledError:
-            pass
+        await worker.stop()
 
         self.assertEqual(x["startup_a"], 1)
         self.assertEqual(x["startup_b"], 1)
@@ -615,8 +611,8 @@ class TestWorkerPostgresQueue(TestWorker):
         self.worker = Worker(self.queue, functions=functions)
 
     async def asyncTearDown(self) -> None:
-        await super().asyncTearDown()
         await teardown_postgres()
+        await super().asyncTearDown()
 
     @mock.patch("saq.utils.time")
     async def test_schedule(self, mock_time: MagicMock) -> None:
