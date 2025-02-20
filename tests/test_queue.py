@@ -787,3 +787,13 @@ class TestPostgresQueue(TestQueue):
         assert await self.enqueue("test", priority=-1)
         self.assertEqual(await self.count("queued"), 1)
         assert not await self.queue.dequeue(0.01)
+
+    async def test_listen_cancel(self) -> None:
+        job = await self.queue.enqueue("test")
+        task = asyncio.create_task(job.refresh(0))
+        await asyncio.sleep(0.1)
+        await self.queue._listener.close()
+        await task
+
+        with self.assertRaises(asyncio.TimeoutError):
+            await job.refresh(0.1)
