@@ -46,12 +46,13 @@ class Multiplexer(ABC):
         queue = await self.subscribe(*channels)
 
         try:
-            while True:
-                if timeout:
-                    yield await asyncio.wait_for(queue.get(), timeout)
-                else:
-                    yield await queue.get()
-                queue.task_done()
+            while self._daemon_task and not self._daemon_task.done():
+                try:
+                    yield await asyncio.wait_for(queue.get(), timeout if timeout else 1.0)
+                    queue.task_done()
+                except asyncio.TimeoutError:
+                    if timeout:
+                        raise
         finally:
             await self.unsubscribe(queue)
 
