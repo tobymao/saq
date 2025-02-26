@@ -487,6 +487,38 @@ class TestWorker(unittest.IsolatedAsyncioTestCase):
         await asyncio.sleep(6)
         self.assertEqual(state["counter"], 0)
 
+    async def test_heartbeat(self) -> None:
+        async def handler(_ctx: Context) -> None:
+            await asyncio.sleep(10)
+
+        self.worker = Worker(
+            self.queue,
+            functions=[("noop", handler)],
+            concurrency=2,
+            dequeue_timeout=0.1,
+            burst=True,
+        )
+
+        asyncio.create_task(self.worker.start())
+
+        job_not_refreshed = await self.queue.enqueue("noop", heartbeat=5)
+        job_refreshed = await self.queue.enqueue("noop", heartbeat=5)
+
+        await asyncio.sleep(3)
+        await self.queue.sweep()
+        await job_refreshed.refresh(0)
+        self.assertEqual(job_not_refreshed.status, Status.ACTIVE)
+        await job_not_refreshed.refresh(0)
+        self.assertEqual(job_refreshed.status, Status.ACTIVE)
+        await job_refreshed.update()
+
+        await asyncio.sleep(3)
+        await self.queue.sweep()
+        await job_not_refreshed.refresh(0)
+        await job_refreshed.refresh(0)
+        self.assertEqual(Status.ABORTED, job_not_refreshed.status)
+        self.assertEqual(Status.ACTIVE, job_refreshed.status)
+
     async def test_cron_solo_worker(self) -> None:
         state = {"counter": 0}
 
