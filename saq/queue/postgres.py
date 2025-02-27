@@ -75,7 +75,8 @@ class PostgresQueue(Queue):
         saq_lock_keyspace: The first of two advisory lock keys used by SAQ. (default 0)
             SAQ uses advisory locks for coordinating tasks between its workers, e.g. sweeping.
         job_lock_keyspace: The first of two advisory lock keys used for jobs. (default 1)
-        priorities: The priority range to dequeue (default (0, 32767))
+        job_lock_sweep: Whether or not the jobs are swept if there's no lock. (default True)
+        priorities: The priority range to dequeue. (default (0, 32767))
     """
 
     @classmethod
@@ -100,6 +101,7 @@ class PostgresQueue(Queue):
         poll_interval: int = 1,
         saq_lock_keyspace: int = 0,
         job_lock_keyspace: int = 1,
+        job_lock_sweep: bool = True,
         priorities: tuple[int, int] = (0, 32767),
     ) -> None:
         super().__init__(name=name, dump=dump, load=load)
@@ -113,8 +115,8 @@ class PostgresQueue(Queue):
         self.poll_interval = poll_interval
         self.saq_lock_keyspace = saq_lock_keyspace
         self.job_lock_keyspace = job_lock_keyspace
+        self.job_lock_sweep = job_lock_sweep
         self._priorities = priorities
-
         self._waiting = 0  # Internal counter of worker tasks waiting for dequeue
         self._dequeue_conn: AsyncConnection | None = None
         self._connection_lock = asyncio.Lock()
@@ -419,7 +421,7 @@ class PostgresQueue(Queue):
         for key, job_bytes, objid, status in results:
             job = self.deserialize(job_bytes)
             assert job
-            if objid and not job.stuck:
+            if (objid or not self.job_lock_sweep) and not job.stuck:
                 continue
 
             swept.append(key)

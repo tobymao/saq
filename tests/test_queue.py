@@ -528,9 +528,8 @@ class TestPostgresQueue(TestQueue):
         job3 = await self.enqueue("test", timeout=1)
         for _ in range(4):
             job = await self.dequeue()
-            job.status = Status.ACTIVE
             job.started = 1000
-            await self.queue.update(job)
+            await self.queue.update(job, status=Status.ACTIVE)
         await self.dequeue()
 
         mock_time.time.return_value = 3
@@ -557,9 +556,8 @@ class TestPostgresQueue(TestQueue):
         job1 = await self.queue.enqueue("test")
         assert job1
         job = await self.dequeue()
-        job.status = Status.ACTIVE
         job.started = 1000
-        await self.queue.update(job)
+        await self.queue.update(job, status=Status.ACTIVE)
 
         # Enqueue 2 more jobs that will become stuck
         job2 = await self.queue.enqueue("test", retries=0)
@@ -592,6 +590,22 @@ class TestPostgresQueue(TestQueue):
         self.assertEqual(job2.status, Status.ABORTED)
         self.assertEqual(job3.status, Status.QUEUED)
         self.assertEqual(await self.count("active"), 1)
+
+    @mock.patch("saq.utils.time")
+    async def test_sweep_stuck_lock(self, mock_time: MagicMock) -> None:
+        mock_time.time.return_value = 0
+        job1 = await self.queue.enqueue("test")
+        assert job1
+        job = await self.dequeue()
+        await self.queue.update(job, status=Status.ACTIVE, started=0)
+        await self.queue.disconnect()
+
+        another_queue = await self.create_queue()
+        another_queue.job_lock_sweep = False
+
+        mock_time.time.return_value = 3
+        swept = await another_queue.sweep(abort=0.01)
+        self.assertEqual(set(swept), set())
 
     async def test_sweep_jobs(self) -> None:
         job1 = await self.enqueue("test", ttl=1)
