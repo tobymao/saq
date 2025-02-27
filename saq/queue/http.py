@@ -10,6 +10,7 @@ import typing as t
 from saq.errors import MissingDependencyError
 from saq.job import Job, Status
 from saq.queue.base import Queue
+from saq.queue.postgres import PostgresQueue
 
 if t.TYPE_CHECKING:
     from collections.abc import Iterable
@@ -31,6 +32,9 @@ except ModuleNotFoundError as e:
 
 class HttpProxy:
     def __init__(self, queue: Queue):
+        if isinstance(queue, PostgresQueue):
+            queue.job_lock_sweep = False
+
         self.queue = queue
 
     @staticmethod
