@@ -102,6 +102,7 @@ class HttpQueue(Queue):
     Args:
         url: The url to hit.
         name: name of the queue (default "default")
+        session: optional aiohttp ClientSession to use for requests
     """
 
     @classmethod
@@ -113,13 +114,14 @@ class HttpQueue(Queue):
         self,
         url: str,
         name: str = "default",
+        session: t.Optional[ClientSession] = None,
         **kwargs: t.Any,
     ) -> None:
         super().__init__(name=name, dump=None, load=None)
 
         self.url = url
         self.session_kwargs = kwargs
-        self.session: t.Optional[ClientSession] = None
+        self.session: t.Optional[ClientSession] = session
 
     async def connect(self) -> None:
         if not self.session:
