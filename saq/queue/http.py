@@ -102,7 +102,7 @@ class HttpQueue(Queue):
     Args:
         url: The url to hit.
         name: name of the queue (default "default")
-        session: optional aiohttp ClientSession to use for requests
+        session_callback: optional callback to create a new ClientSession
     """
 
     @classmethod
@@ -114,18 +114,21 @@ class HttpQueue(Queue):
         self,
         url: str,
         name: str = "default",
-        session: t.Optional[ClientSession] = None,
+        session_callback: t.Optional[t.Callable[[], t.Awaitable[ClientSession]]] = None,
         **kwargs: t.Any,
     ) -> None:
         super().__init__(name=name, dump=None, load=None)
-
         self.url = url
         self.session_kwargs = kwargs
-        self.session: t.Optional[ClientSession] = session
+        self.session: t.Optional[ClientSession] = None
+        self.session_callback = session_callback
 
     async def connect(self) -> None:
         if not self.session:
-            self.session = ClientSession(**self.session_kwargs)
+            if self.session_callback:
+                self.session = await self.session_callback()
+            else:
+                self.session = ClientSession(**self.session_kwargs)
         await super().connect()
 
     async def disconnect(self) -> None:
