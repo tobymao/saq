@@ -77,6 +77,7 @@ class PostgresQueue(Queue):
         job_lock_keyspace: The first of two advisory lock keys used for jobs. (default 1)
         job_lock_sweep: Whether or not the jobs are swept if there's no lock. (default True)
         priorities: The priority range to dequeue. (default (0, 32767))
+        swept_error_message: The error message to use when sweeping jobs. (default "swept")
     """
 
     @classmethod
@@ -103,8 +104,9 @@ class PostgresQueue(Queue):
         job_lock_keyspace: int = 1,
         job_lock_sweep: bool = True,
         priorities: tuple[int, int] = (0, 32767),
+        swept_error_message: str | None = None,
     ) -> None:
-        super().__init__(name=name, dump=dump, load=load)
+        super().__init__(name=name, dump=dump, load=load, swept_error_message=swept_error_message)
 
         self.versions_table = Identifier(versions_table)
         self.jobs_table = Identifier(jobs_table)
@@ -425,7 +427,7 @@ class PostgresQueue(Queue):
                 continue
 
             swept.append(key)
-            await self.abort(job, error="swept")
+            await self.abort(job, error=self.swept_error_message)
 
             try:
                 await job.refresh(abort)
@@ -434,9 +436,9 @@ class PostgresQueue(Queue):
 
             logger.info("Sweeping job %s", job.info(logger.isEnabledFor(logging.DEBUG)))
             if job.retryable:
-                await self.retry(job, error="swept")
+                await self.retry(job, error=self.swept_error_message)
             else:
-                await self.finish(job, Status.ABORTED, error="swept")
+                await self.finish(job, Status.ABORTED, error=self.swept_error_message)
         return swept
 
     async def listen(
