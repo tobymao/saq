@@ -57,6 +57,7 @@ class RedisQueue(Queue):
         max_concurrent_ops: maximum concurrent operations. (default 20)
             This throttles calls to `enqueue`, `job`, and `abort` to prevent the Queue
             from consuming too many Redis connections.
+        swept_error_message: The error message to use when sweeping jobs. (default "swept")
     """
 
     @classmethod
@@ -71,8 +72,9 @@ class RedisQueue(Queue):
         dump: DumpType | None = None,
         load: LoadType | None = None,
         max_concurrent_ops: int = 20,
+        swept_error_message: str | None = None,
     ) -> None:
-        super().__init__(name=name, dump=dump, load=load)
+        super().__init__(name=name, dump=dump, load=load, swept_error_message=swept_error_message)
 
         self.redis = redis
         self._version: VersionTuple | None = None
@@ -248,7 +250,7 @@ class RedisQueue(Queue):
                     )
                     swept.append(job_id)
 
-                    await self.abort(job, error="swept")
+                    await self.abort(job, error=self.swept_error_message)
 
                     try:
                         await job.refresh(abort)
@@ -256,9 +258,9 @@ class RedisQueue(Queue):
                         logger.info("Could not abort job %s", job_id)
 
                     if job.retryable:
-                        await self.retry(job, error="swept")
+                        await self.retry(job, error=self.swept_error_message)
                     else:
-                        await self.finish(job, Status.ABORTED, error="swept")
+                        await self.finish(job, Status.ABORTED, error=self.swept_error_message)
             else:
                 swept.append(job_id)
 

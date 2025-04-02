@@ -40,6 +40,12 @@ if t.TYPE_CHECKING:
 logger = logging.getLogger("saq")
 
 
+DEFAULT_SWEPT_JOB_ERROR = "swept"
+"""
+The default error message to use when sweeping jobs.
+"""
+
+
 class JobError(Exception):
     """
     Basic Job error
@@ -60,6 +66,7 @@ class Queue(ABC):
         name: str,
         dump: DumpType | None,
         load: LoadType | None,
+        swept_error_message: str | None = None,
     ) -> None:
         self.name = name
         self.started: int = now()
@@ -69,11 +76,16 @@ class Queue(ABC):
         self.aborted = 0
         self._dump = dump or json.dumps
         self._load = load or json.loads
+        self._swept_error_message = swept_error_message or DEFAULT_SWEPT_JOB_ERROR
         self._before_enqueues: dict[int, BeforeEnqueueType] = {}
         self._loop: asyncio.AbstractEventLoop | None = None
 
     def job_id(self, job_key: str) -> str:
         return job_key
+
+    @property
+    def swept_error_message(self) -> str:
+        return self._swept_error_message
 
     @property
     def loop(self) -> asyncio.AbstractEventLoop:

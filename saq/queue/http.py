@@ -115,9 +115,15 @@ class HttpQueue(Queue):
         url: str,
         name: str = "default",
         session_callback: t.Optional[t.Callable[[], t.Awaitable[ClientSession]]] = None,
+        swept_error_message: str | None = None,
         **kwargs: t.Any,
     ) -> None:
-        super().__init__(name=name, dump=None, load=None)
+        super().__init__(
+            name=name,
+            dump=None,
+            load=None,
+            swept_error_message=swept_error_message,
+        )
         self.url = url
         self.session_kwargs = kwargs
         self.session: t.Optional[ClientSession] = None
