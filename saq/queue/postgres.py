@@ -64,11 +64,6 @@ class PostgresQueue(Queue):
         stats_table: name of the Postgres table SAQ will write stats to (default "saq_stats")
         dump: lambda that takes a dictionary and outputs bytes (default `json.dumps`)
         load: lambda that takes str or bytes and outputs a python dictionary (default `json.loads`)
-        min_size: minimum pool size. (default 4)
-            The minimum number of Postgres connections.
-        max_size: maximum pool size. (default 20)
-            If greater than 0, this limits the maximum number of connections to Postgres.
-            Otherwise, maintain `min_size` number of connections.
         poll_interval: how often to poll for jobs. (default 1)
             If 0, the queue will not poll for jobs and will only rely on notifications from the server.
             This mean cron jobs will not be picked up in a timely fashion.
@@ -81,10 +76,29 @@ class PostgresQueue(Queue):
     """
 
     @classmethod
-    def from_url(cls: type[PostgresQueue], url: str, **kwargs: t.Any) -> PostgresQueue:
-        """Create a queue from a postgres url."""
+    def from_url(
+        cls: type[PostgresQueue], url: str, min_size: int = 4, max_size: int = 20, **kwargs: t.Any
+    ) -> PostgresQueue:
+        """Create a queue from a postgres url.
+
+        Args:
+            url: The postgres url.
+            min_size: minimum pool size. (default 4)
+                The minimum number of Postgres connections.
+            max_size: maximum pool size. (default 20)
+            If greater than 0, this limits the maximum number of connections to Postgres.
+            Otherwise, maintain `min_size` number of connections.
+
+        kwargs: Additional keyword arguments to pass to the constructor.
+        """
         return cls(
-            AsyncConnectionPool(url, check=AsyncConnectionPool.check_connection, open=False),
+            AsyncConnectionPool(
+                url,
+                min_size=min_size,
+                max_size=max_size,
+                check=AsyncConnectionPool.check_connection,
+                open=True,
+            ),
             **kwargs,
         )
 
@@ -97,8 +111,6 @@ class PostgresQueue(Queue):
         stats_table: str = STATS_TABLE,
         dump: DumpType | None = None,
         load: LoadType | None = None,
-        min_size: int = 4,
-        max_size: int = 20,
         poll_interval: int = 1,
         saq_lock_keyspace: int = 0,
         job_lock_keyspace: int = 1,
@@ -112,8 +124,6 @@ class PostgresQueue(Queue):
         self.jobs_table = Identifier(jobs_table)
         self.stats_table = Identifier(stats_table)
         self.pool = pool
-        self.min_size = min_size
-        self.max_size = max_size
         self.poll_interval = poll_interval
         self.saq_lock_keyspace = saq_lock_keyspace
         self.job_lock_keyspace = job_lock_keyspace
@@ -197,13 +207,7 @@ class PostgresQueue(Queue):
             )
 
     async def connect(self) -> None:
-        if self.pool._opened:
-            return
-
-        await self.pool.open()
-        await self.pool.resize(min_size=self.min_size, max_size=self.max_size)
         await self.init_db()
-
         await super().connect()
 
     def serialize(self, job: Job) -> bytes | str:
@@ -213,13 +217,14 @@ class PostgresQueue(Queue):
             return serialized.encode("utf-8")
         return serialized
 
-    async def disconnect(self) -> None:
+    async def disconnect(self, close_pool: bool = False) -> None:
         async with self._connection_lock:
             if self._dequeue_conn:
                 await self._dequeue_conn.cancel_safe()
                 await self.pool.putconn(self._dequeue_conn)
                 self._dequeue_conn = None
-        await self.pool.close()
+        if close_pool:
+            await self.pool.close()
         self._has_sweep_lock = False
 
     async def info(self, jobs: bool = False, offset: int = 0, limit: int = 10) -> QueueInfo:
