@@ -92,7 +92,13 @@ class Queue(ABC):
         return self._loop or asyncio.get_running_loop()
 
     @abstractmethod
-    async def disconnect(self) -> None:
+    async def disconnect(self, close_store_connection: bool = True) -> None:
+        """
+        Disconnect from the queue.
+
+        Args:
+            close_store_connection: If True, closes the underlying store connection as well.
+        """
         pass
 
     @abstractmethod

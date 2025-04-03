@@ -431,7 +431,7 @@ def start(
             await worker.queue.connect()
             await worker.start()
         finally:
-            await worker.queue.disconnect()
+            await worker.queue.disconnect(close_store_connection=True)
 
     if web:
         import aiohttp.web

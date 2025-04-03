@@ -137,7 +137,7 @@ class HttpQueue(Queue):
                 self.session = ClientSession(**self.session_kwargs)
         await super().connect()
 
-    async def disconnect(self) -> None:
+    async def disconnect(self, close_store_connection: bool = False) -> None:
         if self.session:
             await self.session.close()
             self.session = None

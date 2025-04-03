@@ -102,13 +102,14 @@ class RedisQueue(Queue):
     def namespace(self, key: str) -> str:
         return ":".join(["saq", self.name, key])
 
-    async def disconnect(self) -> None:
+    async def disconnect(self, close_store_connection: bool = False) -> None:
         await self._pubsub.close()
-        if hasattr(self.redis, "aclose"):
-            await self.redis.aclose()
-        else:
-            await self.redis.close()
-        await self.redis.connection_pool.disconnect()
+        if close_store_connection:
+            if hasattr(self.redis, "aclose"):
+                await self.redis.aclose()
+            else:
+                await self.redis.close()
+            await self.redis.connection_pool.disconnect()
 
     async def version(self) -> VersionTuple:
         if self._version is None:
