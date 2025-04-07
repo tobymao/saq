@@ -57,7 +57,8 @@ class PostgresQueue(Queue):
     Queue is used to interact with Postgres.
 
     Args:
-        pool: instance of psycopg_pool.AsyncConnectionPool
+        pool: instance of psycopg_pool.AsyncConnectionPool (optional if not passed in, url must be provided)
+        url: postgres url (optional if pool is provided)
         name: name of the queue (default "default")
         versions_table: name of the Postgres table SAQ will use to maintain migrations
         jobs_table: name of the Postgres table SAQ will write jobs to (default "saq_jobs")
@@ -67,7 +68,7 @@ class PostgresQueue(Queue):
         min_size: minimum pool size. (default 4)
             The minimum number of Postgres connections.
         max_size: maximum pool size. (default 20)
-            If greater than 0, this limits the maximum number of connections to Postgres.
+        If greater than 0, this limits the maximum number of connections to Postgres.
             Otherwise, maintain `min_size` number of connections.
         poll_interval: how often to poll for jobs. (default 1)
             If 0, the queue will not poll for jobs and will only rely on notifications from the server.
@@ -82,15 +83,18 @@ class PostgresQueue(Queue):
 
     @classmethod
     def from_url(cls: type[PostgresQueue], url: str, **kwargs: t.Any) -> PostgresQueue:
-        """Create a queue from a postgres url."""
-        return cls(
-            AsyncConnectionPool(url, check=AsyncConnectionPool.check_connection, open=False),
-            **kwargs,
-        )
+        """Create a queue from a postgres url.
+
+        Args:
+            url: The postgres url.
+            kwargs: Additional keyword arguments to pass to the constructor.
+        """
+        return cls(url=url, **kwargs)
 
     def __init__(
         self,
-        pool: AsyncConnectionPool,
+        pool: AsyncConnectionPool | None = None,
+        url: str | None = None,
         name: str = "default",
         versions_table: str = VERSIONS_TABLE,
         jobs_table: str = JOBS_TABLE,
@@ -108,10 +112,20 @@ class PostgresQueue(Queue):
     ) -> None:
         super().__init__(name=name, dump=dump, load=load, swept_error_message=swept_error_message)
 
+        if pool is None and url is None:
+            raise ValueError("Either pool or url must be provided")
+        if pool is not None and url is not None:
+            raise ValueError("Either pool or url must be provided, not both")
+
         self.versions_table = Identifier(versions_table)
         self.jobs_table = Identifier(jobs_table)
         self.stats_table = Identifier(stats_table)
-        self.pool = pool
+        self.pool = pool or AsyncConnectionPool(
+            url,  # type: ignore
+            check=AsyncConnectionPool.check_connection,
+            open=False,
+        )
+        self._is_pool_provided = pool is not None
         self.min_size = min_size
         self.max_size = max_size
         self.poll_interval = poll_interval
@@ -197,13 +211,10 @@ class PostgresQueue(Queue):
             )
 
     async def connect(self) -> None:
-        if self.pool._opened:
-            return
-
-        await self.pool.open()
-        await self.pool.resize(min_size=self.min_size, max_size=self.max_size)
+        if not self._is_pool_provided:
+            await self.pool.open()
+            await self.pool.resize(min_size=self.min_size, max_size=self.max_size)
         await self.init_db()
-
         await super().connect()
 
     def serialize(self, job: Job) -> bytes | str:
@@ -219,7 +230,8 @@ class PostgresQueue(Queue):
                 await self._dequeue_conn.cancel_safe()
                 await self.pool.putconn(self._dequeue_conn)
                 self._dequeue_conn = None
-        await self.pool.close()
+        if not self._is_pool_provided:
+            await self.pool.close()
         self._has_sweep_lock = False
 
     async def info(self, jobs: bool = False, offset: int = 0, limit: int = 10) -> QueueInfo:
