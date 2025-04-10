@@ -14,6 +14,7 @@ from psycopg.sql import SQL
 from saq.errors import InvalidUrlError
 from saq.job import Job, Status
 from saq.queue import JobError, Queue
+from saq.queue.postgres import PostgresQueue
 from saq.utils import uuid1
 from saq.worker import Worker
 from tests.helpers import (
@@ -28,7 +29,6 @@ from tests.helpers import (
 if t.TYPE_CHECKING:
     from unittest.mock import MagicMock
 
-    from saq.queue.postgres import PostgresQueue
     from saq.queue.redis import RedisQueue
     from saq.types import Context, CountKind, Function
 
@@ -813,3 +813,20 @@ class TestPostgresQueue(TestQueue):
 
         with self.assertRaises(asyncio.TimeoutError):
             await job.refresh(0.1)
+
+    async def test_repeated_connect_disconnect(self) -> None:
+        mock_pool = mock.AsyncMock()
+        queue = PostgresQueue(url="fake_url")
+        queue.pool = mock_pool
+
+        with mock.patch.object(queue, "init_db", return_value=None) as mock_init_db:
+            await queue.connect()
+            await queue.connect()
+
+            mock_pool.open.assert_called_once()
+            mock_init_db.assert_called_once()
+
+            await queue.disconnect()
+            await queue.disconnect()
+
+            mock_pool.close.assert_called_once()
