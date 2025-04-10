@@ -142,6 +142,7 @@ class PostgresQueue(Queue):
         self._listener = ListenMultiplexer(self.pool, self._channel)
         self._dequeue_lock = asyncio.Lock()
         self._listen_lock = asyncio.Lock()
+        self._connected = False
 
     async def init_db(self) -> None:
         async with self.pool.connection() as conn, conn.cursor() as cursor, conn.transaction():
@@ -211,11 +212,14 @@ class PostgresQueue(Queue):
             )
 
     async def connect(self) -> None:
+        if self._connected:
+            return
         if not self._is_pool_provided:
             await self.pool.open()
             await self.pool.resize(min_size=self.min_size, max_size=self.max_size)
         await self.init_db()
         await super().connect()
+        self._connected = True
 
     def serialize(self, job: Job) -> bytes | str:
         """Ensure serialized job is in bytes because the job column is of type BYTEA."""
@@ -225,6 +229,8 @@ class PostgresQueue(Queue):
         return serialized
 
     async def disconnect(self) -> None:
+        if not self._connected:
+            return
         async with self._connection_lock:
             if self._dequeue_conn:
                 await self._dequeue_conn.cancel_safe()
@@ -233,6 +239,7 @@ class PostgresQueue(Queue):
         if not self._is_pool_provided:
             await self.pool.close()
         self._has_sweep_lock = False
+        self._connected = False
 
     async def info(self, jobs: bool = False, offset: int = 0, limit: int = 10) -> QueueInfo:
         async with self.pool.connection() as conn, conn.cursor() as cursor:
