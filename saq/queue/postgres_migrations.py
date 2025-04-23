@@ -56,4 +56,16 @@ CREATE INDEX IF NOT EXISTS saq_stats_queue_key_idx ON {stats_table} (queue_key);
                 ).format(stats_table=stats_table),
             ],
         ),
+        (
+            3,
+            [
+                SQL(
+                    dedent("""
+CREATE INDEX IF NOT EXISTS saq_jobs_status_queue_group_key_idx ON {jobs_table} (status, queue, group_key);
+CREATE INDEX IF NOT EXISTS saq_jobs_status_queue_priority_scheduled_idx ON {jobs_table} (status, queue, priority, scheduled);
+DROP INDEX saq_jobs_dequeue_idx;
+        """)
+                ).format(jobs_table=jobs_table),
+            ],
+        ),
     ]
