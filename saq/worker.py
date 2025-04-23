@@ -223,10 +223,10 @@ class Worker:
                 **{k: v for k, v in kwargs.items() if v is not None},
             )
 
-        scheduled = await self.queue.schedule(lock)
+        job_ids = await self.queue.schedule(lock)
 
-        if scheduled:
-            logger.info("Scheduled %s", scheduled)
+        if job_ids:
+            logger.info("Scheduled %s", job_ids)
 
     async def worker_info(self, ttl: int = 60) -> WorkerInfo:
         return await self.queue.worker_info(
