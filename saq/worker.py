@@ -317,12 +317,12 @@ class Worker:
                 else:
                     await job.retry("cancelled")
         except Exception as ex:
-            logger.exception("Error processing job %s", job)
-
             if context is not None:
                 context["exception"] = ex
 
             if job:
+                logger.exception("Error processing job %s", job)
+
                 error = traceback.format_exc()
 
                 if job.retryable:

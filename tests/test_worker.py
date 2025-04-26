@@ -664,9 +664,10 @@ class TestWorkerHttpQueue(AioHTTPTestCase, TestWorker):
         self.worker = Worker(self.queue, functions=functions)
 
     async def asyncTearDown(self) -> None:
-        await super().asyncTearDown()
+        await self.worker.stop()
         await self.redis_worker.stop()
         await self.redis_queue.disconnect()
+        await super().asyncTearDown()
 
     async def get_application(self):
         """
