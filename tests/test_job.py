@@ -32,6 +32,17 @@ class TestJob(unittest.IsolatedAsyncioTestCase):
     async def asyncTearDown(self) -> None:
         await cleanup_queue(self.queue)
 
+    async def test_info(self) -> None:
+        await self.job.enqueue()
+        await self.job.update()
+        self.assertRegex(
+            self.job.info(), r"function: func, queue: default, key:.*, queued:.*, touched:.*"
+        )
+        self.assertRegex(
+            self.job.info(True),
+            r"function: func, queue: default, key:.*, queued:.*, touched:.*, status: queued",
+        )
+
     def test_duration(self) -> None:
         self.assertIsNone(Job("").duration("process"))
         self.assertIsNone(Job("").duration("start"))

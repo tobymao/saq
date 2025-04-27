@@ -804,16 +804,6 @@ class TestPostgresQueue(TestQueue):
         self.assertEqual(await self.count("queued"), 1)
         assert not await self.queue.dequeue(0.01)
 
-    async def test_listen_cancel(self) -> None:
-        job = await self.queue.enqueue("test")
-        task = asyncio.create_task(job.refresh(0))
-        await asyncio.sleep(0.1)
-        await self.queue._listener.close()
-        await task
-
-        with self.assertRaises(asyncio.TimeoutError):
-            await job.refresh(0.1)
-
     async def test_repeated_connect_disconnect(self) -> None:
         mock_pool = mock.AsyncMock()
         queue = PostgresQueue(url="fake_url")

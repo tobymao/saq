@@ -139,12 +139,19 @@ class Job:
 
     _EXCLUDE_NON_FULL = {
         "kwargs",
+        "timeout",
+        "heartbeat",
+        "retries",
+        "ttl",
+        "retry_delay",
+        "retry_backoff",
         "scheduled",
         "progress",
-        "total_ms",
         "result",
         "error",
         "status",
+        "priority",
+        "group_key",
         "meta",
     }
 
@@ -156,28 +163,23 @@ class Job:
             full: If true, will list the full kwargs for the Job, else an abridged version.
         """
         # Using an exclusion list preserves order for kwargs below
-        excluded = set() if full else self._EXCLUDE_NON_FULL
-        kwargs = ", ".join(
-            f"{k}={v}"
-            for k, v in {
-                "function": self.function,
-                "kwargs": self.kwargs,
-                "queue": self.get_queue().name,
-                "id": self.id,
-                "scheduled": self.scheduled,
-                "progress": self.progress,
-                "process_ms": self.duration("process"),
-                "start_ms": self.duration("start"),
-                "total_ms": self.duration("total"),
-                "attempts": self.attempts,
-                "result": self.result,
-                "error": self.error,
-                "status": self.status,
-                "meta": self.meta,
-            }.items()
-            if v is not None and k not in excluded
-        )
-        return f"Job<{kwargs}>"
+
+        kwargs = {}
+
+        for field in dataclasses.fields(self):
+            key = field.name
+            value = getattr(self, key)
+            if (full or key not in self._EXCLUDE_NON_FULL) and value != field.default:
+                kwargs[key] = value
+
+        if "queue" in kwargs:
+            kwargs["queue"] = kwargs["queue"].name
+
+        if not kwargs.get("meta"):
+            kwargs.pop("meta", None)
+
+        info = ", ".join(f"{k}: {v}" for k, v in kwargs.items())
+        return f"Job<{info}>"
 
     def __repr__(self) -> str:
         return self.info(True)

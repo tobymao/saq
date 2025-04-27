@@ -365,15 +365,8 @@ class RedisQueue(Queue):
         job_keys: Iterable[str],
         callback: ListenCallback,
         timeout: float | None = 10,
+        poll_interval: float = 0.5,
     ) -> None:
-        """
-        Listen to updates on jobs.
-
-        Args:
-            job_keys: sequence of job keys
-            callback: callback function, if it returns truthy, break
-            timeout: if timeout is truthy, wait for timeout seconds
-        """
         job_ids = [self.job_id(job_key) for job_key in job_keys]
 
         if not job_ids:

@@ -24,7 +24,7 @@ deps_docs:
 
 test:
 	@python -m coverage erase
-	python -m coverage run -m unittest
+	python -m coverage run -m unittest -vv
 	@python -m coverage report
 
 style:
