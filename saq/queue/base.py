@@ -110,7 +110,6 @@ class Queue(ABC):
     async def sweep(self, lock: int = 60, abort: float = 5.0) -> list[str]:
         pass
 
-    @abstractmethod
     async def notify(self, job: Job) -> None:
         pass
 
@@ -354,7 +353,18 @@ class Queue(ABC):
         job_keys: Iterable[str],
         callback: ListenCallback,
         timeout: float | None = 10,
+        poll_interval: float = 0.5,
     ) -> None:
+        """
+        Listen to updates on jobs.
+
+        Args:
+            job_keys: sequence of job keys
+            callback: callback function, if it returns truthy, break
+            timeout: if timeout is truthy, wait for timeout seconds
+            poll_interval: number of seconds in between poll attempts if needed
+        """
+
         async def listen() -> None:
             while True:
                 for job in await self.jobs(job_keys):
@@ -366,7 +376,7 @@ class Queue(ABC):
                         stop = callback(job.id, job.status)
                     if stop:
                         return
-                await asyncio.sleep(1)
+                await asyncio.sleep(poll_interval)
 
         if timeout:
             await asyncio.wait_for(listen(), timeout)
@@ -404,6 +414,7 @@ class Queue(ABC):
         iter_kwargs: Sequence[dict[str, t.Any]],
         timeout: float | None = None,
         return_exceptions: bool = False,
+        poll_interval: float = 0.5,
         **kwargs: t.Any,
     ) -> list[t.Any]:
         """
@@ -431,6 +442,7 @@ class Queue(ABC):
             return_exceptions: If False (default), an exception is immediately raised as soon as any jobs
                 fail. Other jobs won't be cancelled and will continue to run.
                 If True, exceptions are treated the same as successful results and aggregated in the result list.
+            poll_interval: number of seconds in between poll attempts
             kwargs: Default kwargs for all jobs. These will be overridden by those in iter_kwargs.
         """
         iter_kwargs = [
@@ -442,46 +454,24 @@ class Queue(ABC):
             }
             for kw in iter_kwargs
         ]
-        job_keys = [key["key"] for key in iter_kwargs]
-        pending_job_keys = set(job_keys)
 
-        def callback(job_key: str, status: Status) -> bool:
-            if status in TERMINAL_STATUSES:
-                pending_job_keys.discard(job_key)
+        await asyncio.gather(*(self.enqueue(job_or_func, **kw) for kw in iter_kwargs))
+        incomplete = object()
+        results = {key["key"]: incomplete for key in iter_kwargs}
 
-            if status in UNSUCCESSFUL_TERMINAL_STATUSES and not return_exceptions:
-                return True
-
-            if not pending_job_keys:
-                return True
-
-            return False
-
-        # Start listening before we enqueue the jobs.
-        # This ensures we don't miss any updates.
-        task = asyncio.create_task(self.listen(pending_job_keys, callback, timeout=None))
-
-        try:
-            await asyncio.gather(*(self.enqueue(job_or_func, **kw) for kw in iter_kwargs))
-        except Exception:
-            task.cancel()
-            raise
-
-        await asyncio.wait_for(task, timeout=timeout)
-
-        results = []
-
-        for job in await self.jobs(job_keys):
-            if job is None:
-                continue
-            if job.status in UNSUCCESSFUL_TERMINAL_STATUSES:
-                exc = JobError(job)
-                if not return_exceptions:
-                    raise exc
-                results.append(exc)
-            else:
-                results.append(job.result)
-        return results
+        while remaining := [k for k, v in results.items() if v is incomplete]:
+            for key, job in zip(remaining, await self.jobs(remaining)):
+                if not job:
+                    results[key] = None
+                elif job.status in UNSUCCESSFUL_TERMINAL_STATUSES:
+                    exc = JobError(job)
+                    if not return_exceptions:
+                        raise exc
+                    results[key] = exc
+                elif job.status in TERMINAL_STATUSES:
+                    results[key] = job.result
+            await asyncio.sleep(poll_interval)
+        return list(results.values())
 
     @asynccontextmanager
     async def batch(self) -> AsyncIterator[None]:

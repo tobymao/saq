@@ -28,7 +28,6 @@ if t.TYPE_CHECKING:
 
     from saq.types import (
         CountKind,
-        ListenCallback,
         DumpType,
         LoadType,
         QueueInfo,
@@ -70,9 +69,6 @@ class PostgresQueue(Queue):
         max_size: maximum pool size. (default 20)
         If greater than 0, this limits the maximum number of connections to Postgres.
             Otherwise, maintain `min_size` number of connections.
-        poll_interval: how often to poll for jobs. (default 1)
-            If 0, the queue will not poll for jobs and will only rely on notifications from the server.
-            This mean cron jobs will not be picked up in a timely fashion.
         saq_lock_keyspace: The first of two advisory lock keys used by SAQ. (default 0)
             SAQ uses advisory locks for coordinating tasks between its workers, e.g. sweeping.
         job_lock_keyspace: The first of two advisory lock keys used for jobs. (default 1)
@@ -103,7 +99,6 @@ class PostgresQueue(Queue):
         load: LoadType | None = None,
         min_size: int = 4,
         max_size: int = 20,
-        poll_interval: int = 1,
         saq_lock_keyspace: int = 0,
         job_lock_keyspace: int = 1,
         job_lock_sweep: bool = True,
@@ -125,10 +120,12 @@ class PostgresQueue(Queue):
             check=AsyncConnectionPool.check_connection,
             open=False,
         )
+        if self.pool.kwargs.get("autocommit") is False:
+            raise ValueError("SAQ Connection pool must have autocommit enabled.")
+        self.pool.kwargs["autocommit"] = True
         self._is_pool_provided = pool is not None
         self.min_size = min_size
         self.max_size = max_size
-        self.poll_interval = poll_interval
         self.saq_lock_keyspace = saq_lock_keyspace
         self.job_lock_keyspace = job_lock_keyspace
         self.job_lock_sweep = job_lock_sweep
@@ -145,7 +142,7 @@ class PostgresQueue(Queue):
         self._connected = False
 
     async def init_db(self) -> None:
-        async with self.pool.connection() as conn, conn.cursor() as cursor, conn.transaction():
+        async with self._get_dequeue_conn() as conn, conn.cursor() as cursor, conn.transaction():
             await cursor.execute(
                 SQL("SELECT pg_try_advisory_lock(%(key1)s, 0)"),
                 {"key1": self.saq_lock_keyspace},
@@ -231,9 +228,12 @@ class PostgresQueue(Queue):
     async def disconnect(self) -> None:
         if not self._connected:
             return
+
         async with self._connection_lock:
             if self._dequeue_conn:
                 await self._dequeue_conn.cancel_safe()
+                async with self._dequeue_conn as conn:
+                    await conn.execute("SELECT pg_advisory_unlock_all()")
                 await self.pool.putconn(self._dequeue_conn)
                 self._dequeue_conn = None
         if not self._is_pool_provided:
@@ -359,7 +359,7 @@ class PostgresQueue(Queue):
 
         if not self._has_sweep_lock:
             # Attempt to get the sweep lock and hold on to it
-            async with self._get_dequeue_conn() as conn, conn.cursor() as cursor, conn.transaction():
+            async with self._get_dequeue_conn() as conn, conn.cursor() as cursor:
                 await cursor.execute(
                     SQL("SELECT pg_try_advisory_lock(%(key1)s, hashtext(%(queue)s))"),
                     {
@@ -446,6 +446,10 @@ class PostgresQueue(Queue):
                 continue
 
             swept.append(key)
+            logger.info(
+                "Sweeping %s, objid %s", job.info(logger.isEnabledFor(logging.DEBUG)), objid
+            )
+
             await self.abort(job, error=self.swept_error_message)
 
             try:
@@ -453,34 +457,11 @@ class PostgresQueue(Queue):
             except asyncio.TimeoutError:
                 logger.info("Could not abort job %s", key)
 
-            logger.info("Sweeping job %s", job.info(logger.isEnabledFor(logging.DEBUG)))
             if job.retryable:
                 await self.retry(job, error=self.swept_error_message)
             else:
                 await self.finish(job, Status.ABORTED, error=self.swept_error_message)
         return swept
-
-    async def listen(
-        self,
-        job_keys: Iterable[str],
-        callback: ListenCallback,
-        timeout: float | None = 10,
-    ) -> None:
-        if not job_keys:
-            return
-
-        async for message in self._listener.listen(*job_keys, timeout=timeout):
-            job_key = message["key"]
-            status = Status[message["data"].upper()]
-            if asyncio.iscoroutinefunction(callback):
-                stop = await callback(job_key, status)
-            else:
-                stop = callback(job_key, status)
-            if stop:
-                break
-
-    async def notify(self, job: Job, connection: AsyncConnection | None = None) -> None:
-        await self._notify(job.key, job.status, connection)
 
     async def _update(self, job: Job, status: Status | None = None, **kwargs: t.Any) -> None:
         expire_at = kwargs.pop("expire_at", -1)
@@ -518,7 +499,6 @@ class PostgresQueue(Queue):
                     "expire_at": expire_at,
                 },
             )
-            await self.notify(job, conn)
 
     async def job(self, job_key: str) -> Job | None:
         async with self.pool.connection() as conn, conn.cursor() as cursor:
@@ -629,7 +609,7 @@ class PostgresQueue(Queue):
             else:
                 async with self._listen_lock:
                     async for payload in self._listener.listen(ENQUEUE, DEQUEUE, timeout=timeout):
-                        if payload["key"] == ENQUEUE:
+                        if payload == ENQUEUE:
                             await self._dequeue()
 
                         if not self._job_queue.empty():
@@ -650,7 +630,7 @@ class PostgresQueue(Queue):
             return
 
         async with self._dequeue_lock:
-            async with self._get_dequeue_conn() as conn, conn.cursor() as cursor, conn.transaction():
+            async with self._get_dequeue_conn() as conn, conn.cursor() as cursor:
                 if not self._waiting:
                     return
                 await cursor.execute(
@@ -838,14 +818,12 @@ class PostgresQueue(Queue):
     ) -> None:
         key = job.key
 
-        async with self.nullcontext(
-            connection
-        ) if connection else self.pool.connection() as conn, conn.cursor() as cursor:
+        async with self.nullcontext(connection) if connection else self.pool.connection() as conn:
             if job.ttl >= 0:
                 expire_at = now_seconds() + job.ttl if job.ttl > 0 else None
                 await self.update(job, status=status, expire_at=expire_at, connection=conn)
             else:
-                await cursor.execute(
+                await conn.execute(
                     SQL(
                         dedent(
                             """
@@ -856,22 +834,12 @@ class PostgresQueue(Queue):
                     ).format(jobs_table=self.jobs_table),
                     {"key": key},
                 )
-                await self.notify(job, conn)
             await self._release_job(key)
 
-    async def _notify(
-        self, key: str, data: t.Any | None = None, connection: AsyncConnection | None = None
-    ) -> None:
-        payload = {"key": key}
-
-        if data is not None:
-            payload["data"] = data
-
+    async def _notify(self, key: str, connection: AsyncConnection | None = None) -> None:
         async with self.nullcontext(connection) if connection else self.pool.connection() as conn:
             await conn.execute(
-                SQL("NOTIFY {channel}, {payload}").format(
-                    channel=Identifier(self._channel), payload=json.dumps(payload)
-                )
+                SQL("NOTIFY {channel}, {key}").format(channel=Identifier(self._channel), key=key)
             )
 
     @asynccontextmanager
@@ -917,7 +885,6 @@ class PostgresQueue(Queue):
                 ),
                 {"keys": self._releasing},
             )
-            await conn.commit()
         self._releasing.clear()
 
     @cached_property
@@ -934,8 +901,6 @@ class ListenMultiplexer(Multiplexer):
     async def _start(self) -> None:
         async with self.pool.connection() as conn:
             await conn.execute(SQL("LISTEN {}").format(Identifier(self.key)))
-            await conn.commit()
 
             async for notify in conn.notifies():
-                payload = json.loads(notify.payload)
-                self.publish(payload["key"], payload)
+                self.publish(notify.payload, notify.payload)
