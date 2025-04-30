@@ -283,7 +283,8 @@ class Worker:
 
             if task and not task.done():
                 task_data["aborted"] = "abort" if job.error is None else job.error
-                await cancel_tasks([task])
+                # abort should be a blocking operation
+                await cancel_tasks([task], 0)
 
             await self.queue.finish_abort(job)
 

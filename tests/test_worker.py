@@ -555,7 +555,7 @@ class TestWorker(unittest.IsolatedAsyncioTestCase):
         state = {"counter": 0}
 
         def work(ctx=None):
-            time.sleep(0.2)
+            time.sleep(1.5)
             if ctx:
                 job = ctx["job"]
                 asyncio.run(job.refresh())
@@ -690,3 +690,7 @@ class TestWorkerHttpQueue(AioHTTPTestCase, TestWorker):
 
     def test_stop(self) -> None:
         self.skipTest("Not working")
+
+    async def test_sync_cancel(self) -> None:
+        await self.redis_worker.stop()
+        await super().test_sync_cancel()
