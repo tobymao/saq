@@ -27,13 +27,8 @@ Module {py:class}`saq.web.starlette` contains a starlette instance for use in an
 
 ::::{tab-set}
 :::{tab-item} FastAPI
-```python
-from fastapi import FastAPI
-from saq.web.starlette import saq_web
-
-app = FastAPI()
-
-app.mount("/monitor", saq_web("/monitor", queues=all_the_queues_list))
+```{literalinclude} ../examples/monitor_fastapi.py
+:end-before: end-of-example
 ```
 :::
 
