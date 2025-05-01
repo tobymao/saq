@@ -59,10 +59,24 @@ environment variables:
 ```
 
 ## Example
+
 ```python
 import asyncio
 
 from saq import CronJob, Queue
+
+
+class DBHelper:
+    """Helper class for demo purposes"""
+
+    async def disconnect(self):
+        print("Disconnecting from the database")
+
+    async def connect(self):
+        print("Connectiong...")
+
+    def __str__(self):
+        return "Your DBHelper at work"
 
 # all functions take in context dict and kwargs
 async def test(ctx, *, a):
@@ -72,10 +86,12 @@ async def test(ctx, *, a):
     return {"x": a}
 
 async def cron(ctx):
-  print("i am a cron job")
+    print("i am a cron job")
 
 async def startup(ctx):
-    ctx["db"] = await create_db()
+    helper = DBHelper()
+    await helper.connect()
+    ctx["db"] = helper
 
 async def shutdown(ctx):
     await ctx["db"].disconnect()
