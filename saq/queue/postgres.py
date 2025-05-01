@@ -75,6 +75,8 @@ class PostgresQueue(Queue):
         job_lock_sweep: Whether or not the jobs are swept if there's no lock. (default True)
         priorities: The priority range to dequeue. (default (0, 32767))
         swept_error_message: The error message to use when sweeping jobs. (default "swept")
+        manage_pool_lifecycle: Whether to have SAQ manage the lifecycle of the connection pool. (default None)
+            If None, the pool will be managed if a pool is not provided, otherwise it will not be managed.
     """
 
     @classmethod
@@ -104,6 +106,7 @@ class PostgresQueue(Queue):
         job_lock_sweep: bool = True,
         priorities: tuple[int, int] = (0, 32767),
         swept_error_message: str | None = None,
+        manage_pool_lifecycle: bool | None = None,
     ) -> None:
         super().__init__(name=name, dump=dump, load=load, swept_error_message=swept_error_message)
 
@@ -123,7 +126,9 @@ class PostgresQueue(Queue):
         if self.pool.kwargs.get("autocommit") is False:
             raise ValueError("SAQ Connection pool must have autocommit enabled.")
         self.pool.kwargs["autocommit"] = True
-        self._is_pool_provided = pool is not None
+        self._manage_pool_lifecycle = (
+            manage_pool_lifecycle if manage_pool_lifecycle is not None else pool is None
+        )
         self.min_size = min_size
         self.max_size = max_size
         self.saq_lock_keyspace = saq_lock_keyspace
@@ -211,7 +216,7 @@ class PostgresQueue(Queue):
     async def connect(self) -> None:
         if self._connected:
             return
-        if not self._is_pool_provided:
+        if self._manage_pool_lifecycle:
             await self.pool.open()
             await self.pool.resize(min_size=self.min_size, max_size=self.max_size)
         await self.init_db()
@@ -236,7 +241,7 @@ class PostgresQueue(Queue):
                     await conn.execute("SELECT pg_advisory_unlock_all()")
                 await self.pool.putconn(self._dequeue_conn)
                 self._dequeue_conn = None
-        if not self._is_pool_provided:
+        if self._manage_pool_lifecycle:
             await self.pool.close()
         self._has_sweep_lock = False
         self._connected = False
