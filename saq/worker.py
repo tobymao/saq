@@ -449,7 +449,9 @@ def start(
         app = create_app(queues)
         app.on_shutdown.append(shutdown)
 
-        loop.create_task(worker_start())
+        loop.create_task(worker_start()).add_done_callback(
+            lambda _: signal.raise_signal(signal.SIGTERM)
+        )
         aiohttp.web.run_app(app, port=port, loop=loop)
     else:
         loop.run_until_complete(worker_start())
