@@ -613,13 +613,22 @@ class PostgresQueue(Queue):
                 )
             else:
                 async with self._listen_lock:
+                    # During the async generator (listen) we can generate a
+                    # stall if we call an execute so we should only call
+                    # _dequeue() after we're done looping over the listner
+                    # results
+                    should_dequeue = False
                     async for payload in self._listener.listen(ENQUEUE, DEQUEUE, timeout=timeout):
                         if payload == ENQUEUE:
-                            await self._dequeue()
+                            should_dequeue = True
 
                         if not self._job_queue.empty():
                             job = self._job_queue.get_nowait()
                             break
+
+                    if should_dequeue:
+                        await self._dequeue()
+
         except (asyncio.TimeoutError, asyncio.CancelledError):
             pass
         finally:
