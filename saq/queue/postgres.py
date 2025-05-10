@@ -147,71 +147,75 @@ class PostgresQueue(Queue):
         self._connected = False
 
     async def init_db(self) -> None:
-        async with self._get_dequeue_conn() as conn, conn.cursor() as cursor, conn.transaction():
-            await cursor.execute(
-                SQL("SELECT pg_try_advisory_lock(%(key1)s, 0)"),
-                {"key1": self.saq_lock_keyspace},
-            )
-            result = await cursor.fetchone()
-            if result and not result[0]:
+        async with self._get_dequeue_conn() as conn:
+            if not conn:
                 return
 
-            await cursor.execute(
-                SQL(
-                    dedent("""
-            CREATE TABLE IF NOT EXISTS {versions_table} (
-                version INT
-            );
-                        """)
-                ).format(versions_table=self.versions_table)
-            )
-
-            migrations = get_migrations(
-                jobs_table=self.jobs_table,
-                stats_table=self.stats_table,
-            )
-            target_version = migrations[-1][0]
-            await cursor.execute(
-                SQL(
-                    dedent(
-                        """
-                    SELECT version FROM {versions_table}
-                    """
-                    )
-                ).format(versions_table=self.versions_table),
-            )
-            result = await cursor.fetchone()
-            if result is not None:
-                current_version = result[0]
-                if current_version == target_version:
+            async with conn.cursor() as cursor, conn.transaction():
+                await cursor.execute(
+                    SQL("SELECT pg_try_advisory_lock(%(key1)s, 0)"),
+                    {"key1": self.saq_lock_keyspace},
+                )
+                result = await cursor.fetchone()
+                if result and not result[0]:
                     return
-                if current_version > target_version:
-                    raise ValueError("The library version is behind the schema version.")
 
-            current = result[0] if result else 0
-            # Find the index of the next migration
-            index = next(
-                (i for i, migration in enumerate(migrations) if migration[0] > current),
-                None,  # default if not found
-            )
-            if index is None:
-                raise ValueError("Could not find the next migration.")
-            for migration in migrations[current:]:
-                for migration_statement in migration[1]:
-                    await cursor.execute(
-                        migration_statement,
-                    )
+                await cursor.execute(
+                    SQL(
+                        dedent("""
+                CREATE TABLE IF NOT EXISTS {versions_table} (
+                    version INT
+                );
+                            """)
+                    ).format(versions_table=self.versions_table)
+                )
 
-            await cursor.execute(
-                SQL(
-                    dedent(
-                        """
-                            DELETE FROM {versions_table};
-                            INSERT INTO {versions_table} (version) VALUES ({target_version});
+                migrations = get_migrations(
+                    jobs_table=self.jobs_table,
+                    stats_table=self.stats_table,
+                )
+                target_version = migrations[-1][0]
+                await cursor.execute(
+                    SQL(
+                        dedent(
                             """
-                    )
-                ).format(versions_table=self.versions_table, target_version=target_version),
-            )
+                        SELECT version FROM {versions_table}
+                        """
+                        )
+                    ).format(versions_table=self.versions_table),
+                )
+                result = await cursor.fetchone()
+                if result is not None:
+                    current_version = result[0]
+                    if current_version == target_version:
+                        return
+                    if current_version > target_version:
+                        raise ValueError("The library version is behind the schema version.")
+
+                current = result[0] if result else 0
+                # Find the index of the next migration
+                index = next(
+                    (i for i, migration in enumerate(migrations) if migration[0] > current),
+                    None,  # default if not found
+                )
+                if index is None:
+                    raise ValueError("Could not find the next migration.")
+                for migration in migrations[current:]:
+                    for migration_statement in migration[1]:
+                        await cursor.execute(
+                            migration_statement,
+                        )
+
+                await cursor.execute(
+                    SQL(
+                        dedent(
+                            """
+                                DELETE FROM {versions_table};
+                                INSERT INTO {versions_table} (version) VALUES ({target_version});
+                                """
+                        )
+                    ).format(versions_table=self.versions_table, target_version=target_version),
+                )
 
     async def connect(self) -> None:
         if self._connected:
@@ -364,15 +368,19 @@ class PostgresQueue(Queue):
 
         if not self._has_sweep_lock:
             # Attempt to get the sweep lock and hold on to it
-            async with self._get_dequeue_conn() as conn, conn.cursor() as cursor:
-                await cursor.execute(
-                    SQL("SELECT pg_try_advisory_lock(%(key1)s, hashtext(%(queue)s))"),
-                    {
-                        "key1": self.saq_lock_keyspace,
-                        "queue": self.name,
-                    },
-                )
-                result = await cursor.fetchone()
+            async with self._get_dequeue_conn() as conn:
+                if not conn:
+                    return []
+
+                async with conn.cursor() as cursor:
+                    await cursor.execute(
+                        SQL("SELECT pg_try_advisory_lock(%(key1)s, hashtext(%(queue)s))"),
+                        {
+                            "key1": self.saq_lock_keyspace,
+                            "queue": self.name,
+                        },
+                    )
+                    result = await cursor.fetchone()
             if result and not result[0]:
                 # Could not acquire the sweep lock so another worker must already have it
                 return []
@@ -472,9 +480,10 @@ class PostgresQueue(Queue):
         expire_at = kwargs.pop("expire_at", -1)
         connection = kwargs.pop("connection", None)
 
-        async with self.nullcontext(
-            connection
-        ) if connection else self.pool.connection() as conn, conn.transaction():
+        async with (
+            self.nullcontext(connection) if connection else self.pool.connection() as conn,
+            conn.transaction(),
+        ):
             if not status:
                 status = await self.get_job_status(job.key, for_update=True, connection=conn)
 
@@ -635,51 +644,54 @@ class PostgresQueue(Queue):
             return
 
         async with self._dequeue_lock:
-            async with self._get_dequeue_conn() as conn, conn.cursor() as cursor:
+            async with self._get_dequeue_conn() as conn:
+                if not conn:
+                    return
                 if not self._waiting:
                     return
-                await cursor.execute(
-                    SQL(
-                        dedent(
-                            """
-                            WITH locked_job AS (
-                              SELECT key, lock_key
-                              FROM {jobs_table}
-                              WHERE status = 'queued'
-                                AND queue = %(queue)s
-                                AND %(now)s >= scheduled
-                                AND priority BETWEEN %(plow)s AND %(phigh)s
-                                AND group_key NOT IN (
-                                  SELECT DISTINCT group_key
-                                  FROM {jobs_table}
-                                  WHERE status = 'active'
+                async with conn.cursor() as cursor:
+                    await cursor.execute(
+                        SQL(
+                            dedent(
+                                """
+                                WITH locked_job AS (
+                                SELECT key, lock_key
+                                FROM {jobs_table}
+                                WHERE status = 'queued'
                                     AND queue = %(queue)s
-                                    AND group_key IS NOT NULL
+                                    AND %(now)s >= scheduled
+                                    AND priority BETWEEN %(plow)s AND %(phigh)s
+                                    AND group_key NOT IN (
+                                    SELECT DISTINCT group_key
+                                    FROM {jobs_table}
+                                    WHERE status = 'active'
+                                        AND queue = %(queue)s
+                                        AND group_key IS NOT NULL
+                                    )
+                                ORDER BY priority, scheduled
+                                LIMIT %(limit)s
+                                FOR UPDATE SKIP LOCKED
                                 )
-                              ORDER BY priority, scheduled
-                              LIMIT %(limit)s
-                              FOR UPDATE SKIP LOCKED
+                                UPDATE {jobs_table} SET status = 'active'
+                                FROM locked_job
+                                WHERE {jobs_table}.key = locked_job.key
+                                AND pg_try_advisory_lock({job_lock_keyspace}, locked_job.lock_key)
+                                RETURNING job
+                                """
                             )
-                            UPDATE {jobs_table} SET status = 'active'
-                            FROM locked_job
-                            WHERE {jobs_table}.key = locked_job.key
-                              AND pg_try_advisory_lock({job_lock_keyspace}, locked_job.lock_key)
-                            RETURNING job
-                            """
-                        )
-                    ).format(
-                        jobs_table=self.jobs_table,
-                        job_lock_keyspace=self.job_lock_keyspace,
-                    ),
-                    {
-                        "queue": self.name,
-                        "now": now_seconds(),
-                        "limit": self._waiting,
-                        "plow": self._priorities[0],
-                        "phigh": self._priorities[1],
-                    },
-                )
-                results = await cursor.fetchall()
+                        ).format(
+                            jobs_table=self.jobs_table,
+                            job_lock_keyspace=self.job_lock_keyspace,
+                        ),
+                        {
+                            "queue": self.name,
+                            "now": now_seconds(),
+                            "limit": self._waiting,
+                            "plow": self._priorities[0],
+                            "phigh": self._priorities[1],
+                        },
+                    )
+                    results = await cursor.fetchall()
 
             for result in results:
                 self._job_queue.put_nowait(self.deserialize(result[0]))
@@ -777,9 +789,10 @@ class PostgresQueue(Queue):
         for_update: bool = False,
         connection: AsyncConnection | None = None,
     ) -> Status | None:
-        async with self.nullcontext(
-            connection
-        ) if connection else self.pool.connection() as conn, conn.cursor() as cursor:
+        async with (
+            self.nullcontext(connection) if connection else self.pool.connection() as conn,
+            conn.cursor() as cursor,
+        ):
             await cursor.execute(
                 SQL(
                     dedent(
@@ -856,11 +869,18 @@ class PostgresQueue(Queue):
                     await self.pool.check_connection(self._dequeue_conn)
                 except OperationalError:
                     # The connection is bad so return it to the pool and get a new one.
-                    await self.pool.putconn(self._dequeue_conn)
-                    self._dequeue_conn = await self.pool.getconn()
+                    try:
+                        await self.pool.putconn(self._dequeue_conn)
+                        self._dequeue_conn = await self.pool.getconn()
+                    except Exception:
+                        self._dequeue_conn = None
             else:
-                self._dequeue_conn = await self.pool.getconn()
-            yield self._dequeue_conn
+                try:
+                    self._dequeue_conn = await self.pool.getconn()
+                except Exception:
+                    pass
+            if self._dequeue_conn:
+                yield self._dequeue_conn
 
     @asynccontextmanager
     async def nullcontext(self, enter_result: t.Any | None = None) -> t.AsyncGenerator:
@@ -875,6 +895,8 @@ class PostgresQueue(Queue):
         if self._connection_lock.locked():
             return
         async with self._get_dequeue_conn() as conn:
+            if not conn:
+                return
             await conn.execute(
                 SQL(
                     dedent(
