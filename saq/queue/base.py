@@ -118,7 +118,7 @@ class Queue(ABC):
         for k, v in kwargs.items():
             if hasattr(job, k):
                 setattr(job, k, v)
-        await self._update(job, **kwargs)
+        await self._update(self.copy(job), **kwargs)
 
     @abstractmethod
     async def _update(self, job: Job, status: Status | None = None, **kwargs: t.Any) -> None:
@@ -212,6 +212,9 @@ class Queue(ABC):
 
     async def connect(self) -> None:
         self._loop = asyncio.get_running_loop()
+
+    def copy(self, job: Job) -> Job:
+        return self.deserialize(job.to_dict())  # type: ignore
 
     def serialize(self, job: Job) -> bytes | str:
         return self._dump(job.to_dict())

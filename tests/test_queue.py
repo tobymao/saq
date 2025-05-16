@@ -292,7 +292,10 @@ class TestQueue(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(job.status, Status.QUEUED)
         job.status = Status.ACTIVE
         await self.queue.update(job)
-        self.assertEqual(job.status, Status.QUEUED)
+        # job shouldn't mutate
+        self.assertEqual(job.status, Status.ACTIVE)
+        # status is actually queued
+        self.assertEqual((await self.queue.job(job.key)).status, Status.QUEUED)
         await task
         self.assertEqual(counter["x"], 2)
 
@@ -367,6 +370,16 @@ class TestQueue(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             1, len([job async for job in self.queue.iter_jobs(statuses=[Status.ACTIVE])])
         )
+
+    async def test_update_refresh(self) -> None:
+        # checks for a race condition in refresh which replaces the jobs data against an update
+        # we want to make sure the update doesn't get overriden halfway in the async flow
+        job = await self.queue.enqueue("test")
+        self.assertEqual(job.touched, 0)
+        asyncio.create_task(job.refresh())
+        await job.update()
+        job = await self.queue.job(job.key)
+        self.assertGreater(job.touched, 0)
 
 
 class TestRedisQueue(TestQueue):
@@ -796,7 +809,7 @@ class TestPostgresQueue(TestQueue):
         assert await self.dequeue()
         self.assertEqual(await self.count("queued"), 1)
         assert not await self.queue.dequeue(0.01)
-        await job1.update(status="finished")
+        await job1.update(status=Status.COMPLETE)
         assert await self.dequeue()
 
     async def test_priority(self) -> None:
