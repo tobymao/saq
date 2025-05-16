@@ -784,7 +784,7 @@ class PostgresQueue(Queue):
                 SQL(
                     dedent(
                         """
-                        SELECT status
+                        SELECT UPPER(status)
                         FROM {jobs_table}
                         WHERE key = %(key)s
                         {for_update}
@@ -800,7 +800,7 @@ class PostgresQueue(Queue):
             )
             result = await cursor.fetchone()
             if result:
-                return result[0]
+                return Status[result[0]]
             return None
 
     async def _retry(self, job: Job, error: str | None) -> None:

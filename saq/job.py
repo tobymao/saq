@@ -174,12 +174,18 @@ class Job:
 
         if "queue" in kwargs:
             kwargs["queue"] = kwargs["queue"].name
+        if "status" in kwargs:
+            kwargs["status"] = kwargs["status"].name.lower()
 
         if not kwargs.get("meta"):
             kwargs.pop("meta", None)
 
         info = ", ".join(f"{k}: {v}" for k, v in kwargs.items())
         return f"Job<{info}>"
+
+    def __post_init__(self) -> None:
+        if isinstance(self.status, str):
+            self.status = Status[self.status.upper()]
 
     def __repr__(self) -> str:
         return self.info(True)

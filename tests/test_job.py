@@ -32,6 +32,10 @@ class TestJob(unittest.IsolatedAsyncioTestCase):
     async def asyncTearDown(self) -> None:
         await cleanup_queue(self.queue)
 
+    def test_job_status_type(self) -> None:
+        job = Job("", status="new")
+        self.assertIs(job.status, Status.NEW)
+
     async def test_info(self) -> None:
         await self.job.enqueue()
         await self.job.update()
