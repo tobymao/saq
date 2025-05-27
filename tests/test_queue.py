@@ -833,3 +833,13 @@ class TestPostgresQueue(TestQueue):
             await queue.disconnect()
 
             mock_pool.close.assert_called_once()
+
+    async def test_lock_skip(self) -> None:
+        await self.queue.enqueue("test")
+        job = await self.queue.dequeue()
+        await self.queue.update(job, status=Status.QUEUED)
+
+        queue2 = await self.create_queue()
+        await queue2.enqueue("test")
+        job2 = await queue2.dequeue()
+        assert job2.key != job.key
