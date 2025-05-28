@@ -643,7 +643,7 @@ class PostgresQueue(Queue):
                         dedent(
                             """
                             WITH locked_job AS (
-                              SELECT key, lock_key
+                              SELECT key
                               FROM {jobs_table}
                               WHERE status = 'queued'
                                 AND queue = %(queue)s
@@ -656,6 +656,7 @@ class PostgresQueue(Queue):
                                     AND queue = %(queue)s
                                     AND group_key IS NOT NULL
                                 )
+                                AND pg_try_advisory_lock({job_lock_keyspace}, lock_key)
                               ORDER BY priority, scheduled
                               LIMIT %(limit)s
                               FOR UPDATE SKIP LOCKED
@@ -663,7 +664,6 @@ class PostgresQueue(Queue):
                             UPDATE {jobs_table} SET status = 'active'
                             FROM locked_job
                             WHERE {jobs_table}.key = locked_job.key
-                              AND pg_try_advisory_lock({job_lock_keyspace}, locked_job.lock_key)
                             RETURNING job
                             """
                         )
