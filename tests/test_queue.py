@@ -837,9 +837,9 @@ class TestPostgresQueue(TestQueue):
     async def test_lock_skip(self) -> None:
         await self.queue.enqueue("test")
         job = await self.queue.dequeue()
-        await self.queue.update(job, status=Status.QUEUED)
+        await self.queue.retry(job, "")
 
         queue2 = await self.create_queue()
         await queue2.enqueue("test")
         job2 = await queue2.dequeue()
-        assert job2.key != job.key
+        assert job2.key == job.key

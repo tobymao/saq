@@ -138,7 +138,6 @@ class PostgresQueue(Queue):
         self._waiting = 0  # Internal counter of worker tasks waiting for dequeue
         self._dequeue_conn: AsyncConnection | None = None
         self._connection_lock = asyncio.Lock()
-        self._releasing: list[str] = []
         self._has_sweep_lock = False
         self._channel = CHANNEL.format(self.name)
         self._listener = ListenMultiplexer(self.pool, self._channel)
@@ -480,30 +479,34 @@ class PostgresQueue(Queue):
 
             job.status = status or job.status
 
-            await conn.execute(
-                SQL(
-                    dedent(
-                        """
-                        UPDATE {jobs_table} SET
-                          job = %(job)s
-                          ,status = %(status)s
-                          ,scheduled = %(scheduled)s
-                          {expire_at}
-                        WHERE key = %(key)s
-                        """
-                    )
-                ).format(
-                    jobs_table=self.jobs_table,
-                    expire_at=SQL(",expire_at = %(expire_at)s" if expire_at != -1 else ""),
-                ),
-                {
-                    "job": self.serialize(job),
-                    "status": job.status,
-                    "key": job.key,
-                    "scheduled": job.scheduled,
-                    "expire_at": expire_at,
-                },
-            )
+            try:
+                await conn.execute(
+                    SQL(
+                        dedent(
+                            """
+                            UPDATE {jobs_table} SET
+                              job = %(job)s
+                              ,status = %(status)s
+                              ,scheduled = %(scheduled)s
+                              {expire_at}
+                            WHERE key = %(key)s
+                            """
+                        )
+                    ).format(
+                        jobs_table=self.jobs_table,
+                        expire_at=SQL(",expire_at = %(expire_at)s" if expire_at != -1 else ""),
+                    ),
+                    {
+                        "job": self.serialize(job),
+                        "status": job.status,
+                        "key": job.key,
+                        "scheduled": job.scheduled,
+                        "expire_at": expire_at,
+                    },
+                )
+            finally:
+                if job.status != Status.ACTIVE:
+                    await self._release_job(job.key)
 
     async def job(self, job_key: str) -> Job | None:
         async with self.pool.connection() as conn, conn.cursor() as cursor:
@@ -839,7 +842,7 @@ class PostgresQueue(Queue):
                     ).format(jobs_table=self.jobs_table),
                     {"key": key},
                 )
-            await self._release_job(key)
+                await self._release_job(key)
 
     async def _notify(self, key: str, connection: AsyncConnection | None = None) -> None:
         async with self.nullcontext(connection) if connection else self.pool.connection() as conn:
@@ -871,26 +874,22 @@ class PostgresQueue(Queue):
         yield enter_result
 
     async def _release_job(self, key: str) -> None:
-        self._releasing.append(key)
-        if self._connection_lock.locked():
-            return
-        async with self._get_dequeue_conn() as conn:
+        async with self._get_dequeue_conn() as conn, conn:
             await conn.execute(
                 SQL(
                     dedent(
                         """
                         SELECT pg_advisory_unlock({job_lock_keyspace}, lock_key)
                         FROM {jobs_table}
-                        WHERE key = ANY(%(keys)s)
+                        WHERE key = %(key)s
                         """
                     )
                 ).format(
                     jobs_table=self.jobs_table,
                     job_lock_keyspace=self.job_lock_keyspace,
                 ),
-                {"keys": self._releasing},
+                {"key": key},
             )
-        self._releasing.clear()
 
     @cached_property
     def _job_queue(self) -> asyncio.Queue:
