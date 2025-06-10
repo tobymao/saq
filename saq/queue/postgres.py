@@ -659,7 +659,6 @@ class PostgresQueue(Queue):
                                     AND queue = %(queue)s
                                     AND group_key IS NOT NULL
                                 )
-                                AND pg_try_advisory_lock({job_lock_keyspace}, lock_key)
                               ORDER BY priority, scheduled
                               LIMIT %(limit)s
                               FOR UPDATE SKIP LOCKED
@@ -667,12 +666,11 @@ class PostgresQueue(Queue):
                             UPDATE {jobs_table} SET status = 'active'
                             FROM locked_job
                             WHERE {jobs_table}.key = locked_job.key
-                            RETURNING job
+                            RETURNING job, {jobs_table}.key
                             """
                         )
                     ).format(
                         jobs_table=self.jobs_table,
-                        job_lock_keyspace=self.job_lock_keyspace,
                     ),
                     {
                         "queue": self.name,
@@ -684,8 +682,31 @@ class PostgresQueue(Queue):
                 )
                 results = await cursor.fetchall()
 
-            for result in results:
-                self._job_queue.put_nowait(self.deserialize(result[0]))
+                await conn.execute(
+                    SQL(
+                        dedent(
+                            """
+                            SELECT key, pg_try_advisory_lock({job_lock_keyspace}, lock_key)
+                            FROM {jobs_table}
+                            WHERE key = ANY(%(keys)s)
+                            """
+                        )
+                    ).format(
+                        jobs_table=self.jobs_table,
+                        job_lock_keyspace=self.job_lock_keyspace,
+                    ),
+                    {"keys": [key for _, key in results]},
+                )
+                lock_acquisition_results = await cursor.fetchall()
+                for key, lock_acquired in lock_acquisition_results:
+                    if not lock_acquired:
+                        logger.error(
+                            "Could not acquire lock for job %s. This may result in unexpected behavior",
+                            key,
+                        )
+
+            for job, _ in results:
+                self._job_queue.put_nowait(self.deserialize(job))
 
             if results:
                 await self._notify(DEQUEUE)
