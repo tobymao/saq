@@ -260,14 +260,14 @@ class PostgresQueue(Queue):
                 ).format(stats_table=self.stats_table),
                 {"queue": self.name},
             )
-            results = await cursor.fetchall()
+            rows = await cursor.fetchall()
         workers: dict[str, WorkerInfo] = {
             worker_id: {
                 "stats": stats,
                 "metadata": metadata,
                 "queue_key": queue_key,
             }
-            for worker_id, stats, queue_key, metadata in results
+            for worker_id, stats, queue_key, metadata in rows
         }
 
         queued = await self.count("queued")
@@ -280,7 +280,7 @@ class PostgresQueue(Queue):
                     SQL(
                         dedent(
                             """
-                            SELECT job FROM {jobs_table}
+                            SELECT job, status FROM {jobs_table}
                             WHERE status IN ('new', 'deferred', 'queued', 'active')
                               AND queue = %(queue)s
                             """
@@ -288,8 +288,8 @@ class PostgresQueue(Queue):
                     ).format(jobs_table=self.jobs_table),
                     {"queue": self.name},
                 )
-                results = await cursor.fetchall()
-            deserialized_jobs = (self.deserialize(result[0]) for result in results)
+                rows = await cursor.fetchall()
+            deserialized_jobs = (self.deserialize(*row) for row in rows)
             jobs_info = [job.to_dict() for job in deserialized_jobs if job]
         else:
             jobs_info = []
@@ -441,10 +441,10 @@ class PostgresQueue(Queue):
                     "job_lock_keyspace": self.job_lock_keyspace,
                 },
             )
-            results = await cursor.fetchall()
+            rows = await cursor.fetchall()
 
-        for key, job_bytes, objid, status in results:
-            job = self.deserialize(job_bytes)
+        for key, job_bytes, objid, status in rows:
+            job = self.deserialize(job_bytes, status)
             assert job
             if (objid or not self.job_lock_sweep) and not job.stuck:
                 continue
@@ -514,7 +514,7 @@ class PostgresQueue(Queue):
                 SQL(
                     dedent(
                         """
-                        SELECT job
+                        SELECT job, status
                         FROM {jobs_table}
                         WHERE key = %(key)s AND queue = %(queue)s
                         """
@@ -522,9 +522,9 @@ class PostgresQueue(Queue):
                 ).format(jobs_table=self.jobs_table),
                 {"key": job_key, "queue": self.name},
             )
-            job = await cursor.fetchone()
-            if job:
-                return self.deserialize(job[0])
+            row = await cursor.fetchone()
+            if row:
+                return self.deserialize(*row)
         return None
 
     async def jobs(self, job_keys: Iterable[str]) -> t.List[Job | None]:
@@ -535,7 +535,7 @@ class PostgresQueue(Queue):
                 SQL(
                     dedent(
                         """
-                        SELECT key, job
+                        SELECT key, job, status
                         FROM {jobs_table}
                         WHERE key = ANY(%(keys)s)
                         """
@@ -543,8 +543,8 @@ class PostgresQueue(Queue):
                 ).format(jobs_table=self.jobs_table),
                 {"keys": keys},
             )
-            results: dict[str, bytes | None] = dict(await cursor.fetchall())
-        return [self.deserialize(results.get(key)) for key in keys]
+            results = {r[0]: r[1:] for r in await cursor.fetchall()}
+        return [self.deserialize(*(results.get(key) or [None])) for key in keys]
 
     async def iter_jobs(
         self,
@@ -559,7 +559,7 @@ class PostgresQueue(Queue):
                     SQL(
                         dedent(
                             """
-                            SELECT key, job
+                            SELECT key, job, status
                             FROM {jobs_table}
                             WHERE
                               status = ANY(%(statuses)s)
@@ -581,9 +581,9 @@ class PostgresQueue(Queue):
                 rows = await cursor.fetchall()
 
                 if rows:
-                    for key, job_bytes in rows:
+                    for key, job_bytes, status in rows:
                         last_key = key
-                        job = self.deserialize(job_bytes)
+                        job = self.deserialize(job_bytes, status)
                         if job:
                             yield job
                 else:
@@ -638,7 +638,7 @@ class PostgresQueue(Queue):
             return
 
         async with self._dequeue_lock:
-            async with self._get_dequeue_conn() as conn, conn.cursor() as cursor:
+            async with self._get_dequeue_conn() as conn, conn.transaction(), conn.cursor() as cursor:
                 if not self._waiting:
                     return
                 await cursor.execute(
@@ -666,7 +666,7 @@ class PostgresQueue(Queue):
                             UPDATE {jobs_table} SET status = 'active'
                             FROM locked_job
                             WHERE {jobs_table}.key = locked_job.key
-                            RETURNING job, {jobs_table}.key
+                            RETURNING job, {jobs_table}.key, status
                             """
                         )
                     ).format(
@@ -680,7 +680,7 @@ class PostgresQueue(Queue):
                         "phigh": self._priorities[1],
                     },
                 )
-                results = await cursor.fetchall()
+                rows = await cursor.fetchall()
 
                 await conn.execute(
                     SQL(
@@ -695,7 +695,7 @@ class PostgresQueue(Queue):
                         jobs_table=self.jobs_table,
                         job_lock_keyspace=self.job_lock_keyspace,
                     ),
-                    {"keys": [key for _, key in results]},
+                    {"keys": [key for _, key, _ in rows]},
                 )
                 lock_acquisition_results = await cursor.fetchall()
                 for key, lock_acquired in lock_acquisition_results:
@@ -705,10 +705,10 @@ class PostgresQueue(Queue):
                             key,
                         )
 
-            for job, _ in results:
-                self._job_queue.put_nowait(self.deserialize(job))
+            for job, _, status in rows:
+                self._job_queue.put_nowait(self.deserialize(job, status))
 
-            if results:
+            if rows:
                 await self._notify(DEQUEUE)
 
     async def _enqueue(self, job: Job) -> Job | None:
