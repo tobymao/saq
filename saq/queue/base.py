@@ -219,13 +219,18 @@ class Queue(ABC):
     def serialize(self, job: Job) -> bytes | str:
         return self._dump(job.to_dict())
 
-    def deserialize(self, payload: dict | str | bytes | None) -> Job | None:
+    def deserialize(
+        self, payload: dict | str | bytes | None, status: Status | str | None = None
+    ) -> Job | None:
         if not payload:
             return None
 
         job_dict = payload if isinstance(payload, dict) else self._load(payload)
         if job_dict.pop("queue") != self.name:
             raise ValueError(f"Job {job_dict} fetched by wrong queue: {self.name}")
+
+        if status:
+            job_dict["status"] = status
         return Job(**job_dict, queue=self)
 
     async def worker_info(

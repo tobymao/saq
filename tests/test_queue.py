@@ -544,6 +544,8 @@ class TestPostgresQueue(TestQueue):
             job = await self.dequeue()
             job.started = 1000
             await self.queue.update(job, status=Status.ACTIVE)
+
+        # job3 has been dequeued but the job state hasn't been updated
         await self.dequeue()
 
         mock_time.time.return_value = 3
@@ -554,6 +556,7 @@ class TestPostgresQueue(TestQueue):
             {
                 job1.key,
                 job2.key,
+                job3.key,
             },
         )
         await job1.refresh()
@@ -563,7 +566,7 @@ class TestPostgresQueue(TestQueue):
         self.assertEqual(job1.error, "swept")
         self.assertEqual(job2.status, Status.QUEUED)
         self.assertEqual(job3.status, Status.QUEUED)
-        self.assertEqual(await self.count("active"), 3)
+        self.assertEqual(await self.count("active"), 2)
 
     @mock.patch("saq.utils.time")
     async def test_sweep_stuck(self, mock_time: MagicMock) -> None:
