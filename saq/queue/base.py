@@ -28,12 +28,12 @@ if t.TYPE_CHECKING:
     from saq.types import (
         BeforeEnqueueType,
         CountKind,
-        ListenCallback,
         DumpType,
+        ListenCallback,
         LoadType,
         QueueInfo,
-        WorkerStats,
         WorkerInfo,
+        WorkerStats,
     )
 
 
@@ -52,9 +52,7 @@ class JobError(Exception):
     """
 
     def __init__(self, job: Job) -> None:
-        super().__init__(
-            f"Job {job.id} {job.status}\n\nThe above job failed with the following error:\n\n{job.error}"
-        )
+        super().__init__(f"Job {job.id} {job.status}\n\nThe above job failed with the following error:\n\n{job.error}")
         self.job = job
 
 
@@ -386,7 +384,13 @@ class Queue(ABC):
         else:
             await listen()
 
-    async def apply(self, job_or_func: str, timeout: float | None = None, poll_interval: float = 0.5, **kwargs: t.Any) -> t.Any:
+    async def apply(
+        self,
+        job_or_func: str,
+        timeout: float | None = None,
+        poll_interval: float = 0.5,
+        **kwargs: t.Any,
+    ) -> t.Any:
         """
         Enqueue a job and wait for its result.
 
