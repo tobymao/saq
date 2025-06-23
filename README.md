@@ -137,6 +137,9 @@ print(job.results)
 # run a job and return the result
 print(await queue.apply("test", a=2))
 
+# run a job with custom polling interval to check status more frequently
+print(await queue.apply("test", a=2, poll_interval=0.1))
+
 # Run multiple jobs concurrently and collect the results into a list
 print(await queue.map("test", [{"a": 3}, {"a": 4}]))
 
