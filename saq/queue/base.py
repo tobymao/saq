@@ -28,12 +28,12 @@ if t.TYPE_CHECKING:
     from saq.types import (
         BeforeEnqueueType,
         CountKind,
-        ListenCallback,
         DumpType,
+        ListenCallback,
         LoadType,
         QueueInfo,
-        WorkerStats,
         WorkerInfo,
+        WorkerStats,
     )
 
 
@@ -370,7 +370,7 @@ class Queue(ABC):
             job_keys: sequence of job keys
             callback: callback function, if it returns truthy, break
             timeout: if timeout is truthy, wait for timeout seconds
-            poll_interval: number of seconds in between poll attempts if needed
+            poll_interval: Number of seconds between checking job status (default 0.5)
         """
 
         async def listen() -> None:
@@ -391,7 +391,13 @@ class Queue(ABC):
         else:
             await listen()
 
-    async def apply(self, job_or_func: str, timeout: float | None = None, **kwargs: t.Any) -> t.Any:
+    async def apply(
+        self,
+        job_or_func: str,
+        timeout: float | None = None,
+        poll_interval: float = 0.5,
+        **kwargs: t.Any,
+    ) -> t.Any:
         """
         Enqueue a job and wait for its result.
 
@@ -409,9 +415,12 @@ class Queue(ABC):
         Args:
             job_or_func: Same as Queue.enqueue
             timeout: If provided, how long to wait for result, else infinite (default None)
+            poll_interval: Number of seconds between checking job status (default 0.5)
             kwargs: Same as Queue.enqueue
         """
-        results = await self.map(job_or_func, timeout=timeout, iter_kwargs=[kwargs])
+        results = await self.map(
+            job_or_func, timeout=timeout, poll_interval=poll_interval, iter_kwargs=[kwargs]
+        )
         if results:
             return results[0]
         return None
@@ -450,7 +459,7 @@ class Queue(ABC):
             return_exceptions: If False (default), an exception is immediately raised as soon as any jobs
                 fail. Other jobs won't be cancelled and will continue to run.
                 If True, exceptions are treated the same as successful results and aggregated in the result list.
-            poll_interval: number of seconds in between poll attempts
+            poll_interval: Number of seconds between checking job status (default 0.5)
             kwargs: Default kwargs for all jobs. These will be overridden by those in iter_kwargs.
         """
         iter_kwargs = [
