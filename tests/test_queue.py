@@ -331,6 +331,34 @@ class TestQueue(unittest.IsolatedAsyncioTestCase):
 
         task.cancel()
 
+    async def test_poll_interval(self) -> None:
+        # Create a job object directly without enqueuing
+        job = Job(function="echo", kwargs={"a": 42}, key="poll-test", queue=self.queue)
+
+        # Mock asyncio.sleep to verify poll_interval is used
+        # This is leaking implementation details, but it also allows us to avoid
+        # actually sleeping during the test.
+        with mock.patch("asyncio.sleep") as mock_sleep:
+            call_count = 0
+
+            # Create a side effect that completes the job after second poll
+            async def sleep_side_effect(delay):
+                nonlocal call_count
+                call_count += 1
+                if call_count == 2:
+                    # After second sleep, finish the job
+                    await self.queue.finish(job, Status.COMPLETE, result=42)
+
+            mock_sleep.side_effect = sleep_side_effect
+
+            # Test apply with custom poll_interval on the job object
+            result = await self.queue.apply(job, poll_interval=0.123)
+            self.assertEqual(result, 42)
+
+            # Verify sleep was called with our custom poll_interval at least twice
+            self.assertGreaterEqual(mock_sleep.call_count, 2)
+            mock_sleep.assert_called_with(0.123)
+
     async def test_batch(self) -> None:
         with contextlib.suppress(ValueError):
             async with self.queue.batch():
