@@ -365,7 +365,7 @@ class Queue(ABC):
             job_keys: sequence of job keys
             callback: callback function, if it returns truthy, break
             timeout: if timeout is truthy, wait for timeout seconds
-            poll_interval: Number of seconds between checking job status
+            poll_interval: Number of seconds between checking job status (default 0.5)
         """
 
         async def listen() -> None:
@@ -404,7 +404,7 @@ class Queue(ABC):
         Args:
             job_or_func: Same as Queue.enqueue
             timeout: If provided, how long to wait for result, else infinite (default None)
-            poll_interval: Number of seconds between checking job status
+            poll_interval: Number of seconds between checking job status (default 0.5)
             kwargs: Same as Queue.enqueue
         """
         results = await self.map(job_or_func, timeout=timeout, poll_interval=poll_interval, iter_kwargs=[kwargs])
@@ -446,7 +446,7 @@ class Queue(ABC):
             return_exceptions: If False (default), an exception is immediately raised as soon as any jobs
                 fail. Other jobs won't be cancelled and will continue to run.
                 If True, exceptions are treated the same as successful results and aggregated in the result list.
-            poll_interval: Number of seconds between checking job status
+            poll_interval: Number of seconds between checking job status (default 0.5)
             kwargs: Default kwargs for all jobs. These will be overridden by those in iter_kwargs.
         """
         iter_kwargs = [
