@@ -52,7 +52,9 @@ class JobError(Exception):
     """
 
     def __init__(self, job: Job) -> None:
-        super().__init__(f"Job {job.id} {job.status}\n\nThe above job failed with the following error:\n\n{job.error}")
+        super().__init__(
+            f"Job {job.id} {job.status}\n\nThe above job failed with the following error:\n\n{job.error}"
+        )
         self.job = job
 
 
@@ -411,7 +413,9 @@ class Queue(ABC):
             poll_interval: Number of seconds between checking job status (default 0.5)
             kwargs: Same as Queue.enqueue
         """
-        results = await self.map(job_or_func, timeout=timeout, poll_interval=poll_interval, iter_kwargs=[kwargs])
+        results = await self.map(
+            job_or_func, timeout=timeout, poll_interval=poll_interval, iter_kwargs=[kwargs]
+        )
         if results:
             return results[0]
         return None
