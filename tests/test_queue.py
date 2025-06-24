@@ -874,3 +874,8 @@ class TestPostgresQueue(TestQueue):
         await queue2.enqueue("test")
         job2 = await queue2.dequeue()
         assert job2.key == job.key
+
+    async def test_dequeue_sweep(self) -> None:
+        await self.queue.enqueue("test")
+        await self.queue.dequeue()
+        self.assertEqual(await self.queue.sweep(), [])
