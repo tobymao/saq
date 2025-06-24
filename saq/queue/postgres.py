@@ -21,7 +21,7 @@ from saq.job import (
 from saq.multiplexer import Multiplexer
 from saq.queue.base import Queue, logger
 from saq.queue.postgres_migrations import get_migrations
-from saq.utils import now_seconds
+from saq.utils import now, now_seconds
 
 if t.TYPE_CHECKING:
     from collections.abc import Iterable
@@ -666,7 +666,7 @@ class PostgresQueue(Queue):
                             UPDATE {jobs_table} SET status = 'active'
                             FROM locked_job
                             WHERE {jobs_table}.key = locked_job.key
-                            RETURNING job, {jobs_table}.key, status
+                            RETURNING job, {jobs_table}.key
                             """
                         )
                     ).format(
@@ -680,7 +680,22 @@ class PostgresQueue(Queue):
                         "phigh": self._priorities[1],
                     },
                 )
-                rows = await cursor.fetchall()
+
+                jobs = []
+                keys = []
+                dequeued = now()
+
+                for payload, key in await cursor.fetchall():
+                    # there can be a race condition where a job is swept right after it is dequeued
+                    # but before it's updated for processing
+                    job = self.deserialize(payload, Status.ACTIVE)
+                    assert job
+                    job.started = dequeued
+                    job.touched = dequeued
+                    await self._update(job, status=Status.ACTIVE, connection=conn)
+
+                    jobs.append(job)
+                    keys.append(key)
 
                 await conn.execute(
                     SQL(
@@ -695,20 +710,20 @@ class PostgresQueue(Queue):
                         jobs_table=self.jobs_table,
                         job_lock_keyspace=self.job_lock_keyspace,
                     ),
-                    {"keys": [key for _, key, _ in rows]},
+                    {"keys": keys},
                 )
-                lock_acquisition_results = await cursor.fetchall()
-                for key, lock_acquired in lock_acquisition_results:
+
+                for key, lock_acquired in await cursor.fetchall():
                     if not lock_acquired:
                         logger.error(
                             "Could not acquire lock for job %s. This may result in unexpected behavior",
                             key,
                         )
 
-            for job, _, status in rows:
-                self._job_queue.put_nowait(self.deserialize(job, status))
+            if jobs:
+                for job in jobs:
+                    self._job_queue.put_nowait(job)
 
-            if rows:
                 await self._notify(DEQUEUE)
 
     async def _enqueue(self, job: Job) -> Job | None:
