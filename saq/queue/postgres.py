@@ -888,7 +888,21 @@ class PostgresQueue(Queue):
 
     @asynccontextmanager
     async def _get_dequeue_conn(self) -> t.AsyncGenerator:
+        """
+        This context manager is used instead of the pool.connection() context manager because we need
+        to reuse specific connections outside of a context to properly manager advisory locks.
+        If advisory locks are not used, this context manager can be replaced with pool.connection().
+        """
         async with self._connection_lock:
+            # Check if the connection is still associated with a connection pool.
+            if not getattr(self._dequeue_conn, "_pool", None):
+                # The only known case of having a connection without a pool is when the connection was closed
+                # Therefore this close check shouldn't be needed but it doesn't hurt to close anyways
+                # to cover potential case where the connection is not closed and we would leave an open connection.
+                if self._dequeue_conn:
+                    await self._dequeue_conn.close()
+                self._dequeue_conn = None
+
             if self._dequeue_conn:
                 try:
                     # Pool normally performs this check when getting a connection.
