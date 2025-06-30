@@ -596,63 +596,6 @@ class TestPostgresQueue(TestQueue):
         self.assertEqual(job3.status, Status.QUEUED)
         self.assertEqual(await self.count("active"), 2)
 
-    @mock.patch("saq.utils.time")
-    async def test_sweep_stuck(self, mock_time: MagicMock) -> None:
-        mock_time.time.return_value = 0
-        job1 = await self.queue.enqueue("test")
-        assert job1
-        job = await self.dequeue()
-        job.started = 1000
-        await self.queue.update(job, status=Status.ACTIVE)
-
-        # Enqueue 2 more jobs that will become stuck
-        job2 = await self.queue.enqueue("test", retries=0)
-        assert job2
-        job3 = await self.queue.enqueue("test")
-        assert job3
-
-        another_queue = await self.create_queue()
-        for _ in range(2):
-            job = await another_queue.dequeue()
-            await another_queue.update(job, status=Status.ACTIVE, started=1000)
-
-        # Disconnect another_queue to simulate worker going down
-        await another_queue.disconnect()
-
-        mock_time.time.return_value = 3
-        self.assertEqual(await self.count("active"), 3)
-        swept = await self.queue.sweep(abort=0.01)
-        self.assertEqual(
-            set(swept),
-            {
-                job2.id,
-                job3.id,
-            },
-        )
-        await job1.refresh()
-        await job2.refresh()
-        await job3.refresh()
-        self.assertEqual(job1.status, Status.ACTIVE)
-        self.assertEqual(job2.status, Status.ABORTED)
-        self.assertEqual(job3.status, Status.QUEUED)
-        self.assertEqual(await self.count("active"), 1)
-
-    @mock.patch("saq.utils.time")
-    async def test_sweep_stuck_lock(self, mock_time: MagicMock) -> None:
-        mock_time.time.return_value = 0
-        job1 = await self.queue.enqueue("test")
-        assert job1
-        job = await self.dequeue()
-        await self.queue.update(job, status=Status.ACTIVE, started=0)
-        await self.queue.disconnect()
-
-        another_queue = await self.create_queue()
-        another_queue.job_lock_sweep = False
-
-        mock_time.time.return_value = 3
-        swept = await another_queue.sweep(abort=0.01)
-        self.assertEqual(set(swept), set())
-
     async def test_sweep_jobs(self) -> None:
         job1 = await self.enqueue("test", ttl=1)
         job2 = await self.enqueue("test", ttl=60)
@@ -701,27 +644,6 @@ class TestPostgresQueue(TestQueue):
                 (worker.id,),
             )
             self.assertIsNotNone(await cursor.fetchone())
-
-    async def test_job_lock(self) -> None:
-        query = SQL(
-            """
-        SELECT count(*)
-        FROM {} JOIN pg_locks ON lock_key = objid
-        WHERE key = %(key)s
-          AND classid = {}
-          AND objsubid = 2 -- key is int pair, not single bigint
-        """
-        ).format(self.queue.jobs_table, self.queue.job_lock_keyspace)
-        job = await self.enqueue("test")
-        await self.dequeue()
-        async with self.queue.pool.connection() as conn, conn.cursor() as cursor:
-            await cursor.execute(query, {"key": job.key})
-            self.assertEqual(await cursor.fetchone(), (1,))
-
-        await self.finish(job, Status.COMPLETE, result=1)
-        async with self.queue.pool.connection() as conn, conn.cursor() as cursor:
-            await cursor.execute(query, {"key": job.key})
-            self.assertEqual(await cursor.fetchone(), (0,))
 
     async def test_load_dump_pickle(self) -> None:
         self.queue = await self.create_queue(dump=pickle.dumps, load=pickle.loads)
@@ -815,20 +737,6 @@ class TestPostgresQueue(TestQueue):
         # so it should not be picked up
         job = await self.queue.dequeue(timeout=1)
         assert not job
-
-    async def test_bad_connection(self) -> None:
-        job = await self.enqueue("test")
-
-        async with self.queue._get_dequeue_conn() as original_connection:
-            pass
-
-        await original_connection.close()
-        # Test dequeue still works
-        self.assertEqual((await self.dequeue()), job)
-        # Check queue has a new connection
-        self.assertNotEqual(original_connection, self.queue._dequeue_conn)
-
-        await self.queue.pool.putconn(original_connection)
 
     async def test_group_key(self) -> None:
         job1 = await self.enqueue("test", group_key=1)

@@ -35,7 +35,7 @@ if t.TYPE_CHECKING:
     )
 
 try:
-    from psycopg import AsyncConnection, OperationalError
+    from psycopg import AsyncConnection
     from psycopg.sql import Identifier, SQL
     from psycopg_pool import AsyncConnectionPool
 except ModuleNotFoundError as e:
@@ -71,8 +71,6 @@ class PostgresQueue(Queue):
             Otherwise, maintain `min_size` number of connections.
         saq_lock_keyspace: The first of two advisory lock keys used by SAQ. (default 0)
             SAQ uses advisory locks for coordinating tasks between its workers, e.g. sweeping.
-        job_lock_keyspace: The first of two advisory lock keys used for jobs. (default 1)
-        job_lock_sweep: Whether or not the jobs are swept if there's no lock. (default True)
         priorities: The priority range to dequeue. (default (0, 32767))
         swept_error_message: The error message to use when sweeping jobs. (default "swept")
         manage_pool_lifecycle: Whether to have SAQ manage the lifecycle of the connection pool. (default None)
@@ -102,8 +100,6 @@ class PostgresQueue(Queue):
         min_size: int = 4,
         max_size: int = 20,
         saq_lock_keyspace: int = 0,
-        job_lock_keyspace: int = 1,
-        job_lock_sweep: bool = True,
         priorities: tuple[int, int] = (0, 32767),
         swept_error_message: str | None = None,
         manage_pool_lifecycle: bool | None = None,
@@ -132,12 +128,8 @@ class PostgresQueue(Queue):
         self.min_size = min_size
         self.max_size = max_size
         self.saq_lock_keyspace = saq_lock_keyspace
-        self.job_lock_keyspace = job_lock_keyspace
-        self.job_lock_sweep = job_lock_sweep
         self._priorities = priorities
         self._waiting = 0  # Internal counter of worker tasks waiting for dequeue
-        self._dequeue_conn: AsyncConnection | None = None
-        self._connection_lock = asyncio.Lock()
         self._has_sweep_lock = False
         self._channel = CHANNEL.format(self.name)
         self._listener = ListenMultiplexer(self.pool, self._channel)
@@ -146,7 +138,7 @@ class PostgresQueue(Queue):
         self._connected = False
 
     async def init_db(self) -> None:
-        async with self._get_dequeue_conn() as conn, conn.cursor() as cursor, conn.transaction():
+        async with self.pool.connection() as conn, conn.cursor() as cursor, conn.transaction():
             await cursor.execute(
                 SQL("SELECT pg_try_advisory_lock(%(key1)s, 0)"),
                 {"key1": self.saq_lock_keyspace},
@@ -233,13 +225,6 @@ class PostgresQueue(Queue):
         if not self._connected:
             return
 
-        async with self._connection_lock:
-            if self._dequeue_conn:
-                await self._dequeue_conn.cancel_safe()
-                async with self._dequeue_conn as conn:
-                    await conn.execute("SELECT pg_advisory_unlock_all()")
-                await self.pool.putconn(self._dequeue_conn)
-                self._dequeue_conn = None
         if self._manage_pool_lifecycle:
             await self.pool.close()
         self._has_sweep_lock = False
@@ -363,7 +348,7 @@ class PostgresQueue(Queue):
 
         if not self._has_sweep_lock:
             # Attempt to get the sweep lock and hold on to it
-            async with self._get_dequeue_conn() as conn, conn.cursor() as cursor:
+            async with self.pool.connection() as conn, conn.cursor() as cursor:
                 await cursor.execute(
                     SQL("SELECT pg_try_advisory_lock(%(key1)s, hashtext(%(queue)s))"),
                     {
@@ -418,17 +403,8 @@ class PostgresQueue(Queue):
                 SQL(
                     dedent(
                         """
-                        WITH locks AS (
-                          SELECT objid
-                          FROM pg_locks
-                          WHERE locktype = 'advisory'
-                            AND classid = %(job_lock_keyspace)s
-                            AND objsubid = 2 -- key is int pair, not single bigint
-                        )
-                        SELECT key, job, objid, status
+                        SELECT key, job, status
                         FROM {jobs_table}
-                        LEFT OUTER JOIN locks
-                            ON lock_key = objid
                         WHERE queue = %(queue)s
                           AND status IN ('active', 'aborting');
                         """
@@ -438,21 +414,18 @@ class PostgresQueue(Queue):
                 ),
                 {
                     "queue": self.name,
-                    "job_lock_keyspace": self.job_lock_keyspace,
                 },
             )
             rows = await cursor.fetchall()
 
-        for key, job_bytes, objid, status in rows:
+        for key, job_bytes, status in rows:
             job = self.deserialize(job_bytes, status)
             assert job
-            if (objid or not self.job_lock_sweep) and not job.stuck:
+            if not job.stuck:
                 continue
 
             swept.append(key)
-            logger.info(
-                "Sweeping %s, objid %s", job.info(logger.isEnabledFor(logging.DEBUG)), objid
-            )
+            logger.info("Sweeping %s", job.info(logger.isEnabledFor(logging.DEBUG)))
 
             await self.abort(job, error=self.swept_error_message)
 
@@ -479,34 +452,30 @@ class PostgresQueue(Queue):
 
             job.status = status or job.status
 
-            try:
-                await conn.execute(
-                    SQL(
-                        dedent(
-                            """
-                            UPDATE {jobs_table} SET
-                              job = %(job)s
-                              ,status = %(status)s
-                              ,scheduled = %(scheduled)s
-                              {expire_at}
-                            WHERE key = %(key)s
-                            """
-                        )
-                    ).format(
-                        jobs_table=self.jobs_table,
-                        expire_at=SQL(",expire_at = %(expire_at)s" if expire_at != -1 else ""),
-                    ),
-                    {
-                        "job": self.serialize(job),
-                        "status": job.status,
-                        "key": job.key,
-                        "scheduled": job.scheduled,
-                        "expire_at": expire_at,
-                    },
-                )
-            finally:
-                if job.status != Status.ACTIVE:
-                    await self._release_job(job.key)
+            await conn.execute(
+                SQL(
+                    dedent(
+                        """
+                        UPDATE {jobs_table} SET
+                          job = %(job)s
+                          ,status = %(status)s
+                          ,scheduled = %(scheduled)s
+                          {expire_at}
+                        WHERE key = %(key)s
+                        """
+                    )
+                ).format(
+                    jobs_table=self.jobs_table,
+                    expire_at=SQL(",expire_at = %(expire_at)s" if expire_at != -1 else ""),
+                ),
+                {
+                    "job": self.serialize(job),
+                    "status": job.status,
+                    "key": job.key,
+                    "scheduled": job.scheduled,
+                    "expire_at": expire_at,
+                },
+            )
 
     async def job(self, job_key: str) -> Job | None:
         async with self.pool.connection() as conn, conn.cursor() as cursor:
@@ -638,7 +607,7 @@ class PostgresQueue(Queue):
             return
 
         async with self._dequeue_lock:
-            async with self._get_dequeue_conn() as conn, conn.transaction(), conn.cursor() as cursor:
+            async with self.pool.connection() as conn, conn.transaction(), conn.cursor() as cursor:
                 if not self._waiting:
                     return
                 await cursor.execute(
@@ -666,7 +635,7 @@ class PostgresQueue(Queue):
                             UPDATE {jobs_table} SET status = 'active'
                             FROM locked_job
                             WHERE {jobs_table}.key = locked_job.key
-                            RETURNING job, {jobs_table}.key
+                            RETURNING job
                             """
                         )
                     ).format(
@@ -681,49 +650,20 @@ class PostgresQueue(Queue):
                     },
                 )
 
-                jobs = []
-                keys = []
+                rows = await cursor.fetchall()
                 dequeued = now()
 
-                for payload, key in await cursor.fetchall():
+                for row in rows:
                     # there can be a race condition where a job is swept right after it is dequeued
                     # but before it's updated for processing
-                    job = self.deserialize(payload, Status.ACTIVE)
+                    job = self.deserialize(row[0], Status.ACTIVE)
                     assert job
                     job.started = dequeued
                     job.touched = dequeued
                     await self._update(job, status=Status.ACTIVE, connection=conn)
-
-                    jobs.append(job)
-                    keys.append(key)
-
-                await conn.execute(
-                    SQL(
-                        dedent(
-                            """
-                            SELECT key, pg_try_advisory_lock({job_lock_keyspace}, lock_key)
-                            FROM {jobs_table}
-                            WHERE key = ANY(%(keys)s)
-                            """
-                        )
-                    ).format(
-                        jobs_table=self.jobs_table,
-                        job_lock_keyspace=self.job_lock_keyspace,
-                    ),
-                    {"keys": keys},
-                )
-
-                for key, lock_acquired in await cursor.fetchall():
-                    if not lock_acquired:
-                        logger.error(
-                            "Could not acquire lock for job %s. This may result in unexpected behavior",
-                            key,
-                        )
-
-            if jobs:
-                for job in jobs:
                     self._job_queue.put_nowait(job)
 
+            if rows:
                 await self._notify(DEQUEUE)
 
     async def _enqueue(self, job: Job) -> Job | None:
@@ -878,7 +818,6 @@ class PostgresQueue(Queue):
                     ).format(jobs_table=self.jobs_table),
                     {"key": key},
                 )
-                await self._release_job(key)
 
     async def _notify(self, key: str, connection: AsyncConnection | None = None) -> None:
         async with self.nullcontext(connection) if connection else self.pool.connection() as conn:
@@ -887,59 +826,12 @@ class PostgresQueue(Queue):
             )
 
     @asynccontextmanager
-    async def _get_dequeue_conn(self) -> t.AsyncGenerator:
-        """
-        This context manager is used instead of the pool.connection() context manager because we need
-        to reuse specific connections outside of a context to properly manager advisory locks.
-        If advisory locks are not used, this context manager can be replaced with pool.connection().
-        """
-        async with self._connection_lock:
-            # Check if the connection is still associated with a connection pool.
-            if not getattr(self._dequeue_conn, "_pool", None):
-                # The only known case of having a connection without a pool is when the connection was closed
-                # Therefore this close check shouldn't be needed but it doesn't hurt to close anyways
-                # to cover potential case where the connection is not closed and we would leave an open connection.
-                if self._dequeue_conn:
-                    await self._dequeue_conn.close()
-                self._dequeue_conn = None
-
-            if self._dequeue_conn:
-                try:
-                    # Pool normally performs this check when getting a connection.
-                    await self.pool.check_connection(self._dequeue_conn)
-                except OperationalError:
-                    # The connection is bad so return it to the pool and get a new one.
-                    await self.pool.putconn(self._dequeue_conn)
-                    self._dequeue_conn = await self.pool.getconn()
-            else:
-                self._dequeue_conn = await self.pool.getconn()
-            yield self._dequeue_conn
-
-    @asynccontextmanager
     async def nullcontext(self, enter_result: t.Any | None = None) -> t.AsyncGenerator:
         """Async version of contextlib.nullcontext
 
         Async support has been added to contextlib.nullcontext in Python 3.10.
         """
         yield enter_result
-
-    async def _release_job(self, key: str) -> None:
-        async with self._get_dequeue_conn() as conn, conn:
-            await conn.execute(
-                SQL(
-                    dedent(
-                        """
-                        SELECT pg_advisory_unlock({job_lock_keyspace}, lock_key)
-                        FROM {jobs_table}
-                        WHERE key = %(key)s
-                        """
-                    )
-                ).format(
-                    jobs_table=self.jobs_table,
-                    job_lock_keyspace=self.job_lock_keyspace,
-                ),
-                {"key": key},
-            )
 
     @cached_property
     def _job_queue(self) -> asyncio.Queue:
