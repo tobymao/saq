@@ -957,4 +957,4 @@ class ListenMultiplexer(Multiplexer):
             await conn.execute(SQL("LISTEN {}").format(Identifier(self.key)))
 
             async for notify in conn.notifies():
-                self.publish(notify.payload, notify.payload)
+                self.publish(notify.channel, notify.payload)
