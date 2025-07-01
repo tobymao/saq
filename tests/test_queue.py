@@ -787,3 +787,18 @@ class TestPostgresQueue(TestQueue):
         await self.queue.enqueue("test")
         await self.queue.dequeue()
         self.assertEqual(await self.queue.sweep(), [])
+
+    @mock.patch("saq.utils.time")
+    async def test_sweep_lock(self, mock_time: MagicMock) -> None:
+        mock_time.time.return_value = 1
+        job = await self.enqueue("test", timeout=1, retries=0)
+        await self.queue.dequeue()
+        mock_time.time.return_value = 3
+        self.assertEqual(await self.queue.sweep(abort=0.01), [job.key])
+
+        queue2 = await self.create_queue()
+        job = await queue2.enqueue("test", timeout=1, retries=0)
+        await queue2.dequeue()
+        mock_time.time.return_value = 5
+        self.assertEqual(await queue2.sweep(abort=0.01), [])
+        self.assertEqual(await self.queue.sweep(abort=0.01), [job.key])
