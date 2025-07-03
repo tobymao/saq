@@ -6,10 +6,12 @@ from __future__ import annotations
 
 import json
 import typing as t
+import asyncio
 
 from saq.errors import MissingDependencyError
 from saq.job import Job, Status
 from saq.queue.base import Queue
+from saq.utils import exponential_backoff
 
 if t.TYPE_CHECKING:
     from collections.abc import Iterable
@@ -22,11 +24,15 @@ if t.TYPE_CHECKING:
 
 try:
     from aiohttp import ClientSession
+    from aiohttp import ClientError, ClientResponseError, ServerTimeoutError, ClientConnectorError
 except ModuleNotFoundError as e:
     raise MissingDependencyError(
         "Missing dependencies for Http. Install them with `pip install saq[http]`. "
         "Prefix url with redis or postgres if you meant to use those instead."
     ) from e
+
+
+NON_IDEMPOTENT_OPERATIONS = {"dequeue"}
 
 
 class HttpProxy:
@@ -112,6 +118,10 @@ class HttpQueue(Queue):
         name: str = "default",
         session_callback: t.Optional[t.Callable[[], t.Awaitable[ClientSession]]] = None,
         swept_error_message: str | None = None,
+        max_retries: int = 3,
+        retry_delay: float = 1.0,
+        retry_backoff: float = 2.0,
+        retry_jitter: bool = True,
         **kwargs: t.Any,
     ) -> None:
         super().__init__(
@@ -124,6 +134,10 @@ class HttpQueue(Queue):
         self.session_kwargs = kwargs
         self.session: t.Optional[ClientSession] = None
         self.session_callback = session_callback
+        self.max_retries = max_retries
+        self.retry_delay = retry_delay
+        self.retry_backoff = retry_backoff
+        self.retry_jitter = retry_jitter
 
     async def connect(self) -> None:
         if not self.session:
@@ -138,12 +152,45 @@ class HttpQueue(Queue):
             await self.session.close()
             self.session = None
 
-    async def _send(self, kind: str, **kwargs: t.Any) -> str:
-        assert self.session
+    def _should_retry_on_exception(self, exception: BaseException) -> bool:
+        if isinstance(exception, (ServerTimeoutError, ClientConnectorError)):
+            return True
+        if isinstance(exception, ClientResponseError):
+            return exception.status >= 500
+        if isinstance(exception, ClientError):
+            return True
+        return False
 
-        async with self.session.post(self.url, json={"kind": kind, **kwargs}) as resp:
-            resp.raise_for_status()
-            return await resp.text()
+    async def _retry_on_failure(
+        self, operation_name: str, coro_func: t.Callable, *args: t.Any, **kwargs: t.Any
+    ) -> t.Any:
+        for attempt in range(self.max_retries + 1):
+            try:
+                return await coro_func(*args, **kwargs)
+            except Exception as e:
+                if (
+                    operation_name in NON_IDEMPOTENT_OPERATIONS
+                    or attempt == self.max_retries
+                    or not self._should_retry_on_exception(e)
+                ):
+                    raise
+
+                delay = exponential_backoff(
+                    attempt + 1,
+                    base_delay=self.retry_delay,
+                    max_delay=None,
+                    jitter=self.retry_jitter,
+                )
+                await asyncio.sleep(delay)
+
+    async def _send(self, kind: str, **kwargs: t.Any) -> str:
+        async def _perform_request() -> str:
+            assert self.session
+            async with self.session.post(self.url, json={"kind": kind, **kwargs}) as resp:
+                resp.raise_for_status()
+                return await resp.text()
+
+        return await self._retry_on_failure(kind, _perform_request)
 
     async def _enqueue(self, job: Job) -> Job | None:
         return self.deserialize(await self._send("enqueue", job=self.serialize(job)))
