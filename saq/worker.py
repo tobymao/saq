@@ -447,7 +447,7 @@ def start(
             await worker.stop()
 
         app = create_app(queues)
-        app.on_shutdown.append(shutdown)
+        app.on_shutdown.append(shutdown)  # type: ignore
 
         loop.create_task(worker_start()).add_done_callback(
             lambda _: signal.raise_signal(signal.SIGTERM)
