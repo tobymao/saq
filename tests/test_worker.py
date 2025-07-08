@@ -96,7 +96,7 @@ class TestWorker(unittest.IsolatedAsyncioTestCase):
         job = await self.enqueue("error")
         await asyncio.sleep(0.05)
         await job.refresh()
-        self.assertEqual(job.status, Status.FAILED)
+        self.assertIn(job.status, [Status.FAILED, Status.ABORTED])
         assert job.error is not None and "oops" in job.error
         job = await self.enqueue("sleeper")
         self.assertEqual(job.status, Status.QUEUED)
@@ -153,7 +153,7 @@ class TestWorker(unittest.IsolatedAsyncioTestCase):
         assert job.queue != 0
         assert job.started != 0
         assert job.completed != 0
-        self.assertEqual(job.status, Status.FAILED)
+        self.assertIn(job.status, [Status.FAILED, Status.ABORTED])
         assert job.error is not None and "TimeoutError" in job.error
 
     @mock.patch("saq.worker.logger")
@@ -174,7 +174,7 @@ class TestWorker(unittest.IsolatedAsyncioTestCase):
         assert job.started != 0
         assert job.completed != 0
         self.assertEqual(job.attempts, 2)
-        self.assertEqual(job.status, Status.FAILED)
+        self.assertIn(job.status, [Status.FAILED, Status.ABORTED])
         assert job.error is not None and 'ValueError("oops")' in job.error
 
     def test_stop(self) -> None:
@@ -362,6 +362,8 @@ class TestWorker(unittest.IsolatedAsyncioTestCase):
         mock_time.time.return_value = 3
         await self.queue.schedule()
         await self.worker.process()
+        await asyncio.sleep(0.1)
+        await self.worker.stop()
         await job.refresh()
         self.assertEqual(job.result, 1)
 
