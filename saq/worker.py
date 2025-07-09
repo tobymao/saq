@@ -11,6 +11,7 @@ import os
 import signal
 import sys
 import traceback
+import threading
 import typing as t
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone, tzinfo
@@ -125,7 +126,7 @@ class Worker:
         self.burst = burst
         self.max_burst_jobs = max_burst_jobs
         self.burst_jobs_processed = 0
-        self.burst_jobs_processed_lock = asyncio.Lock()
+        self.burst_jobs_processed_lock = threading.Lock()
         self.burst_condition_met = False
         self._metadata = metadata
         self.id = uuid1() if id is None else id
@@ -180,7 +181,7 @@ class Worker:
             self.tasks.update(await self.upkeep())
 
             for _ in range(self.concurrency):
-                asyncio.create_task(self._process())
+                self._process()
 
             await self.event.wait()
 
@@ -345,11 +346,11 @@ class Worker:
                     logger.exception("Failed to run after process hook")
         return True
 
-    async def _process(self, previous_task: Task | None = None) -> None:
+    def _process(self, previous_task: Task | None = None) -> None:
         if previous_task:
             self.tasks.discard(previous_task)
 
-            if self.burst and await self._check_burst(previous_task):
+            if self.burst and self._check_burst(previous_task):
                 if not any(t.get_name() == "process" for t in self.tasks):
                     # Stop the worker if all process tasks are done
                     self.event.set()
@@ -358,10 +359,9 @@ class Worker:
         if not self.event.is_set():
             new_task = asyncio.create_task(self.process(), name="process")
             self.tasks.add(new_task)
-            new_task.add_done_callback(lambda t: asyncio.create_task(self._process(t)))
+            new_task.add_done_callback(self._process)
 
-
-    async def _check_burst(self, previous_task: Task) -> bool:
+    def _check_burst(self, previous_task: Task) -> bool:
         if self.burst_condition_met:
             return self.burst_condition_met
 
@@ -369,7 +369,7 @@ class Worker:
         if not job_dequeued:
             self.burst_condition_met = True
         elif self.max_burst_jobs is not None:
-            async with self.burst_jobs_processed_lock:
+            with self.burst_jobs_processed_lock:
                 self.burst_jobs_processed += 1
                 if self.burst_jobs_processed >= self.max_burst_jobs:
                     self.burst_condition_met = True
