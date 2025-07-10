@@ -71,6 +71,8 @@ class Worker:
         burst: whether to stop the worker once all jobs have been processed
         max_burst_jobs: the maximum number of jobs to process in burst mode
         metadata: arbitrary data to pass to the worker which it will register with saq
+        poll_interval: If > 0.0, dequeue will use polling instead of listen/notify
+            to trigger dequeues. This only affects Postgres. (default 0.0)
     """
 
     SIGNALS = [signal.SIGINT, signal.SIGTERM] if os.name != "nt" else [signal.SIGTERM]
@@ -89,10 +91,11 @@ class Worker:
         before_process: ReceivesContext | Collection[ReceivesContext] | None = None,
         after_process: ReceivesContext | Collection[ReceivesContext] | None = None,
         timers: PartialTimersDict | None = None,
-        dequeue_timeout: float = 0,
+        dequeue_timeout: float = 0.0,
         burst: bool = False,
         max_burst_jobs: int | None = None,
         metadata: t.Optional[JsonDict] = None,
+        poll_interval: float = 0.0,
     ) -> None:
         self.queue = queue
         self.concurrency = concurrency
@@ -128,6 +131,7 @@ class Worker:
         self.burst_jobs_processed_lock = threading.Lock()
         self.burst_condition_met = False
         self._metadata = metadata
+        self._poll_interval = poll_interval
         self.id = uuid1() if id is None else id
 
         if self.burst:
@@ -293,7 +297,10 @@ class Worker:
         job: Job | None = None
 
         try:
-            job = await self.queue.dequeue(self.dequeue_timeout)
+            job = await self.queue.dequeue(
+                timeout=self.dequeue_timeout,
+                poll_interval=self._poll_interval,
+            )
 
             if job is None:
                 return False
@@ -447,7 +454,7 @@ def start(
             await worker.stop()
 
         app = create_app(queues)
-        app.on_shutdown.append(shutdown)  # type: ignore
+        app.on_shutdown.append(shutdown)
 
         loop.create_task(worker_start()).add_done_callback(
             lambda _: signal.raise_signal(signal.SIGTERM)

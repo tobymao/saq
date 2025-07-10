@@ -339,7 +339,7 @@ class RedisQueue(Queue):
             else:
                 await self.redis.lrem(self._active, 0, job.id)
 
-    async def dequeue(self, timeout: float = 0) -> Job | None:
+    async def dequeue(self, timeout: float = 0.0, poll_interval: float = 0.0) -> Job | None:
         if await self.version() < (6, 2, 0):
             job_id = await self.redis.brpoplpush(
                 self._queued,

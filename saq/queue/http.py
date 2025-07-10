@@ -244,8 +244,10 @@ class HttpQueue(Queue):
     async def finish_abort(self, job: Job) -> None:
         await self._send("finish_abort", job=self.serialize(job))
 
-    async def dequeue(self, timeout: float = 0) -> Job | None:
-        return self.deserialize(await self._send("dequeue", timeout=timeout))
+    async def dequeue(self, timeout: float = 0.0, poll_interval: float = 0.0) -> Job | None:
+        return self.deserialize(
+            await self._send("dequeue", timeout=timeout, poll_interval=poll_interval)
+        )
 
     async def write_worker_info(
         self,
