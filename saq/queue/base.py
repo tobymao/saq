@@ -145,7 +145,7 @@ class Queue(ABC):
         pass
 
     @abstractmethod
-    async def dequeue(self, timeout: float = 0) -> Job | None:
+    async def dequeue(self, timeout: float = 0.0, poll_interval: float = 0.0) -> Job | None:
         pass
 
     async def finish_abort(self, job: Job) -> None:

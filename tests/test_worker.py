@@ -67,7 +67,7 @@ async def recurse(ctx: Context, *, n: int) -> list[str]:
     return result
 
 
-functions: list[Function] = [noop, sleeper, error, sync_echo_ctx, recurse]
+FUNCTIONS: list[Function] = [noop, sleeper, error, sync_echo_ctx, recurse]
 
 
 class TestWorker(unittest.IsolatedAsyncioTestCase):
@@ -180,7 +180,7 @@ class TestWorker(unittest.IsolatedAsyncioTestCase):
     def test_stop(self) -> None:
         loop = asyncio.new_event_loop()
         queue = loop.run_until_complete(self.create_queue())
-        worker = Worker(queue, functions=functions)
+        worker = Worker(queue, functions=FUNCTIONS)
         job = loop.run_until_complete(queue.enqueue("sleeper"))
         assert job is not None
         self.assertEqual(job.status, Status.QUEUED)
@@ -216,7 +216,7 @@ class TestWorker(unittest.IsolatedAsyncioTestCase):
 
         worker = Worker(
             self.queue,
-            functions=functions,
+            functions=FUNCTIONS,
             before_process=before_process,
             after_process=after_process,
         )
@@ -258,7 +258,7 @@ class TestWorker(unittest.IsolatedAsyncioTestCase):
 
         worker = Worker(
             self.queue,
-            functions=functions,
+            functions=FUNCTIONS,
             before_process=[before_process_a, before_process_b],
             after_process=[after_process_a, after_process_b],
         )
@@ -307,7 +307,7 @@ class TestWorker(unittest.IsolatedAsyncioTestCase):
 
         worker = Worker(
             self.queue,
-            functions=functions,
+            functions=FUNCTIONS,
             startup=[startup_a, startup_b],
             shutdown=[shutdown_a, shutdown_b],
         )
@@ -370,14 +370,14 @@ class TestWorker(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(ValueError):
             Worker(
                 self.queue,
-                functions=functions,
+                functions=FUNCTIONS,
                 cron_jobs=[CronJob(sleeper, cron="x")],
             )
 
         with travel(datetime(2025, 1, 1, 0, 0, 1, tzinfo=timezone.utc), tick=True) as traveller:
             worker = Worker(
                 self.queue,
-                functions=functions,
+                functions=FUNCTIONS,
                 cron_jobs=[CronJob(sleeper, cron="* 12 * * *", kwargs={"sleep": 3})],
                 cron_tz=timezone(offset=timedelta(hours=-3)),  # 3 hours behind (UTC-3)
             )
@@ -510,10 +510,31 @@ class TestWorker(unittest.IsolatedAsyncioTestCase):
     async def test_burst(self) -> None:
         with self.assertRaises(ValueError):
             # dequeue_timeout must be set when burst is True
-            Worker(self.queue, functions=functions, burst=True)
+            Worker(self.queue, functions=FUNCTIONS, burst=True)
 
         worker = Worker(
-            self.queue, functions=functions, burst=True, dequeue_timeout=0.1, concurrency=1
+            self.queue, functions=FUNCTIONS, burst=True, dequeue_timeout=0.1, concurrency=1
+        )
+        worker_task = asyncio.create_task(worker.start())
+        job_a = await self.enqueue("noop")
+        job_b = await self.enqueue("noop")
+        await job_a.refresh(0)
+        await job_b.refresh(0)
+        self.assertEqual(job_a.status, Status.COMPLETE)
+        self.assertEqual(job_b.status, Status.COMPLETE)
+
+        await asyncio.sleep(0.5)
+        self.assertTrue(worker.event.is_set())
+        await worker_task
+
+    async def test_burst_poll_interval(self) -> None:
+        worker = Worker(
+            self.queue,
+            functions=FUNCTIONS,
+            burst=True,
+            dequeue_timeout=0.3,
+            poll_interval=0.1,
+            concurrency=1,
         )
         worker_task = asyncio.create_task(worker.start())
         job_a = await self.enqueue("noop")
@@ -530,7 +551,7 @@ class TestWorker(unittest.IsolatedAsyncioTestCase):
     async def test_max_burst_jobs(self) -> None:
         worker = Worker(
             self.queue,
-            functions=functions,
+            functions=FUNCTIONS,
             burst=True,
             max_burst_jobs=1,
             dequeue_timeout=0.1,
@@ -600,7 +621,7 @@ class TestWorkerRedisQueue(TestWorker):
     async def asyncSetUp(self) -> None:
         self.create_queue = create_redis_queue
         self.queue = await self.create_queue()
-        self.worker = Worker(self.queue, functions=functions)
+        self.worker = Worker(self.queue, functions=FUNCTIONS)
 
 
 class TestWorkerPostgresQueue(TestWorker):
@@ -608,7 +629,7 @@ class TestWorkerPostgresQueue(TestWorker):
         await setup_postgres()
         self.create_queue = create_postgres_queue
         self.queue = await self.create_queue()
-        self.worker = Worker(self.queue, functions=functions)
+        self.worker = Worker(self.queue, functions=FUNCTIONS)
 
     async def asyncTearDown(self) -> None:
         await teardown_postgres()
@@ -623,13 +644,13 @@ class TestWorkerPostgresQueue(TestWorker):
         with self.assertRaises(ValueError):
             Worker(
                 self.queue,
-                functions=functions,
+                functions=FUNCTIONS,
                 cron_jobs=[CronJob(cron, cron="x")],
             )
 
         worker = Worker(
             self.queue,
-            functions=functions,
+            functions=FUNCTIONS,
             cron_jobs=[CronJob(cron, cron="* * * * * *")],
         )
         self.assertEqual(await self.queue.count("queued"), 0)
@@ -642,14 +663,20 @@ class TestWorkerPostgresQueue(TestWorker):
         self.assertEqual(await self.queue.count("incomplete"), 1)
 
 
-class TestWorkerHttpQueue(AioHTTPTestCase, TestWorker):
+class TestHttpRedis(AioHTTPTestCase, TestWorker):
+    async def create_server_queue(self) -> None:
+        self.server_queue = await create_redis_queue()
+        self.server_worker_kwargs = {}
+
     async def asyncSetUp(self) -> None:
-        self.redis_queue = await create_redis_queue()
-        self.redis_worker = Worker(
-            self.redis_queue,
+        await self.create_server_queue()
+
+        self.server_worker = Worker(
+            self.server_queue,
             functions={},
             concurrency=0,
             timers={"sweep": 1},  # type: ignore
+            **self.server_worker_kwargs,
         )
 
         await super().asyncSetUp()
@@ -661,23 +688,23 @@ class TestWorkerHttpQueue(AioHTTPTestCase, TestWorker):
 
         self.create_queue = create_http_queue
         self.queue = await self.create_queue()
-        self.worker = Worker(self.queue, functions=functions)
+        self.worker = Worker(self.queue, functions=FUNCTIONS)
 
     async def asyncTearDown(self) -> None:
         await self.worker.stop()
-        await self.redis_worker.stop()
-        await self.redis_queue.disconnect()
+        await self.server_worker.stop()
+        await self.server_queue.disconnect()
         await super().asyncTearDown()
 
     async def get_application(self):
         """
         Override the get_app method to return your application.
         """
-        proxy = HttpProxy(self.redis_queue)
+        proxy = HttpProxy(self.server_queue)
 
         async def startup(_app) -> None:
-            await self.redis_queue.connect()
-            asyncio.create_task(self.redis_worker.start())
+            await self.server_queue.connect()
+            asyncio.create_task(self.server_worker.start())
 
         async def process(request):
             result = await proxy.process(await request.text())
@@ -692,5 +719,16 @@ class TestWorkerHttpQueue(AioHTTPTestCase, TestWorker):
         self.skipTest("Not working")
 
     async def test_sync_cancel(self) -> None:
-        await self.redis_worker.stop()
+        await self.server_worker.stop()
         await super().test_sync_cancel()
+
+
+class TestHttpPoll(TestHttpRedis):
+    async def create_server_queue(self) -> None:
+        await setup_postgres()
+        self.server_queue = await create_postgres_queue()
+        self.server_worker_kwargs = {"poll_interval": 0.1}
+
+    async def asyncTearDown(self) -> None:
+        await super().asyncTearDown()
+        await teardown_postgres()

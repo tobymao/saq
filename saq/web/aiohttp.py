@@ -131,5 +131,5 @@ def create_app(queues: list[Queue]) -> Application:
             web.get("/health", health),
         ]
     )
-    app.on_shutdown.append(shutdown)  # type: ignore
+    app.on_shutdown.append(shutdown)
     return app

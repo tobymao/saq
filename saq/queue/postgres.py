@@ -566,7 +566,7 @@ class PostgresQueue(Queue):
             else:
                 await self.update(job, status=Status.ABORTING, error=error, connection=conn)
 
-    async def dequeue(self, timeout: float = 0) -> Job | None:
+    async def dequeue(self, timeout: float = 0.0, poll_interval: float = 0.0) -> Job | None:
         job = None
 
         try:
@@ -585,13 +585,32 @@ class PostgresQueue(Queue):
                 )
             else:
                 async with self._listen_lock:
-                    async for payload in self._listener.listen(ENQUEUE, DEQUEUE, timeout=timeout):
-                        if payload == ENQUEUE:
-                            await self._dequeue()
+                    if poll_interval > 0.0:
 
-                        if not self._job_queue.empty():
-                            job = self._job_queue.get_nowait()
-                            break
+                        async def _poll() -> Job | None:
+                            while self._connected:
+                                await self._dequeue()
+
+                                if not self._job_queue.empty():
+                                    return self._job_queue.get_nowait()
+
+                                await asyncio.sleep(poll_interval)
+
+                            return None
+
+                        job = await (
+                            asyncio.wait_for(_poll(), timeout) if timeout > 0.0 else _poll()
+                        )
+                    else:
+                        async for payload in self._listener.listen(
+                            ENQUEUE, DEQUEUE, timeout=timeout
+                        ):
+                            if payload == ENQUEUE:
+                                await self._dequeue()
+
+                            if not self._job_queue.empty():
+                                job = self._job_queue.get_nowait()
+                                break
         except (asyncio.TimeoutError, asyncio.CancelledError):
             pass
         finally:
