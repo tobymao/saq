@@ -75,7 +75,7 @@ class Worker:
             to trigger dequeues. This only affects Postgres. (default 0.0)
     """
 
-    SIGNALS = [signal.SIGINT, signal.SIGTERM] if os.name != "nt" else [signal.SIGTERM]
+    SIGNALS = [signal.SIGINT, signal.SIGTERM] if os.name != "nt" else []
 
     def __init__(
         self,
