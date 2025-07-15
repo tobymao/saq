@@ -1,10 +1,8 @@
 import argparse
-import logging
-import multiprocessing
 import os
 import sys
 
-from saq.worker import check_health, start
+from saq.runner import run
 
 
 def main() -> None:
@@ -57,39 +55,16 @@ def main() -> None:
     # Includes the current path as a module path to allow importlib finding in-development modules
     sys.path.append(os.getcwd())
 
-    if not args.quiet:
-        level = args.verbose
-
-        if level == 0:
-            level = logging.WARNING
-        elif level == 1:
-            level = logging.INFO
-        else:
-            level = logging.DEBUG
-
-        logging.basicConfig(level=level)
-
-    settings = args.settings
-
-    if args.check:
-        sys.exit(check_health(settings))
-    else:
-        workers = args.workers
-
-        if workers > 1:
-            for _ in range(workers - 1):
-                p = multiprocessing.Process(target=start, args=(settings,))
-                p.start()
-
-        try:
-            start(
-                settings,
-                web=args.web,
-                extra_web_settings=args.extra_web_settings,
-                port=args.port,
-            )
-        except KeyboardInterrupt:
-            pass
+    run(
+        args.settings,
+        workers=args.workers,
+        verbose=args.verbose,
+        web=args.web,
+        extra_web_settings=args.extra_web_settings,
+        port=args.port,
+        check=args.check,
+        quiet=args.quiet,
+    )
 
 
 if __name__ == "__main__":
