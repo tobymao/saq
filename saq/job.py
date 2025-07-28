@@ -136,6 +136,7 @@ class Job:
     priority: int = 0
     group_key: str | None = None
     meta: dict[t.Any, t.Any] = dataclasses.field(default_factory=dict)
+    worker_id: str | None = None
 
     _EXCLUDE_NON_FULL = {
         "kwargs",
