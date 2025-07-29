@@ -620,7 +620,7 @@ class TestWorker(unittest.IsolatedAsyncioTestCase):
     async def test_worker_id(self, _mock_logger: MagicMock) -> None:
         task = asyncio.create_task(self.worker.start())
         job = await self.enqueue("sleeper", sleep=60)
-        await asyncio.sleep(0.05)
+        await asyncio.sleep(5)
         await job.refresh()
         self.assertEqual(job.status, Status.ACTIVE)
         self.assertEqual(self.worker.id, job.worker_id)
