@@ -307,6 +307,7 @@ class Worker:
 
             job.started = now()
             job.attempts += 1
+            job.worker_id = self.id
             await job.update(status=Status.ACTIVE)
             context = {**self.context, "job": job}
             await self._before_process(context)
