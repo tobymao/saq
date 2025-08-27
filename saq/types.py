@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import typing as t
 from collections.abc import Collection
-from typing_extensions import Required, TypedDict
+from typing_extensions import Required, TypedDict, Generic
 
 if t.TYPE_CHECKING:
     from asyncio import Task
@@ -110,7 +110,10 @@ class PartialTimersDict(TimersDict, total=False):
     """
 
 
-class SettingsDict(TypedDict, total=False):
+CtxType = t.TypeVar("CtxType", bound=Context)
+
+
+class SettingsDict(TypedDict, Generic[CtxType], total=False):
     """
     Settings
     """
@@ -119,10 +122,10 @@ class SettingsDict(TypedDict, total=False):
     functions: Required[Collection[Function | tuple[str, Function]]]
     concurrency: int
     cron_jobs: Collection[CronJob]
-    startup: ReceivesContext
-    shutdown: ReceivesContext
-    before_process: ReceivesContext
-    after_process: ReceivesContext
+    startup: ReceivesContext[CtxType]
+    shutdown: ReceivesContext[CtxType]
+    before_process: ReceivesContext[CtxType]
+    after_process: ReceivesContext[CtxType]
     timers: PartialTimersDict
     dequeue_timeout: float
 
@@ -134,5 +137,5 @@ DurationKind = t.Literal["process", "start", "total", "running"]
 Function = t.Callable[..., t.Any]
 ListenCallback = t.Callable[[str, "Status"], t.Any]
 LoadType = t.Callable[[t.Union[bytes, str]], t.Any]
-ReceivesContext = t.Callable[[Context], t.Any]
+ReceivesContext = t.Callable[[CtxType], t.Any]
 VersionTuple = t.Tuple[int, ...]
