@@ -83,6 +83,10 @@ class Job:
         queue (saq.queue.Queue): the saq.Queue object associated with the job
         key (str): unique identifier of a job, defaults to uuid1, can be passed in to avoid duplicate jobs
         timeout (int): the maximum amount of time a job can run for in seconds, defaults to 10 (0 means disabled)
+        shutdown_grace_period_s (int): The maximum amount of time a job can take to complete, after a shutdown signal
+            is received by the worker, defaults to 0 (disabled). Note that, on shutdown, this is additive to the
+            `shutdown_grace_period_s` of the worker itself. The grace period is not applied to the job if it is
+            aborted.
         heartbeat (int): the maximum amount of time a job can survive without a heartbeat in seconds, defaults to 0 (disabled)
             a heartbeat can be triggered manually within a job by calling await job.update()
         retries (int): the maximum number of attempts to retry a job, defaults to 1
@@ -119,6 +123,7 @@ class Job:
     queue: Queue | None = None
     key: str = dataclasses.field(default_factory=get_default_job_key)
     timeout: int = 10
+    shutdown_grace_period_s: int = 0
     heartbeat: int = 0
     retries: int = 1
     ttl: int = 600

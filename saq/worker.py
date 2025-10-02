@@ -69,6 +69,8 @@ class Worker(t.Generic[CtxType]):
         dequeue_timeout: how long it will wait to dequeue
         burst: whether to stop the worker once all jobs have been processed
         max_burst_jobs: the maximum number of jobs to process in burst mode
+        shutdown_grace_period_s: how long to wait for jobs to finish before sending cancellation signals.
+        cancellation_hard_deadline_s: how long to wait for a job to finish after sending a cancellation signal.
         metadata: arbitrary data to pass to the worker which it will register with saq
         poll_interval: If > 0.0, dequeue will use polling instead of listen/notify
             to trigger dequeues. This only affects Postgres. (default 0.0)
@@ -93,6 +95,8 @@ class Worker(t.Generic[CtxType]):
         dequeue_timeout: float = 0.0,
         burst: bool = False,
         max_burst_jobs: int | None = None,
+        shutdown_grace_period_s: int | None = None,
+        cancellation_hard_deadline_s: float = 1.0,
         metadata: t.Optional[JsonDict] = None,
         poll_interval: float = 0.0,
     ) -> None:
@@ -133,6 +137,8 @@ class Worker(t.Generic[CtxType]):
         self._poll_interval = poll_interval
         self._stop_lock = asyncio.Lock()
         self._stopped = False
+        self._shutdown_grace_period_s = shutdown_grace_period_s
+        self._cancellation_hard_deadline_s = cancellation_hard_deadline_s
         self.id = uuid1() if id is None else id
 
         if self.burst:
@@ -209,7 +215,19 @@ class Worker(t.Generic[CtxType]):
             try:
                 all_tasks = list(self.tasks)
                 self.tasks.clear()
-                await cancel_tasks(all_tasks)
+                try:
+                    await asyncio.wait_for(
+                        asyncio.gather(*all_tasks, return_exceptions=True),
+                        timeout=self._shutdown_grace_period_s or 0,
+                    )
+                except asyncio.TimeoutError:
+                    logger.warning(
+                        "Some tasks did not finish within the shutdown grace period, requesting cancellation"
+                    )
+                    # We pass timeout=None here, since `process` uses the Job's graceful shutdown allowance before
+                    # sending a cancellation request, and then uses `self._cancellation_hard_deadline_s` to
+                    # cancel the task with a hard deadline.
+                    await cancel_tasks(all_tasks, timeout=None)
 
                 if sys.version_info[0:2] < (3, 9):
                     self.pool.shutdown(True)
@@ -297,14 +315,18 @@ class Worker(t.Generic[CtxType]):
             if not job or job.status not in (Status.ABORTING, Status.ABORTED):
                 continue
 
-            task_data: JobTaskContext = self.job_task_contexts.get(job, {})
-            task = task_data.get("task")
+            task_data = self.job_task_contexts.get(job, None)
+            if not task_data:
+                logger.warning("No task data found for job %s", job.id)
+                continue
+
+            task = task_data["task"]
             logger.info("Aborting %s", job.id)
 
-            if task and not task.done():
+            if not task.done():
                 task_data["aborted"] = "abort" if job.error is None else job.error
                 # abort should be a blocking operation
-                await cancel_tasks([task], 0)
+                await cancel_tasks([task], self._cancellation_hard_deadline_s)
 
             await self.queue.finish_abort(job)
 
@@ -328,18 +350,45 @@ class Worker(t.Generic[CtxType]):
             await self._before_process(context)
             logger.info("Processing %s", job.info(logger.isEnabledFor(logging.DEBUG)))
 
-            function = ensure_coroutine_function(self.functions[job.function], self.pool)
+            function = self.functions.get(job.function)
+            assert function is not None
+            function = ensure_coroutine_function(function, self.pool)
             task = asyncio.create_task(function(context, **(job.kwargs or {})))
-            self.job_task_contexts[job] = {"task": task, "aborted": None}
-            result = await asyncio.wait_for(task, job.timeout if job.timeout else None)
+            self.job_task_contexts[job] = JobTaskContext(task=task, aborted=None)
+            try:
+                result = await asyncio.wait_for(
+                    asyncio.shield(task), job.timeout if job.timeout else None
+                )
+            except asyncio.TimeoutError:
+                task.cancel()
+                raise
             await job.finish(Status.COMPLETE, result=result)
         except asyncio.CancelledError:
-            if job:
-                aborted = self.job_task_contexts.get(job, {}).get("aborted")
-                if aborted is not None:
-                    await job.finish(Status.ABORTED, error=aborted)
-                else:
-                    await job.retry("cancelled")
+            if not job:
+                return False
+            task_ctx = self.job_task_contexts.get(job)
+            assert task_ctx is not None
+
+            task = task_ctx["task"]
+            aborted = task_ctx["aborted"]
+            completed = task.done()
+            if grace_period_s := job.shutdown_grace_period_s and not completed and not aborted:
+                try:
+                    await asyncio.wait_for(task, grace_period_s)
+                    completed = True
+                except asyncio.TimeoutError:
+                    logger.info(
+                        "Job %s did not finish within the grace period of %d seconds, cancelling",
+                        job.id,
+                        grace_period_s,
+                    )
+            if aborted is not None:
+                await job.finish(Status.ABORTED, error=aborted)
+                return False
+
+            if not completed:
+                await cancel_tasks([task], self._cancellation_hard_deadline_s)
+                await job.retry("cancelled")
         except Exception as ex:
             if context is not None:
                 context["exception"] = ex
