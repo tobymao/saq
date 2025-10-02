@@ -194,11 +194,11 @@ class Worker(t.Generic[CtxType]):
         finally:
             logger.info("Worker shutting down")
 
+            await self.stop()
+
             if self.shutdown:
                 for s in self.shutdown:
                     await s(self.context)
-
-            await self.stop()
 
     async def stop(self) -> None:
         """Stop the worker and cleanup."""
