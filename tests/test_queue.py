@@ -41,7 +41,7 @@ async def error(_ctx: Context) -> None:
     raise ValueError("oops")
 
 
-functions: list[Function] = [echo, error]
+functions: list[Function[Context]] = [echo, error]
 
 
 class TestQueueError(unittest.IsolatedAsyncioTestCase):
@@ -396,7 +396,8 @@ class TestQueue(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(9, len([job async for job in self.queue.iter_jobs(batch_size=2)]))
         self.assertEqual(9, len([job async for job in self.queue.iter_jobs(batch_size=3)]))
         self.assertEqual(
-            1, len([job async for job in self.queue.iter_jobs(statuses=[Status.ACTIVE])])
+            1,
+            len([job async for job in self.queue.iter_jobs(statuses=[Status.ACTIVE])]),
         )
 
     async def test_update_refresh(self) -> None:

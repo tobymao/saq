@@ -20,6 +20,7 @@ from croniter import croniter
 
 from saq.job import Status
 from saq.queue import Queue
+from saq.types import CtxType, FunctionsType, LifecycleFunctionsType
 from saq.utils import cancel_tasks, millis, now, uuid1
 
 if t.TYPE_CHECKING:
@@ -30,11 +31,9 @@ if t.TYPE_CHECKING:
 
     from saq.job import CronJob, Job
     from saq.types import (
-        Context,
         Function,
         JobTaskContext,
         PartialTimersDict,
-        ReceivesContext,
         SettingsDict,
         TimersDict,
         WorkerInfo,
@@ -47,7 +46,7 @@ logger = logging.getLogger("saq")
 JsonDict = t.Dict[str, t.Any]
 
 
-class Worker:
+class Worker(t.Generic[CtxType]):
     """
     Worker is used to process and monitor jobs.
 
@@ -80,16 +79,16 @@ class Worker:
     def __init__(
         self,
         queue: Queue,
-        functions: Collection[Function | tuple[str, Function]],
+        functions: FunctionsType[CtxType],
         *,
         id: t.Optional[str] = None,
         concurrency: int = 10,
         cron_jobs: Collection[CronJob] | None = None,
         cron_tz: tzinfo = timezone.utc,
-        startup: ReceivesContext | Collection[ReceivesContext] | None = None,
-        shutdown: ReceivesContext | Collection[ReceivesContext] | None = None,
-        before_process: ReceivesContext | Collection[ReceivesContext] | None = None,
-        after_process: ReceivesContext | Collection[ReceivesContext] | None = None,
+        startup: LifecycleFunctionsType[CtxType] | None = None,
+        shutdown: LifecycleFunctionsType[CtxType] | None = None,
+        before_process: LifecycleFunctionsType[CtxType] | None = None,
+        after_process: LifecycleFunctionsType[CtxType] | None = None,
         timers: PartialTimersDict | None = None,
         dequeue_timeout: float = 0.0,
         burst: bool = False,
@@ -118,10 +117,10 @@ class Worker:
             self.timers.update(timers)
         self.event = asyncio.Event()
         functions = set(functions)
-        self.functions: dict[str, Function] = {}
+        self.functions: dict[str, Function[CtxType]] = {}
         self.cron_jobs: Collection[CronJob] = cron_jobs or []
         self.cron_tz: tzinfo = cron_tz
-        self.context: Context = {"worker": self}
+        self.context: CtxType = t.cast(CtxType, {"worker": self})
         self.tasks: set[Task[t.Any]] = set()
         self.job_task_contexts: dict[Job, JobTaskContext] = {}
         self.dequeue_timeout = dequeue_timeout
@@ -155,12 +154,12 @@ class Worker:
 
             self.functions[name] = function
 
-    async def _before_process(self, ctx: Context) -> None:
+    async def _before_process(self, ctx: CtxType) -> None:
         if self.before_process:
             for bp in self.before_process:
                 await bp(ctx)
 
-    async def _after_process(self, ctx: Context) -> None:
+    async def _after_process(self, ctx: CtxType) -> None:
         if self.after_process:
             for ap in self.after_process:
                 await ap(ctx)
@@ -293,7 +292,7 @@ class Worker:
             await self.queue.finish_abort(job)
 
     async def process(self) -> bool:
-        context: Context | None = None
+        context: CtxType | None = None
         job: Job | None = None
 
         try:
@@ -308,7 +307,7 @@ class Worker:
             job.started = now()
             job.attempts += 1
             await job.update(status=Status.ACTIVE)
-            context = {**self.context, "job": job}
+            context = t.cast(CtxType, {**self.context, "job": job})
             await self._before_process(context)
             logger.info("Processing %s", job.info(logger.isEnabledFor(logging.DEBUG)))
 
@@ -378,19 +377,30 @@ class Worker:
         return self.burst_condition_met
 
 
+P = t.ParamSpec("P")
+R = t.TypeVar("R")
+
+OneOrManyCallable = t.Union[Callable[P, R], Collection[Callable[P, R]]]
+
+
 def ensure_coroutine_function_many(
-    func: Callable | Collection[Callable], pool: ThreadPoolExecutor
-) -> t.List[Callable[..., Coroutine]]:
+    func: OneOrManyCallable[P, R] | OneOrManyCallable[P, Coroutine[t.Any, t.Any, R]],
+    pool: ThreadPoolExecutor,
+) -> t.List[Callable[P, Coroutine[t.Any, t.Any, R]]]:
     if callable(func):
         return [ensure_coroutine_function(func, pool)]
     return [ensure_coroutine_function(f, pool) for f in func]
 
 
-def ensure_coroutine_function(func: Callable, pool: ThreadPoolExecutor) -> Callable[..., Coroutine]:
+def ensure_coroutine_function(
+    func: Callable[P, R] | Callable[P, Coroutine[t.Any, t.Any, R]],
+    pool: ThreadPoolExecutor,
+) -> Callable[P, Coroutine[t.Any, t.Any, R]]:
     if asyncio.iscoroutinefunction(func):
         return func
 
     async def wrapped(*args: t.Any, **kwargs: t.Any) -> t.Any:
+        future = None
         try:
             ctx = contextvars.copy_context()
             future = pool.submit(lambda: ctx.run(func, *args, **kwargs))
@@ -398,7 +408,8 @@ def ensure_coroutine_function(func: Callable, pool: ThreadPoolExecutor) -> Calla
         except asyncio.CancelledError:
             try:
                 # job has already been cancelled, swallow all errors
-                await asyncio.wrap_future(future)
+                if future is not None:
+                    await asyncio.wrap_future(future)
             except Exception:
                 pass
             raise
@@ -417,7 +428,12 @@ def import_settings(settings: str) -> SettingsDict:
     if callable(settings_obj):
         settings_obj = settings_obj()
 
-    return settings_obj
+    if not isinstance(settings_obj, dict):
+        raise TypeError(
+            f"Settings {settings} must be a dictionary or a callable that returns a dictionary, got final type '{type(settings_obj)}'"
+        )
+
+    return t.cast(SettingsDict, settings_obj)
 
 
 def start(

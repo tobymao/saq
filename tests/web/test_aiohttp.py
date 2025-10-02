@@ -21,7 +21,7 @@ async def echo(_ctx: Context, *, a: t.Any) -> t.Any:
     return a
 
 
-functions: list[Function] = [echo]
+functions: list[Function[Context]] = [echo]
 
 
 class TestAiohttpWeb(unittest.IsolatedAsyncioTestCase):

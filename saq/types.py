@@ -119,7 +119,7 @@ class SettingsDict(TypedDict, Generic[CtxType], total=False):
     """
 
     queue: Queue
-    functions: Required[Collection[Function | tuple[str, Function]]]
+    functions: Required[FunctionsType[CtxType]]
     concurrency: int
     cron_jobs: Collection[CronJob]
     startup: ReceivesContext[CtxType]
@@ -134,8 +134,10 @@ BeforeEnqueueType = t.Callable[["Job"], t.Awaitable[t.Any]]
 CountKind = t.Literal["queued", "active", "incomplete"]
 DumpType = t.Callable[[t.Mapping[t.Any, t.Any]], t.Union[bytes, str]]
 DurationKind = t.Literal["process", "start", "total", "running"]
-Function = t.Callable[..., t.Any]
+Function = t.Callable[t.Concatenate[CtxType, ...], t.Any]
+FunctionsType = Collection[Function[CtxType] | tuple[str, Function[CtxType]]]
+ReceivesContext = t.Callable[[CtxType], t.Any]
+LifecycleFunctionsType = ReceivesContext[CtxType] | Collection[ReceivesContext[CtxType]]
 ListenCallback = t.Callable[[str, "Status"], t.Any]
 LoadType = t.Callable[[t.Union[bytes, str]], t.Any]
-ReceivesContext = t.Callable[[CtxType], t.Any]
 VersionTuple = t.Tuple[int, ...]
