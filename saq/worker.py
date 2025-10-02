@@ -20,7 +20,7 @@ from croniter import croniter
 
 from saq.job import Status
 from saq.queue import Queue
-from saq.types import CtxType, FunctionsType, LifecycleFunctionsType
+from saq.types import CtxType, FunctionsType, LifecycleFunctionsType, SettingsDict
 from saq.utils import cancel_tasks, millis, now, uuid1
 
 if t.TYPE_CHECKING:
@@ -34,7 +34,6 @@ if t.TYPE_CHECKING:
         Function,
         JobTaskContext,
         PartialTimersDict,
-        SettingsDict,
         TimersDict,
         WorkerInfo,
     )
@@ -380,7 +379,7 @@ class Worker(t.Generic[CtxType]):
 P = t.ParamSpec("P")
 R = t.TypeVar("R")
 
-OneOrManyCallable = t.Union[Callable[P, R], Collection[Callable[P, R]]]
+OneOrManyCallable = t.Union[t.Callable[P, R], t.Collection[t.Callable[P, R]]]
 
 
 def ensure_coroutine_function_many(
