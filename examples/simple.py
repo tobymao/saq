@@ -5,15 +5,13 @@ import time
 from saq import CronJob, Queue
 from saq.types import Context, SettingsDict
 
-CtxType = Context
 
-
-async def sleeper(ctx: CtxType, *, a):
+async def sleeper(ctx: Context, *, a):
     await asyncio.sleep(a)
     return {"a": a}
 
 
-async def adder(ctx: CtxType, *, a, b):
+async def adder(ctx: Context, *, a, b):
     await asyncio.sleep(1)
     return a + b
 
@@ -24,7 +22,7 @@ async def cron_job(ctx):
 
 queue = Queue.from_url("postgres://postgres@localhost")
 
-settings = SettingsDict[CtxType](
+settings = SettingsDict[Context](
     queue=queue,
     functions=[sleeper, adder],
     concurrency=100,
