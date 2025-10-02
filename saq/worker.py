@@ -13,6 +13,7 @@ import sys
 import traceback
 import threading
 import typing as t
+import typing_extensions as te
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone, tzinfo
 
@@ -376,8 +377,8 @@ class Worker(t.Generic[CtxType]):
         return self.burst_condition_met
 
 
-P = t.ParamSpec("P")
-R = t.TypeVar("R")
+P = te.ParamSpec("P")
+R = te.TypeVar("R")
 
 OneOrManyCallable = t.Union[t.Callable[P, R], t.Collection[t.Callable[P, R]]]
 
