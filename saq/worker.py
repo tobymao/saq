@@ -224,11 +224,7 @@ class Worker(t.Generic[CtxType]):
                     logger.warning(
                         "Some tasks did not finish within the shutdown grace period, requesting cancellation"
                     )
-                    # We pass timeout=None here, since `process` uses the Job's graceful shutdown allowance before
-                    # sending a cancellation request, and then uses `self._cancellation_hard_deadline_s` to
-                    # cancel the task with a hard deadline.
-                    await cancel_tasks(all_tasks, timeout=None)
-
+                    await cancel_tasks(all_tasks, timeout=self._cancellation_hard_deadline_s)   
                 if sys.version_info[0:2] < (3, 9):
                     self.pool.shutdown(True)
                 else:
@@ -371,22 +367,11 @@ class Worker(t.Generic[CtxType]):
 
             task = task_ctx["task"]
             aborted = task_ctx["aborted"]
-            completed = task.done()
-            if grace_period_s := job.shutdown_grace_period_s and not completed and not aborted:
-                try:
-                    await asyncio.wait_for(task, grace_period_s)
-                    completed = True
-                except asyncio.TimeoutError:
-                    logger.info(
-                        "Job %s did not finish within the grace period of %d seconds, cancelling",
-                        job.id,
-                        grace_period_s,
-                    )
             if aborted is not None:
                 await job.finish(Status.ABORTED, error=aborted)
                 return False
 
-            if not completed:
+            if not task.done():
                 await cancel_tasks([task], self._cancellation_hard_deadline_s)
                 await job.retry("cancelled")
         except Exception as ex:
