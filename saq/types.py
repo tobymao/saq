@@ -34,7 +34,7 @@ class Context(TypedDict, total=False):
     "Exception raised by the task if any"
 
 
-class JobTaskContext(TypedDict, total=False):
+class JobTaskContext(TypedDict, total=True):
     """
     Jobs Task Context
     """
