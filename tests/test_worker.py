@@ -513,7 +513,11 @@ class TestWorker(unittest.IsolatedAsyncioTestCase):
             Worker(self.queue, functions=FUNCTIONS, burst=True)
 
         worker = Worker(
-            self.queue, functions=FUNCTIONS, burst=True, dequeue_timeout=0.1, concurrency=1
+            self.queue,
+            functions=FUNCTIONS,
+            burst=True,
+            dequeue_timeout=0.1,
+            concurrency=1,
         )
         worker_task = asyncio.create_task(worker.start())
         job_a = await self.enqueue("noop")
