@@ -21,7 +21,13 @@ from croniter import croniter
 
 from saq.job import Status
 from saq.queue import Queue
-from saq.types import CtxType, FunctionsType, LifecycleFunctionsType, SettingsDict
+from saq.types import (
+    CtxType,
+    FunctionsType,
+    JobTaskContext,
+    LifecycleFunctionsType,
+    SettingsDict,
+)
 from saq.utils import cancel_tasks, millis, now, uuid1
 
 if t.TYPE_CHECKING:
@@ -33,7 +39,6 @@ if t.TYPE_CHECKING:
     from saq.job import CronJob, Job
     from saq.types import (
         Function,
-        JobTaskContext,
         PartialTimersDict,
         TimersDict,
         WorkerInfo,
@@ -224,7 +229,13 @@ class Worker(t.Generic[CtxType]):
                     logger.warning(
                         "Some tasks did not finish within the shutdown grace period, requesting cancellation"
                     )
-                    await cancel_tasks(all_tasks, timeout=self._cancellation_hard_deadline_s)   
+                    cancelled = await cancel_tasks(all_tasks, timeout=self._cancellation_hard_deadline_s)
+                    if not cancelled:
+                        logger.warning(
+                            "Some tasks did not finish cancellation in time, they may be stuck or blocked"
+                        )
+
+
                 if sys.version_info[0:2] < (3, 9):
                     self.pool.shutdown(True)
                 else:
@@ -322,7 +333,7 @@ class Worker(t.Generic[CtxType]):
             if not task.done():
                 task_data["aborted"] = "abort" if job.error is None else job.error
                 # abort should be a blocking operation
-                await cancel_tasks([task], self._cancellation_hard_deadline_s)
+                await cancel_tasks([task], 0)
 
             await self.queue.finish_abort(job)
 
@@ -346,9 +357,7 @@ class Worker(t.Generic[CtxType]):
             await self._before_process(context)
             logger.info("Processing %s", job.info(logger.isEnabledFor(logging.DEBUG)))
 
-            function = self.functions.get(job.function)
-            assert function is not None
-            function = ensure_coroutine_function(function, self.pool)
+            function = ensure_coroutine_function(self.functions[job.function], self.pool)
             task = asyncio.create_task(function(context, **(job.kwargs or {})))
             self.job_task_contexts[job] = JobTaskContext(task=task, aborted=None)
             try:
@@ -372,7 +381,13 @@ class Worker(t.Generic[CtxType]):
                 return False
 
             if not task.done():
-                await cancel_tasks([task], self._cancellation_hard_deadline_s)
+                cancelled = await cancel_tasks([task], self._cancellation_hard_deadline_s)
+                if not cancelled:
+                    logger.warning(
+                        "Job %s (function: '%s') did not finish cancellation in time, it may be stuck or blocked",
+                        job.id,
+                        job.function,
+                    )
                 await job.retry("cancelled")
         except Exception as ex:
             if context is not None:
