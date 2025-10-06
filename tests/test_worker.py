@@ -342,7 +342,7 @@ class TestWorker(unittest.IsolatedAsyncioTestCase):
 
         worker = Worker(
             self.queue,
-            functions=FUNCTIONS + [("dependent_task", dependent_task)],
+            functions=FUNCTIONS + [(dependent_task.__name__, dependent_task)],
             startup=[startup_a, startup_b, dependency_setup],
             shutdown=[shutdown_a, shutdown_b, dependency_teardown],
         )
@@ -358,12 +358,13 @@ class TestWorker(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(worker.context["dependency"], DEPENDENCY_VALUE)
 
         job = await self.enqueue(dependent_task.__name__, sleep=0.1)
-        await asyncio.sleep(0.01)
+        await asyncio.sleep(0.05)
         await job.refresh()
         self.assertEqual(job.status, Status.ACTIVE)
         stop_called_at = time.monotonic()
         await worker.stop()
         await job.refresh()
+
         # since the worker is stopped while its running, the job is cancelled and requeued midway
         self.assertEqual(job.status, Status.QUEUED)
         self.assertEqual(job.error, "cancelled")
