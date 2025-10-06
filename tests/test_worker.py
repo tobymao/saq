@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Awaitable
 import contextvars
 import logging
 import time
@@ -26,11 +27,12 @@ from tests.helpers import (
     setup_postgres,
     teardown_postgres,
 )
+from saq.types import Context
 
 if t.TYPE_CHECKING:
     from unittest.mock import MagicMock
 
-    from saq.types import Context, Function
+    from saq.types import Function
 
 
 logging.getLogger().setLevel(logging.INFO)
@@ -67,13 +69,19 @@ async def recurse(ctx: Context, *, n: int) -> list[str]:
     return result
 
 
-FUNCTIONS: list[Function] = [noop, sleeper, error, sync_echo_ctx, recurse]
+FUNCTIONS: list[Function[Context]] = [
+    noop,
+    sleeper,
+    error,
+    sync_echo_ctx,
+    recurse,
+]
 
 
 class TestWorker(unittest.IsolatedAsyncioTestCase):
     queue: Queue
     worker: Worker
-    create_queue: t.Callable
+    create_queue: t.Callable[[], Awaitable[Queue]]
 
     async def asyncSetUp(self) -> None:
         self.skipTest("Skipping base test case")
@@ -108,7 +116,7 @@ class TestWorker(unittest.IsolatedAsyncioTestCase):
         await job.refresh()
         self.assertEqual(job.status, Status.QUEUED)
 
-        asyncio.create_task(self.worker.start())
+        task = asyncio.create_task(self.worker.start())
         job = await self.enqueue("noop")
         await job.refresh(0)
         self.assertEqual(job.result, 1)
@@ -118,6 +126,8 @@ class TestWorker(unittest.IsolatedAsyncioTestCase):
         await job.refresh()
         self.assertEqual(job.status, Status.ACTIVE)
         await self.worker.stop()
+        await asyncio.sleep(0.01)
+        assert task.done()
         await job.refresh()
         self.assertEqual(job.status, Status.QUEUED)
 
@@ -180,7 +190,10 @@ class TestWorker(unittest.IsolatedAsyncioTestCase):
     def test_stop(self) -> None:
         loop = asyncio.new_event_loop()
         queue = loop.run_until_complete(self.create_queue())
-        worker = Worker(queue, functions=FUNCTIONS)
+        worker = Worker(
+            queue,
+            functions=FUNCTIONS,
+        )
         job = loop.run_until_complete(queue.enqueue("sleeper"))
         assert job is not None
         self.assertEqual(job.status, Status.QUEUED)
@@ -291,25 +304,47 @@ class TestWorker(unittest.IsolatedAsyncioTestCase):
             "startup_b": 0,
             "shutdown_a": 0,
             "shutdown_b": 0,
+            "dependent_start_at": 0.0,
+            "dependent_exit_at": 0.0,
+            "teardown_called_at": 0.0,
         }
 
-        async def startup_a(ctx: Context) -> None:
+        DEPENDENCY_VALUE = "test"
+
+        class WorkerContext(Context):
+            dependency: str | None
+
+        async def startup_a(ctx: WorkerContext) -> None:
             x["startup_a"] += 1
 
-        def startup_b(ctx: Context) -> None:
+        def startup_b(ctx: WorkerContext) -> None:
             x["startup_b"] += 1
 
-        async def shutdown_a(ctx: Context) -> None:
+        async def shutdown_a(ctx: WorkerContext) -> None:
             x["shutdown_a"] += 1
 
-        def shutdown_b(ctx: Context) -> None:
+        def shutdown_b(ctx: WorkerContext) -> None:
             x["shutdown_b"] += 1
+
+        async def dependency_setup(ctx: WorkerContext) -> None:
+            ctx["dependency"] = DEPENDENCY_VALUE
+
+        async def dependency_teardown(ctx: WorkerContext) -> None:
+            x["teardown_called_at"] = time.monotonic()
+
+        async def dependent_task(ctx: WorkerContext, sleep: float) -> str | None:
+            x["dependent_start_at"] = time.monotonic()
+            try:
+                await asyncio.sleep(sleep)
+                return ctx.get("dependency")
+            finally:
+                x["dependent_exit_at"] = time.monotonic()
 
         worker = Worker(
             self.queue,
-            functions=FUNCTIONS,
-            startup=[startup_a, startup_b],
-            shutdown=[shutdown_a, shutdown_b],
+            functions=FUNCTIONS + [(dependent_task.__name__, dependent_task)],
+            startup=[startup_a, startup_b, dependency_setup],
+            shutdown=[shutdown_a, shutdown_b, dependency_teardown],
         )
 
         asyncio.create_task(worker.start())
@@ -320,8 +355,27 @@ class TestWorker(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(x["startup_b"], 1)
         self.assertEqual(x["shutdown_a"], 0)
         self.assertEqual(x["shutdown_b"], 0)
+        self.assertEqual(worker.context["dependency"], DEPENDENCY_VALUE)
 
+        job = await self.enqueue(dependent_task.__name__, sleep=0.1)
+        await asyncio.sleep(0.05)
+        await job.refresh()
+        self.assertEqual(job.status, Status.ACTIVE)
+        stop_called_at = time.monotonic()
         await worker.stop()
+        await job.refresh()
+
+        # since the worker is stopped while its running, the job is cancelled and requeued midway
+        self.assertEqual(job.status, Status.QUEUED)
+        self.assertEqual(job.error, "cancelled")
+
+        self.assertTrue(x["dependent_start_at"] > 0)
+        self.assertTrue(x["teardown_called_at"] > 0)
+        self.assertTrue(x["dependent_exit_at"] > 0)
+        # dependency starts -> worker is asked to stop -> dependency exits/is stopped -> teardown @ shutdown called
+        self.assertTrue(x["dependent_start_at"] < stop_called_at)
+        self.assertTrue(stop_called_at < x["dependent_exit_at"])
+        self.assertTrue(x["dependent_exit_at"] < x["teardown_called_at"])
 
         self.assertEqual(x["startup_a"], 1)
         self.assertEqual(x["startup_b"], 1)
@@ -513,7 +567,11 @@ class TestWorker(unittest.IsolatedAsyncioTestCase):
             Worker(self.queue, functions=FUNCTIONS, burst=True)
 
         worker = Worker(
-            self.queue, functions=FUNCTIONS, burst=True, dequeue_timeout=0.1, concurrency=1
+            self.queue,
+            functions=FUNCTIONS,
+            burst=True,
+            dequeue_timeout=0.1,
+            concurrency=1,
         )
         worker_task = asyncio.create_task(worker.start())
         job_a = await self.enqueue("noop")

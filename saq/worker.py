@@ -100,7 +100,7 @@ class Worker(t.Generic[CtxType]):
         self.concurrency = concurrency
         self.pool = ThreadPoolExecutor()
         self.startup = ensure_coroutine_function_many(startup, self.pool) if startup else None
-        self.shutdown = ensure_coroutine_function_many(shutdown, self.pool) if shutdown else None
+        self.shutdown = shutdown
         self.before_process = (
             ensure_coroutine_function_many(before_process, self.pool) if before_process else None
         )
@@ -131,6 +131,8 @@ class Worker(t.Generic[CtxType]):
         self.burst_condition_met = False
         self._metadata = metadata
         self._poll_interval = poll_interval
+        self._stop_lock = asyncio.Lock()
+        self._stopped = False
         self.id = uuid1() if id is None else id
 
         if self.burst:
@@ -171,6 +173,8 @@ class Worker(t.Generic[CtxType]):
 
         try:
             self.event = asyncio.Event()
+            async with self._stop_lock:
+                self._stopped = False
             loop = asyncio.get_running_loop()
 
             for signum in self.SIGNALS:
@@ -192,25 +196,38 @@ class Worker(t.Generic[CtxType]):
         except asyncio.CancelledError:
             pass
         finally:
-            logger.info("Worker shutting down")
-
-            if self.shutdown:
-                for s in self.shutdown:
-                    await s(self.context)
-
+            logger.info("Working shutting down")
             await self.stop()
 
     async def stop(self) -> None:
         """Stop the worker and cleanup."""
         self.event.set()
-        all_tasks = list(self.tasks)
-        self.tasks.clear()
-        await cancel_tasks(all_tasks)
+        async with self._stop_lock:
+            if self._stopped:
+                return
 
-        if sys.version_info[0:2] < (3, 9):
-            self.pool.shutdown()
-        else:
-            self.pool.shutdown(cancel_futures=True)
+            try:
+                all_tasks = list(self.tasks)
+                self.tasks.clear()
+                await cancel_tasks(all_tasks)
+
+                if sys.version_info[0:2] < (3, 9):
+                    self.pool.shutdown(True)
+                else:
+                    self.pool.shutdown(True, cancel_futures=True)
+
+                if not self.shutdown:
+                    return
+
+                # We can't reuse our task pool here, because we shut it to close tasks
+                with ThreadPoolExecutor() as shutdown_pool:
+                    shutdown_callbacks = ensure_coroutine_function_many(
+                        self.shutdown, shutdown_pool
+                    )
+                    for s in shutdown_callbacks:
+                        await s(self.context)
+            finally:
+                self._stopped = True
 
     async def schedule(self, lock: int = 1) -> None:
         for cron_job in self.cron_jobs:
