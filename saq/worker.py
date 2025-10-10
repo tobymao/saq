@@ -90,7 +90,7 @@ class Worker(t.Generic[CtxType]):
         *,
         id: t.Optional[str] = None,
         concurrency: int = 10,
-        cron_jobs: Collection[CronJob] | None = None,
+        cron_jobs: Collection[CronJob[CtxType]] | None = None,
         cron_tz: tzinfo = timezone.utc,
         startup: LifecycleFunctionsType[CtxType] | None = None,
         shutdown: LifecycleFunctionsType[CtxType] | None = None,
@@ -229,12 +229,13 @@ class Worker(t.Generic[CtxType]):
                     logger.warning(
                         "Some tasks did not finish within the shutdown grace period, requesting cancellation"
                     )
-                    cancelled = await cancel_tasks(all_tasks, timeout=self._cancellation_hard_deadline_s)
+                    cancelled = await cancel_tasks(
+                        all_tasks, timeout=self._cancellation_hard_deadline_s
+                    )
                     if not cancelled:
                         logger.warning(
                             "Some tasks did not finish cancellation in time, they may be stuck or blocked"
                         )
-
 
                 if sys.version_info[0:2] < (3, 9):
                     self.pool.shutdown(True)
@@ -333,7 +334,7 @@ class Worker(t.Generic[CtxType]):
             if not task.done():
                 task_data["aborted"] = "abort" if job.error is None else job.error
                 # abort should be a blocking operation
-                await cancel_tasks([task], 0)
+                _ = await cancel_tasks([task], None)
 
             await self.queue.finish_abort(job)
 
