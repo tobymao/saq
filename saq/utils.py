@@ -64,7 +64,10 @@ def exponential_backoff(
     return backoff
 
 
-async def cancel_tasks(tasks: Iterable[asyncio.Task], timeout: float = 1.0) -> None:
+async def cancel_tasks(
+    tasks: Iterable[asyncio.Task],
+    timeout: float | None = 1.0,
+) -> bool:
     """Cancel tasks and wait for all of them to finish"""
     for task in tasks:
         task.cancel()
@@ -73,3 +76,4 @@ async def cancel_tasks(tasks: Iterable[asyncio.Task], timeout: float = 1.0) -> N
         await asyncio.wait_for(asyncio.gather(*tasks, return_exceptions=True), timeout)
     except (asyncio.TimeoutError, asyncio.CancelledError):
         pass
+    return all(task.done() for task in tasks)
