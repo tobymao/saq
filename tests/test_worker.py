@@ -459,45 +459,78 @@ class TestWorker(unittest.IsolatedAsyncioTestCase):
 
     @mock.patch("saq.worker.logger")
     async def test_abort(self, mock_logger: MagicMock) -> None:
-        job = await self.enqueue("sleeper", sleep=60)
+        aborted = False
+
+        async def takes_time_to_cancel(_ctx: Context, sleep: float, time_to_abort: float) -> None:
+            "This task tries to take time_to_abort seconds to abort, but it won't defend against a second cancellation signal"
+            try:
+                await asyncio.sleep(sleep)
+            except asyncio.CancelledError:
+                await asyncio.sleep(time_to_abort)
+            finally:
+                nonlocal aborted
+                aborted = True
+
+        self.worker = Worker(self.queue, functions=FUNCTIONS)
+        worker = Worker(
+            self.queue,
+            functions=FUNCTIONS
+            + [
+                (takes_time_to_cancel.__name__, takes_time_to_cancel),
+            ],
+        )
+
+        async def assert_queues(
+            *, active: int | None, queued: int | None, incomplete: int | None
+        ) -> None:
+            if queued is not None:
+                self.assertEqual(await self.queue.count("queued"), queued)
+            if incomplete is not None:
+                self.assertEqual(await self.queue.count("incomplete"), incomplete)
+            if active is not None:
+                self.assertEqual(await self.queue.count("active"), active)
+
+        TIME_TO_ABORT = 0.5
+        job = await self.enqueue(
+            takes_time_to_cancel.__name__, sleep=60, time_to_abort=TIME_TO_ABORT
+        )
 
         # wait for the job to actually start
-        def callback(job_key: str, status: Status) -> bool:
+        def listen_cb(job_key: str, status: Status) -> bool:
             self.assertEqual(job.key, job_key)
             return status == Status.ACTIVE
 
-        listen = asyncio.create_task(self.queue.listen([job.key], callback))
+        listen = asyncio.create_task(self.queue.listen([job.key], listen_cb))
         await asyncio.sleep(0)
-        asyncio.create_task(self.worker.process())
+        process_task = asyncio.create_task(worker.process())
         await listen
 
-        self.assertEqual(await self.queue.count("queued"), 0)
-        self.assertEqual(await self.queue.count("incomplete"), 1)
-        self.assertEqual(await self.queue.count("active"), 1)
+        await assert_queues(active=1, incomplete=1, queued=0)
         await job.abort("test")
-        self.assertEqual(await self.queue.count("queued"), 0)
-        self.assertEqual(await self.queue.count("incomplete"), 0)
-        self.assertEqual(await self.queue.count("active"), 0)
+        await assert_queues(active=0, incomplete=0, queued=0)
 
         # ensure job doesn't get requeued
         await job.enqueue()
-        self.assertEqual(await self.queue.count("queued"), 0)
-        self.assertEqual(await self.queue.count("incomplete"), 0)
-        self.assertEqual(await self.queue.count("active"), 0)
+        await assert_queues(active=0, incomplete=0, queued=0)
 
-        await self.worker.abort(0.0001)
+        aborted = False
+        start = time.monotonic()
+        await worker.abort(0.0001)
+        time_to_abort = time.monotonic() - start
+        self.assertTrue(process_task.done())
+        self.assertGreaterEqual(time_to_abort, TIME_TO_ABORT)
+        self.assertTrue(aborted)
         mock_logger.info.assert_any_call("Aborting %s", job.id)
         await job.refresh()
-        self.assertEqual(await self.queue.count("queued"), 0)
-        self.assertEqual(await self.queue.count("incomplete"), 0)
-        self.assertEqual(await self.queue.count("active"), 0)
+        await assert_queues(active=0, incomplete=0, queued=0)
         self.assertEqual(job.status, Status.ABORTED)
         self.assertEqual(job.error, "test")
 
         await job.enqueue()
-        self.assertEqual(await self.queue.count("queued"), 1)
-        self.assertEqual(await self.queue.count("incomplete"), 1)
-        self.assertEqual(await self.queue.count("active"), 0)
+        await assert_queues(active=0, incomplete=1, queued=1)
+
+        await job.abort("test")
+        await assert_queues(active=0, incomplete=0, queued=0)
 
     async def test_sync_function(self) -> None:
         async def before_process(*_: t.Any, **__: t.Any) -> None:
