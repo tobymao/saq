@@ -517,6 +517,7 @@ class TestWorker(unittest.IsolatedAsyncioTestCase):
         start = time.monotonic()
         await worker.abort(0.0001)
         time_to_abort = time.monotonic() - start
+        await asyncio.sleep(0.01)
         self.assertTrue(process_task.done())
         self.assertGreaterEqual(time_to_abort, TIME_TO_ABORT)
         self.assertTrue(aborted)
