@@ -366,9 +366,12 @@ class Worker(t.Generic[CtxType]):
                     asyncio.shield(task), job.timeout if job.timeout else None
                 )
             except asyncio.TimeoutError:
+                # Since we have a shield around the task passed to wait_for,
+                # we need to explicitly cancel it on timeout.
                 task.cancel()
                 raise
-            await job.finish(Status.COMPLETE, result=result)
+            if self.job_task_contexts[job]["aborted"] is None:
+                await job.finish(Status.COMPLETE, result=result)
         except asyncio.CancelledError:
             if not job:
                 return False
