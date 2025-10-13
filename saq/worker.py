@@ -21,7 +21,13 @@ from croniter import croniter
 
 from saq.job import Status
 from saq.queue import Queue
-from saq.types import CtxType, FunctionsType, LifecycleFunctionsType, SettingsDict
+from saq.types import (
+    CtxType,
+    FunctionsType,
+    JobTaskContext,
+    LifecycleFunctionsType,
+    SettingsDict,
+)
 from saq.utils import cancel_tasks, millis, now, uuid1
 
 if t.TYPE_CHECKING:
@@ -33,7 +39,6 @@ if t.TYPE_CHECKING:
     from saq.job import CronJob, Job
     from saq.types import (
         Function,
-        JobTaskContext,
         PartialTimersDict,
         TimersDict,
         WorkerInfo,
@@ -69,6 +74,8 @@ class Worker(t.Generic[CtxType]):
         dequeue_timeout: how long it will wait to dequeue
         burst: whether to stop the worker once all jobs have been processed
         max_burst_jobs: the maximum number of jobs to process in burst mode
+        shutdown_grace_period_s: how long to wait for jobs to finish before sending cancellation signals.
+        cancellation_hard_deadline_s: how long to wait for a job to finish after sending a cancellation signal.
         metadata: arbitrary data to pass to the worker which it will register with saq
         poll_interval: If > 0.0, dequeue will use polling instead of listen/notify
             to trigger dequeues. This only affects Postgres. (default 0.0)
@@ -83,7 +90,7 @@ class Worker(t.Generic[CtxType]):
         *,
         id: t.Optional[str] = None,
         concurrency: int = 10,
-        cron_jobs: Collection[CronJob] | None = None,
+        cron_jobs: Collection[CronJob[CtxType]] | None = None,
         cron_tz: tzinfo = timezone.utc,
         startup: LifecycleFunctionsType[CtxType] | None = None,
         shutdown: LifecycleFunctionsType[CtxType] | None = None,
@@ -93,6 +100,8 @@ class Worker(t.Generic[CtxType]):
         dequeue_timeout: float = 0.0,
         burst: bool = False,
         max_burst_jobs: int | None = None,
+        shutdown_grace_period_s: int | None = None,
+        cancellation_hard_deadline_s: float = 1.0,
         metadata: t.Optional[JsonDict] = None,
         poll_interval: float = 0.0,
     ) -> None:
@@ -133,6 +142,8 @@ class Worker(t.Generic[CtxType]):
         self._poll_interval = poll_interval
         self._stop_lock = asyncio.Lock()
         self._stopped = False
+        self._shutdown_grace_period_s = shutdown_grace_period_s
+        self._cancellation_hard_deadline_s = cancellation_hard_deadline_s
         self.id = uuid1() if id is None else id
 
         if self.burst:
@@ -209,7 +220,22 @@ class Worker(t.Generic[CtxType]):
             try:
                 all_tasks = list(self.tasks)
                 self.tasks.clear()
-                await cancel_tasks(all_tasks)
+                try:
+                    await asyncio.wait_for(
+                        asyncio.gather(*all_tasks, return_exceptions=True),
+                        timeout=self._shutdown_grace_period_s or 0,
+                    )
+                except asyncio.TimeoutError:
+                    logger.warning(
+                        "Some tasks did not finish within the shutdown grace period, requesting cancellation"
+                    )
+                    cancelled = await cancel_tasks(
+                        all_tasks, timeout=self._cancellation_hard_deadline_s
+                    )
+                    if not cancelled:
+                        logger.warning(
+                            "Some tasks did not finish cancellation in time, they may be stuck or blocked"
+                        )
 
                 if sys.version_info[0:2] < (3, 9):
                     self.pool.shutdown(True)
@@ -297,14 +323,18 @@ class Worker(t.Generic[CtxType]):
             if not job or job.status not in (Status.ABORTING, Status.ABORTED):
                 continue
 
-            task_data: JobTaskContext = self.job_task_contexts.get(job, {})
-            task = task_data.get("task")
+            task_data = self.job_task_contexts.get(job, None)
+            if not task_data:
+                logger.warning("No task data found for job %s", job.id)
+                continue
+
+            task = task_data["task"]
             logger.info("Aborting %s", job.id)
 
-            if task and not task.done():
+            if not task.done():
                 task_data["aborted"] = "abort" if job.error is None else job.error
                 # abort should be a blocking operation
-                await cancel_tasks([task], 0)
+                _ = await cancel_tasks([task], None)
 
             await self.queue.finish_abort(job)
 
@@ -330,22 +360,57 @@ class Worker(t.Generic[CtxType]):
 
             function = ensure_coroutine_function(self.functions[job.function], self.pool)
             task = asyncio.create_task(function(context, **(job.kwargs or {})))
-            self.job_task_contexts[job] = {"task": task, "aborted": None}
-            result = await asyncio.wait_for(task, job.timeout if job.timeout else None)
-            await job.finish(Status.COMPLETE, result=result)
+            self.job_task_contexts[job] = JobTaskContext(task=task, aborted=None)
+            try:
+                result = await asyncio.wait_for(
+                    asyncio.shield(task), job.timeout if job.timeout else None
+                )
+            except asyncio.TimeoutError:
+                # Since we have a shield around the task passed to wait_for,
+                # we need to explicitly cancel it on timeout.
+                task.cancel()
+                raise
+            if self.job_task_contexts[job]["aborted"] is None:
+                await job.finish(Status.COMPLETE, result=result)
         except asyncio.CancelledError:
-            if job:
-                aborted = self.job_task_contexts.get(job, {}).get("aborted")
-                if aborted is not None:
-                    await job.finish(Status.ABORTED, error=aborted)
-                else:
-                    await job.retry("cancelled")
+            if not job:
+                return False
+            task_ctx = self.job_task_contexts.get(job)
+            assert task_ctx is not None
+
+            task = task_ctx["task"]
+            aborted = task_ctx["aborted"]
+            if aborted is not None:
+                await job.finish(Status.ABORTED, error=aborted)
+                return False
+
+            if not task.done():
+                cancelled = await cancel_tasks([task], self._cancellation_hard_deadline_s)
+                if not cancelled:
+                    logger.warning(
+                        "Function: %s did not finish cancellation in time, it may be stuck or blocked",
+                        job.function,
+                        extra={"job_id": job.id},
+                    )
+                await job.retry("cancelled")
         except Exception as ex:
             if context is not None:
                 context["exception"] = ex
 
             if job:
                 logger.exception("Error processing job %s", job)
+
+                # Ensure that the task is done or cancelled
+                if task_context := self.job_task_contexts.get(job, None):
+                    task = task_context["task"]
+                    if not task.done():
+                        cancelled = await cancel_tasks([task], self._cancellation_hard_deadline_s)
+                        if not cancelled:
+                            logger.warning(
+                                "Function '%s' did not finish cancellation in time, it may be stuck or blocked",
+                                job.function,
+                                extra={"job_id": job.id},
+                            )
 
                 error = traceback.format_exc()
 
