@@ -400,6 +400,18 @@ class Worker(t.Generic[CtxType]):
             if job:
                 logger.exception("Error processing job %s", job)
 
+                # Ensure that the task is done or cancelled
+                if task_context := self.job_task_contexts.get(job, None):
+                    task = task_context["task"]
+                    if not task.done():
+                        cancelled = await cancel_tasks([task], self._cancellation_hard_deadline_s)
+                        if not cancelled:
+                            logger.warning(
+                                "Function '%s' did not finish cancellation in time, it may be stuck or blocked",
+                                job.function,
+                                extra={"job_id": job.id},
+                            )
+
                 error = traceback.format_exc()
 
                 if job.retryable:
