@@ -388,9 +388,9 @@ class Worker(t.Generic[CtxType]):
                 cancelled = await cancel_tasks([task], self._cancellation_hard_deadline_s)
                 if not cancelled:
                     logger.warning(
-                        "Job %s (function: '%s') did not finish cancellation in time, it may be stuck or blocked",
-                        job.id,
+                        "Function: %s did not finish cancellation in time, it may be stuck or blocked",
                         job.function,
+                        extra={"job_id": job.id},
                     )
                 await job.retry("cancelled")
         except Exception as ex:
