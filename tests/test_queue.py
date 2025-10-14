@@ -332,7 +332,7 @@ class TestQueue(unittest.IsolatedAsyncioTestCase):
         task.cancel()
 
     async def test_map_timeout(self) -> None:
-        with self.assertRaises((TimeoutError, asyncio.CancelledError)):
+        with self.assertRaises((asyncio.CancelledError, asyncio.TimeoutError)):
             await self.queue.map("echo", [{}], timeout=0.1)
 
     async def test_poll_interval(self) -> None:
