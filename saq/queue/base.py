@@ -472,23 +472,26 @@ class Queue(ABC):
             for kw in iter_kwargs
         ]
 
-        await asyncio.gather(*(self.enqueue(job_or_func, **kw) for kw in iter_kwargs))
-        incomplete = object()
-        results = {key["key"]: incomplete for key in iter_kwargs}
+        async def _map() -> list[t.Any]:
+            await asyncio.gather(*(self.enqueue(job_or_func, **kw) for kw in iter_kwargs))
+            incomplete = object()
+            results = {key["key"]: incomplete for key in iter_kwargs}
 
-        while remaining := [k for k, v in results.items() if v is incomplete]:
-            for key, job in zip(remaining, await self.jobs(remaining)):
-                if not job:
-                    results[key] = None
-                elif job.status in UNSUCCESSFUL_TERMINAL_STATUSES:
-                    exc = JobError(job)
-                    if not return_exceptions:
-                        raise exc
-                    results[key] = exc
-                elif job.status in TERMINAL_STATUSES:
-                    results[key] = job.result
-            await asyncio.sleep(poll_interval)
-        return list(results.values())
+            while remaining := [k for k, v in results.items() if v is incomplete]:
+                for key, job in zip(remaining, await self.jobs(remaining)):
+                    if not job:
+                        results[key] = None
+                    elif job.status in UNSUCCESSFUL_TERMINAL_STATUSES:
+                        exc = JobError(job)
+                        if not return_exceptions:
+                            raise exc
+                        results[key] = exc
+                    elif job.status in TERMINAL_STATUSES:
+                        results[key] = job.result
+                await asyncio.sleep(poll_interval)
+            return list(results.values())
+
+        return await asyncio.wait_for(_map(), timeout)
 
     @asynccontextmanager
     async def batch(self) -> AsyncIterator[None]:

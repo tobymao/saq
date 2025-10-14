@@ -331,6 +331,10 @@ class TestQueue(unittest.IsolatedAsyncioTestCase):
 
         task.cancel()
 
+    async def test_map_timeout(self) -> None:
+        with self.assertRaises(TimeoutError):
+            await self.queue.map("echo", [{}], timeout=0.1)
+
     async def test_poll_interval(self) -> None:
         # Create a job object directly without enqueuing
         job = Job(function="echo", kwargs={"a": 42}, key="poll-test", queue=self.queue)
