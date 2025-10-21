@@ -708,7 +708,6 @@ class TestWorker(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(job.status, Status.ABORTED)
         self.assertEqual(state["counter"], 1)
 
-
     @mock.patch("saq.worker.logger")
     async def test_worker_id(self, _mock_logger: MagicMock) -> None:
         task = asyncio.create_task(self.worker.start())
