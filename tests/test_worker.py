@@ -708,6 +708,17 @@ class TestWorker(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(job.status, Status.ABORTED)
         self.assertEqual(state["counter"], 1)
 
+    @mock.patch("saq.worker.logger")
+    async def test_worker_id(self, _mock_logger: MagicMock) -> None:
+        task = asyncio.create_task(self.worker.start())
+        job = await self.enqueue("sleeper", sleep=60)
+        await asyncio.sleep(5)
+        await job.refresh()
+        self.assertEqual(job.status, Status.ACTIVE)
+        self.assertEqual(self.worker.id, job.worker_id)
+        task.cancel()
+        await task
+
 
 class TestWorkerRedisQueue(TestWorker):
     async def asyncSetUp(self) -> None:
