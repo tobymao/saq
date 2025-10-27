@@ -37,7 +37,7 @@ setup(
         "hiredis": ["redis[hiredis]>=4.2.0"],
         "http": ["aiohttp"],
         "postgres": ["psycopg[pool]>=3.2.0"],
-        "redis": ["redis>=4.2,<6.0"],
+        "redis": ["redis>=4.2,<7.0"],
         "web": ["aiohttp", "aiohttp_basicauth"],
         "dev": [
             "aiohttp",
@@ -46,7 +46,7 @@ setup(
             "mypy",
             "psycopg[pool]>=3.2.0",
             "pre-commit",
-            "redis>=4.2,<6.0",
+            "redis>=4.2,<7.0",
             "ruff",
             "time-machine",
             "types-croniter",
