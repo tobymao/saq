@@ -202,13 +202,13 @@ class Worker(t.Generic[CtxType]):
 
             await self.event.wait()
 
-            for signum in self.SIGNALS:
-                loop.remove_signal_handler(signum)
         except asyncio.CancelledError:
             pass
         finally:
             logger.info("Working shutting down")
             await self.stop()
+            for signum in self.SIGNALS:
+                loop.remove_signal_handler(signum)
 
     async def stop(self) -> None:
         """Stop the worker and cleanup."""
