@@ -351,6 +351,21 @@ class Worker(t.Generic[CtxType]):
             if job is None:
                 return False
 
+            if self.event.is_set():
+                try:
+                    await job.enqueue()  # best-effort: put it back on the queue
+                    logger.info(
+                        "Re-enqueued job %s instead of processing it because shutdown was requested",
+                        job.id,
+                    )
+                    return False  # don't process it
+                except Exception:
+                    # Couldn't put it back. Log it and fall back to the old behavior:
+                    logger.warning(
+                        "Failed to re-enqueue job %s during shutdown; processing it anyway",
+                        job.id,
+                    )
+
             job.started = now()
             job.attempts += 1
             job.worker_id = self.id
