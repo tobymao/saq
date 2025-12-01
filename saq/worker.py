@@ -75,10 +75,13 @@ class Worker(t.Generic[CtxType]):
         burst: whether to stop the worker once all jobs have been processed
         max_burst_jobs: the maximum number of jobs to process in burst mode
         shutdown_grace_period_s: how long to wait for jobs to finish before sending cancellation signals.
+            to avoid unexpected behavior, also set `dequeue_timeout` to a positive value, otherwise an idle
+            worker job may keep waiting for and pick up new tasks in the grace period.
         cancellation_hard_deadline_s: how long to wait for a job to finish after sending a cancellation signal.
         metadata: arbitrary data to pass to the worker which it will register with saq
         poll_interval: If > 0.0, dequeue will use polling instead of listen/notify
             to trigger dequeues. This only affects Postgres. (default 0.0)
+        non_error_exception_types: collection of exception types that will not be logged as errors.
     """
 
     SIGNALS = [signal.SIGINT, signal.SIGTERM] if os.name != "nt" else []
@@ -104,6 +107,7 @@ class Worker(t.Generic[CtxType]):
         cancellation_hard_deadline_s: float = 1.0,
         metadata: t.Optional[JsonDict] = None,
         poll_interval: float = 0.0,
+        non_error_exception_types: t.Collection[type[BaseException]] | None = None,
     ) -> None:
         self.queue = queue
         self.concurrency = concurrency
@@ -138,6 +142,7 @@ class Worker(t.Generic[CtxType]):
         self.burst_jobs_processed = 0
         self.burst_jobs_processed_lock = threading.Lock()
         self.burst_condition_met = False
+        self.non_error_exception_types = non_error_exception_types or []
         self._metadata = metadata
         self._poll_interval = poll_interval
         self._stop_lock = asyncio.Lock()
@@ -207,7 +212,7 @@ class Worker(t.Generic[CtxType]):
         except asyncio.CancelledError:
             pass
         finally:
-            logger.info("Working shutting down")
+            logger.info("Worker shutting down")
             await self.stop()
 
     async def stop(self) -> None:
@@ -399,7 +404,17 @@ class Worker(t.Generic[CtxType]):
                 context["exception"] = ex
 
             if job:
-                logger.exception("Error processing job %s", job)
+                should_log_as_error = not any(
+                    isinstance(ex, exc_type) for exc_type in self.non_error_exception_types
+                )
+                if should_log_as_error:
+                    logger.exception("Error processing job %s", job)
+                else:
+                    logger.info(
+                        "Non-error exception processing job %s: %s",
+                        job.id,
+                        repr(ex),
+                    )
 
                 # Ensure that the task is done or cancelled
                 if task_context := self.job_task_contexts.get(job, None):
