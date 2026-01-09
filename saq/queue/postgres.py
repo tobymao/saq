@@ -119,9 +119,21 @@ class PostgresQueue(Queue):
             check=AsyncConnectionPool.check_connection,
             open=False,
         )
-        if self.pool.kwargs.get("autocommit") is False:
+
+        if callable(self.pool.kwargs):
+            func = t.cast(t.Callable[[], t.Awaitable[t.Dict[str, t.Any]]], self.pool.kwargs)
+            kwargs: t.Dict[str, t.Any] = asyncio.run(func())  # type: ignore
+            autocommit = kwargs.get("autocommit")
+            self.pool.kwargs = lambda: kwargs | {"autocommit": True}
+        else:
+            if self.pool.kwargs is None:
+                self.pool.kwargs = {}
+            autocommit = self.pool.kwargs.get("autocommit")
+            self.pool.kwargs["autocommit"] = True
+
+        if autocommit is False:
             raise ValueError("SAQ Connection pool must have autocommit enabled.")
-        self.pool.kwargs["autocommit"] = True
+
         self._manage_pool_lifecycle = (
             manage_pool_lifecycle if manage_pool_lifecycle is not None else pool is None
         )
