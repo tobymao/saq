@@ -124,7 +124,7 @@ class PostgresQueue(Queue):
             func = t.cast(t.Callable[[], t.Awaitable[t.Dict[str, t.Any]]], self.pool.kwargs)
             kwargs: t.Dict[str, t.Any] = asyncio.run(func())  # type: ignore
             autocommit = kwargs.get("autocommit")
-            self.pool.kwargs = lambda: kwargs | {"autocommit": True}  # type: ignore[unused-ignore]
+            self.pool.kwargs = lambda: kwargs | {"autocommit": True}  # type: ignore[assignment, unused-ignore]
         else:
             if self.pool.kwargs is None:
                 self.pool.kwargs = {}  # type: ignore[unreachable, unused-ignore]
