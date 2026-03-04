@@ -171,7 +171,7 @@ class Job:
         for field in dataclasses.fields(self):
             key = field.name
             value = getattr(self, key)
-            if (full or key not in self._EXCLUDE_NON_FULL) and value != field.default:
+            if (full or key not in self._EXCLUDE_NON_FULL) and not _safe_eq(value, field.default):
                 kwargs[key] = value
 
         if "queue" in kwargs:
@@ -215,7 +215,7 @@ class Job:
         for field in dataclasses.fields(self):
             key = field.name
             value = getattr(self, key)
-            if value == field.default:
+            if _safe_eq(value, field.default):
                 continue
             if key == "meta" and not value:
                 continue
@@ -341,3 +341,10 @@ class Job:
                 "`Job` must be associated with a `Queue` before this operation can proceed"
             )
         return self.queue
+
+
+def _safe_eq(a: object, b: object) -> bool:
+    try:
+        return bool(a == b)
+    except ValueError:
+        return False

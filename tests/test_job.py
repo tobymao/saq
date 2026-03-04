@@ -144,6 +144,15 @@ class TestJob(unittest.IsolatedAsyncioTestCase):
             "meta": {"x": 1},
         }
 
+    async def test_pandas(self) -> None:
+        import pandas as pd
+
+        df = pd.DataFrame()
+        job = Job("f", result=df)
+
+        assert job.to_dict()["result"].equals(df)
+        assert "result: Empty DataFrame" in job.info(True)
+
 
 class TestJobRedisQueue(TestJob):
     async def asyncSetUp(self) -> None:

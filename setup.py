@@ -44,6 +44,7 @@ setup(
             "aiohttp_basicauth",
             "coverage",
             "mypy",
+            "pandas",
             "psycopg[pool]>=3.2.0",
             "pre-commit",
             "redis>=4.2,<7.0",
