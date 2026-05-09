@@ -79,6 +79,10 @@ class Worker(t.Generic[CtxType]):
         metadata: arbitrary data to pass to the worker which it will register with saq
         poll_interval: If > 0.0, dequeue will use polling instead of listen/notify
             to trigger dequeues. This only affects Postgres. (default 0.0)
+        autoscale: optional dict for dynamic concurrency adjustment:
+            min: minimum concurrency (default 1)
+            max: maximum concurrency (default concurrency)
+            target_queue_depth: queued jobs per worker target (default 5)
     """
 
     SIGNALS = [signal.SIGINT, signal.SIGTERM] if os.name != "nt" else []
@@ -104,9 +108,12 @@ class Worker(t.Generic[CtxType]):
         cancellation_hard_deadline_s: float = 1.0,
         metadata: t.Optional[JsonDict] = None,
         poll_interval: float = 0.0,
+        autoscale: dict[str, int] | None = None,
     ) -> None:
         self.queue = queue
         self.concurrency = concurrency
+        self.autoscale = autoscale
+        self._target_concurrency = concurrency
         self.pool = ThreadPoolExecutor()
         self.startup = ensure_coroutine_function_many(startup, self.pool) if startup else None
         self.shutdown = shutdown
@@ -179,8 +186,16 @@ class Worker(t.Generic[CtxType]):
 
     async def start(self) -> None:
         """Start processing jobs and upkeep tasks."""
-        logger.info("Worker starting: %s", repr(self.queue))
-        logger.debug("Registered functions:\n%s", "\n".join(f"  {key}" for key in self.functions))
+        logger.info(
+            "Worker starting: %s",
+            repr(self.queue),
+            extra={"worker_id": self.id, "queue": self.queue.name, "concurrency": self.concurrency},
+        )
+        logger.debug(
+            "Registered functions:\n%s",
+            "\n".join(f"  {key}" for key in self.functions),
+            extra={"worker_id": self.id, "queue": self.queue.name},
+        )
 
         try:
             self.event = asyncio.Event()
@@ -205,7 +220,10 @@ class Worker(t.Generic[CtxType]):
         except asyncio.CancelledError:
             pass
         finally:
-            logger.info("Working shutting down")
+            logger.info(
+                "Working shutting down",
+                extra={"worker_id": self.id, "queue": self.queue.name},
+            )
             await self.stop()
             for signum in self.SIGNALS:
                 loop.remove_signal_handler(signum)
@@ -227,14 +245,16 @@ class Worker(t.Generic[CtxType]):
                     )
                 except asyncio.TimeoutError:
                     logger.warning(
-                        "Some tasks did not finish within the shutdown grace period, requesting cancellation"
+                        "Some tasks did not finish within the shutdown grace period, requesting cancellation",
+                        extra={"worker_id": self.id, "queue": self.queue.name},
                     )
                     cancelled = await cancel_tasks(
                         all_tasks, timeout=self._cancellation_hard_deadline_s
                     )
                     if not cancelled:
                         logger.warning(
-                            "Some tasks did not finish cancellation in time, they may be stuck or blocked"
+                            "Some tasks did not finish cancellation in time, they may be stuck or blocked",
+                            extra={"worker_id": self.id, "queue": self.queue.name},
                         )
 
                 if sys.version_info[0:2] < (3, 9):
@@ -272,12 +292,38 @@ class Worker(t.Generic[CtxType]):
         job_ids = await self.queue.schedule(lock)
 
         if job_ids:
-            logger.info("Scheduled %s", job_ids)
+            logger.info(
+                "Scheduled %s",
+                job_ids,
+                extra={"worker_id": self.id, "queue": self.queue.name},
+            )
 
     async def worker_info(self, ttl: int = 60) -> WorkerInfo:
         return await self.queue.worker_info(
             self.id, queue_key=self.queue.name, metadata=self._metadata, ttl=ttl
         )
+
+    async def _autoscale_check(self, _: int | None = None) -> None:
+        """Adjust concurrency based on queue depth."""
+        if not self.autoscale:
+            return
+
+        queued = await self.queue.count("queued")
+        target = max(
+            self.autoscale.get("min", 1),
+            min(
+                self.autoscale.get("max", self.concurrency),
+                max(1, queued // self.autoscale.get("target_queue_depth", 5)),
+            ),
+        )
+
+        old_target = self._target_concurrency
+        self._target_concurrency = target
+
+        if target > old_target:
+            # Scale up: start new process loops
+            for _ in range(target - old_target):
+                self._process()
 
     async def upkeep(self) -> list[Task[None]]:
         """Start various upkeep tasks async."""
@@ -291,11 +337,14 @@ class Worker(t.Generic[CtxType]):
                 except (Exception, asyncio.CancelledError):
                     if self.event.is_set():
                         return
-                    logger.exception("Upkeep task failed unexpectedly")
+                    logger.exception(
+                        "Upkeep task failed unexpectedly",
+                        extra={"worker_id": self.id, "queue": self.queue.name},
+                    )
 
                 await asyncio.sleep(sleep)
 
-        return [
+        tasks = [
             asyncio.create_task(poll(self.abort, self.timers["abort"])),
             asyncio.create_task(poll(self.schedule, self.timers["schedule"])),
             asyncio.create_task(poll(self.queue.sweep, self.timers["sweep"])),
@@ -307,6 +356,11 @@ class Worker(t.Generic[CtxType]):
                 )
             ),
         ]
+
+        if self.autoscale:
+            tasks.append(asyncio.create_task(poll(self._autoscale_check, self.timers.get("autoscale", 5))))
+
+        return tasks
 
     async def abort(self, abort_threshold: float) -> None:
         def get_duration(job: Job) -> float:
@@ -325,11 +379,19 @@ class Worker(t.Generic[CtxType]):
 
             task_data = self.job_task_contexts.get(job, None)
             if not task_data:
-                logger.warning("No task data found for job %s", job.id)
+                logger.warning(
+                    "No task data found for job %s",
+                    job.id,
+                    extra={"worker_id": self.id, "queue": self.queue.name, "job_id": job.id},
+                )
                 continue
 
             task = task_data["task"]
-            logger.info("Aborting %s", job.id)
+            logger.info(
+                "Aborting %s",
+                job.id,
+                extra={"worker_id": self.id, "queue": self.queue.name, "job_id": job.id},
+            )
 
             if not task.done():
                 task_data["aborted"] = "abort" if job.error is None else job.error
@@ -357,7 +419,18 @@ class Worker(t.Generic[CtxType]):
             await job.update(status=Status.ACTIVE)
             context = t.cast(CtxType, {**self.context, "job": job})
             await self._before_process(context)
-            logger.info("Processing %s", job.info(logger.isEnabledFor(logging.DEBUG)))
+            logger.info(
+                "Processing %s",
+                job.info(logger.isEnabledFor(logging.DEBUG)),
+                extra={
+                    "worker_id": self.id,
+                    "job_id": job.id,
+                    "job_key": job.key,
+                    "job_function": job.function,
+                    "queue": self.queue.name,
+                    "attempts": job.attempts,
+                },
+            )
 
             function = ensure_coroutine_function(self.functions[job.function], self.pool)
             task = asyncio.create_task(function(context, **(job.kwargs or {})))
@@ -391,7 +464,7 @@ class Worker(t.Generic[CtxType]):
                     logger.warning(
                         "Function: %s did not finish cancellation in time, it may be stuck or blocked",
                         job.function,
-                        extra={"job_id": job.id},
+                        extra={"job_id": job.id, "job_function": job.function, "queue": self.queue.name, "worker_id": self.id},
                     )
                 await job.retry("cancelled")
         except Exception as ex:
@@ -399,7 +472,17 @@ class Worker(t.Generic[CtxType]):
                 context["exception"] = ex
 
             if job:
-                logger.exception("Error processing job %s", job)
+                logger.exception(
+                    "Error processing job %s",
+                    job,
+                    extra={
+                        "worker_id": self.id,
+                        "job_id": job.id,
+                        "job_key": job.key,
+                        "job_function": job.function,
+                        "queue": self.queue.name,
+                    },
+                )
 
                 # Ensure that the task is done or cancelled
                 if task_context := self.job_task_contexts.get(job, None):
@@ -410,7 +493,7 @@ class Worker(t.Generic[CtxType]):
                             logger.warning(
                                 "Function '%s' did not finish cancellation in time, it may be stuck or blocked",
                                 job.function,
-                                extra={"job_id": job.id},
+                                extra={"job_id": job.id, "job_function": job.function, "queue": self.queue.name, "worker_id": self.id},
                             )
 
                 error = traceback.format_exc()
@@ -427,7 +510,10 @@ class Worker(t.Generic[CtxType]):
                 try:
                     await self._after_process(context)
                 except (Exception, asyncio.CancelledError):
-                    logger.exception("Failed to run after process hook")
+                    logger.exception(
+                        "Failed to run after process hook",
+                        extra={"worker_id": self.id, "queue": self.queue.name},
+                    )
         return True
 
     def _process(self, previous_task: Task | None = None) -> None:
@@ -441,6 +527,12 @@ class Worker(t.Generic[CtxType]):
                 return
 
         if not self.event.is_set():
+            # For autoscale: check current process count against target
+            if self.autoscale:
+                current = sum(1 for t in self.tasks if t.get_name() == "process")
+                if current >= self._target_concurrency:
+                    return  # Don't replicate - scaling down or at target
+
             new_task = asyncio.create_task(self.process(), name="process")
             self.tasks.add(new_task)
             new_task.add_done_callback(self._process)
@@ -572,14 +664,24 @@ async def async_check_health(queue: Queue) -> int:
             "Health check failed. Unknown queue name %s. Expected %s",
             name,
             queue.name,
+            extra={"queue": queue.name, "expected_queue": queue.name, "actual_queue": name},
         )
         status = 1
     elif not info.get("workers"):
-        logger.warning("No active workers found for queue %s", name)
+        logger.warning(
+            "No active workers found for queue %s",
+            name,
+            extra={"queue": name},
+        )
         status = 1
     else:
         workers = len(info["workers"].values())
-        logger.info("Found %d active workers for queue %s", workers, name)
+        logger.info(
+            "Found %d active workers for queue %s",
+            workers,
+            name,
+            extra={"queue": name, "worker_count": workers},
+        )
         status = 0
 
     await queue.disconnect()
