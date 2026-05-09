@@ -67,6 +67,7 @@ class Queue(ABC):
         dump: DumpType | None,
         load: LoadType | None,
         swept_error_message: str | None = None,
+        result_cache_ttl: int = 0,
     ) -> None:
         self.name = name
         self.started: int = now()
@@ -77,6 +78,7 @@ class Queue(ABC):
         self._dump = dump or json.dumps
         self._load = load or json.loads
         self._swept_error_message = swept_error_message or DEFAULT_SWEPT_JOB_ERROR
+        self._result_cache_ttl = result_cache_ttl
         self._before_enqueues: dict[int, BeforeEnqueueType] = {}
         self._loop: asyncio.AbstractEventLoop | None = None
 
@@ -142,6 +144,21 @@ class Queue(ABC):
 
     @abstractmethod
     async def abort(self, job: Job, error: str, ttl: float = 5) -> None:
+        pass
+
+    def _cache_key(self, function: str, kwargs: dict) -> str:
+        """Generate a deterministic cache key from function name and kwargs."""
+        import hashlib
+
+        payload = json.dumps({"function": function, "kwargs": kwargs}, sort_keys=True)
+        return f"saq:cache:{hashlib.sha256(payload.encode()).hexdigest()}"
+
+    async def _get_cached_result(self, cache_key: str) -> t.Any:
+        """Retrieve a cached result. Override in subclasses for backend storage."""
+        return None
+
+    async def _set_cached_result(self, cache_key: str, result: t.Any, ttl: int) -> None:
+        """Store a result in cache. Override in subclasses for backend storage."""
         pass
 
     @abstractmethod
@@ -282,7 +299,11 @@ class Queue(ABC):
 
         await self._retry(job=job, error=error)
         self.retried += 1
-        logger.info("Retrying %s", job.info(logger.isEnabledFor(logging.DEBUG)))
+        logger.info(
+            "Retrying %s",
+            job.info(logger.isEnabledFor(logging.DEBUG)),
+            extra={"job_key": job.key, "queue": self.name, "attempts": job.attempts},
+        )
 
     async def finish(
         self,
@@ -302,7 +323,11 @@ class Queue(ABC):
             job.progress = 1.0
 
         await self._finish(job=job, status=status, result=result, error=error, **kwargs)
-        logger.info("Finished %s", job.info(logger.isEnabledFor(logging.DEBUG)))
+        logger.info(
+            "Finished %s",
+            job.info(logger.isEnabledFor(logging.DEBUG)),
+            extra={"job_key": job.key, "queue": self.name, "status": status.value},
+        )
 
         if status == Status.COMPLETE:
             self.complete += 1
@@ -396,6 +421,7 @@ class Queue(ABC):
         job_or_func: str,
         timeout: float | None = None,
         poll_interval: float = 0.5,
+        use_cache: bool = False,
         **kwargs: t.Any,
     ) -> t.Any:
         """
@@ -416,13 +442,24 @@ class Queue(ABC):
             job_or_func: Same as Queue.enqueue
             timeout: If provided, how long to wait for result, else infinite (default None)
             poll_interval: Number of seconds between checking job status (default 0.5)
+            use_cache: If True and result_cache_ttl > 0, cache and reuse results (default False)
             kwargs: Same as Queue.enqueue
         """
+        if use_cache and self._result_cache_ttl > 0:
+            cache_key = self._cache_key(job_or_func, kwargs)
+            cached = await self._get_cached_result(cache_key)
+            if cached is not None:
+                return cached
+
         results = await self.map(
             job_or_func, timeout=timeout, poll_interval=poll_interval, iter_kwargs=[kwargs]
         )
         if results:
-            return results[0]
+            result = results[0]
+            if use_cache and self._result_cache_ttl > 0 and not isinstance(result, JobError):
+                cache_key = self._cache_key(job_or_func, kwargs)
+                await self._set_cached_result(cache_key, result, self._result_cache_ttl)
+            return result
         return None
 
     async def map(
@@ -525,6 +562,87 @@ class Queue(ABC):
             raise
         finally:
             self.unregister_before_enqueue(track_child)
+
+    async def batch_retry(self, job_keys: Iterable[str]) -> dict[str, int]:
+        """
+        Retry multiple jobs by key.
+
+        Args:
+            job_keys: Keys of jobs to retry.
+
+        Returns:
+            Dict with "retried" and "failed" counts.
+        """
+        retried = 0
+        failed = 0
+        for key in job_keys:
+            job = await self.job(key)
+            if job:
+                try:
+                    await self.retry(job, "batch retried")
+                    retried += 1
+                except Exception:
+                    failed += 1
+            else:
+                failed += 1
+        return {"retried": retried, "failed": failed}
+
+    async def batch_abort(self, job_keys: Iterable[str], error: str = "batch abort") -> dict[str, int]:
+        """
+        Abort multiple jobs by key.
+
+        Args:
+            job_keys: Keys of jobs to abort.
+            error: Error message for the abort.
+
+        Returns:
+            Dict with "aborted" and "failed" counts.
+        """
+        aborted = 0
+        failed = 0
+        for key in job_keys:
+            job = await self.job(key)
+            if job:
+                try:
+                    await self.abort(job, error)
+                    aborted += 1
+                except Exception:
+                    failed += 1
+            else:
+                failed += 1
+        return {"aborted": aborted, "failed": failed}
+
+    async def list_jobs(
+        self,
+        statuses: t.List[Status] | None = None,
+        function: str | None = None,
+        offset: int = 0,
+        limit: int = 100,
+    ) -> t.List[Job]:
+        """
+        List jobs with optional filtering.
+
+        Args:
+            statuses: Filter by statuses (default: all).
+            function: Filter by function name.
+            offset: Pagination offset.
+            limit: Max number of jobs to return.
+
+        Returns:
+            List of matching Job instances.
+        """
+        result: t.List[Job] = []
+        statuses = statuses or list(Status)
+        async for job in self.iter_jobs(statuses=statuses):
+            if function and job.function != function:
+                continue
+            if offset > 0:
+                offset -= 1
+                continue
+            result.append(job)
+            if len(result) >= limit:
+                break
+        return result
 
     async def _before_enqueue(self, job: Job) -> None:
         for cb in self._before_enqueues.values():

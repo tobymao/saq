@@ -122,6 +122,7 @@ class HttpQueue(Queue):
         retry_delay: float = 1.0,
         retry_backoff: float = 2.0,
         retry_jitter: bool = True,
+        result_cache_ttl: int = 0,
         **kwargs: t.Any,
     ) -> None:
         super().__init__(
@@ -129,6 +130,7 @@ class HttpQueue(Queue):
             dump=None,
             load=None,
             swept_error_message=swept_error_message,
+            result_cache_ttl=result_cache_ttl,
         )
         self.url = url
         self.session_kwargs = kwargs

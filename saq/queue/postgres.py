@@ -103,8 +103,9 @@ class PostgresQueue(Queue):
         priorities: tuple[int, int] = (0, 32767),
         swept_error_message: str | None = None,
         manage_pool_lifecycle: bool | None = None,
+        result_cache_ttl: int = 0,
     ) -> None:
-        super().__init__(name=name, dump=dump, load=load, swept_error_message=swept_error_message)
+        super().__init__(name=name, dump=dump, load=load, swept_error_message=swept_error_message, result_cache_ttl=result_cache_ttl)
 
         if pool is None and url is None:
             raise ValueError("Either pool or url must be provided")
@@ -437,14 +438,22 @@ class PostgresQueue(Queue):
                 continue
 
             swept.append(key)
-            logger.info("Sweeping %s", job.info(logger.isEnabledFor(logging.DEBUG)))
+            logger.info(
+                "Sweeping %s",
+                job.info(logger.isEnabledFor(logging.DEBUG)),
+                extra={"job_key": job.key, "queue": self.name},
+            )
 
             await self.abort(job, error=self.swept_error_message)
 
             try:
                 await job.refresh(abort)
             except asyncio.TimeoutError:
-                logger.info("Could not abort job %s", key)
+                logger.info(
+                    "Could not abort job %s",
+                    key,
+                    extra={"queue": self.name},
+                )
 
             if job.retryable:
                 await self.retry(job, error=self.swept_error_message)
@@ -751,7 +760,11 @@ class PostgresQueue(Queue):
             if not await cursor.fetchone():
                 return None
             await self._notify(ENQUEUE, connection=conn)
-        logger.info("Enqueuing %s", job.info(logger.isEnabledFor(logging.DEBUG)))
+        logger.info(
+            "Enqueuing %s",
+            job.info(logger.isEnabledFor(logging.DEBUG)),
+            extra={"job_key": job.key, "job_function": job.function, "queue": self.name},
+        )
         return job
 
     async def write_worker_info(
