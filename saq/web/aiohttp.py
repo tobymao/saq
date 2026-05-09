@@ -4,6 +4,8 @@ Built-in AIOHttp webserver, activated with --web param to worker.
 
 from __future__ import annotations
 
+import asyncio
+import json
 import logging
 import os
 import traceback
@@ -26,6 +28,8 @@ if t.TYPE_CHECKING:
 
 
 QUEUES_KEY = web.AppKey("queues", t.Dict[str, Queue])
+WS_CLIENTS_KEY = web.AppKey("ws_clients", set)
+WS_TASK_KEY = web.AppKey("_ws_task", asyncio.Task)
 
 
 async def queues_(request: Request) -> Response:
@@ -58,8 +62,102 @@ async def abort(request: Request) -> Response:
     return web.json_response({})
 
 
+async def job_list(request: Request) -> Response:
+    """List jobs with optional filtering."""
+    queue_name = request.match_info.get("queue", "")
+    queue = _get_queue(request, queue_name)
+
+    from saq.job import Status as _Status
+
+    statuses_str = request.query.get("status", "")
+    statuses = None
+    if statuses_str:
+        statuses = [_Status(s.strip()) for s in statuses_str.split(",") if s.strip()]
+
+    function = request.query.get("function")
+    offset = int(request.query.get("offset", "0"))
+    limit = min(int(request.query.get("limit", "100")), 1000)
+
+    jobs = await queue.list_jobs(
+        statuses=statuses,
+        function=function,
+        offset=offset,
+        limit=limit,
+    )
+    return web.json_response({"jobs": [job_dict(j) for j in jobs]})
+
+
+async def batch_retry(request: Request) -> Response:
+    """Batch retry multiple jobs."""
+    body = await request.json()
+    keys = body.get("keys")
+    if keys is None:
+        return web.json_response({"error": "keys is required"}, status=400)
+
+    queue_name = request.match_info.get("queue", "")
+    queue = _get_queue(request, queue_name)
+    result = await queue.batch_retry(keys)
+    return web.json_response(result)
+
+
+async def batch_abort(request: Request) -> Response:
+    """Batch abort multiple jobs."""
+    body = await request.json()
+    keys = body.get("keys")
+    if keys is None:
+        return web.json_response({"error": "keys is required"}, status=400)
+
+    queue_name = request.match_info.get("queue", "")
+    queue = _get_queue(request, queue_name)
+    result = await queue.batch_abort(keys)
+    return web.json_response(result)
+
+
 async def views(_request: Request) -> Response:
     return web.Response(text=render(root_path=""), content_type="text/html")
+
+
+async def websocket(request: Request) -> web.WebSocketResponse:
+    """WebSocket endpoint for real-time queue updates."""
+    ws = web.WebSocketResponse()
+    await ws.prepare(request)
+
+    clients = request.app[WS_CLIENTS_KEY]
+    clients.add(ws)
+    try:
+        async for msg in ws:
+            pass  # We only push, don't read
+    finally:
+        clients.discard(ws)
+
+    return ws
+
+
+async def _ws_broadcast(app: Application) -> None:
+    """Background task: push queue info to all WS clients every 2 seconds."""
+    try:
+        while True:
+            clients: set[web.WebSocketResponse] = app[WS_CLIENTS_KEY]
+            if clients:
+                queues = app[QUEUES_KEY]
+                data = {"queues": [await q.info() for q in queues.values()]}
+                payload = json.dumps(data)
+                closed = []
+                for ws in clients:
+                    try:
+                        await ws.send_str(payload)
+                    except ConnectionResetError:
+                        closed.append(ws)
+                for ws in closed:
+                    clients.discard(ws)
+            await asyncio.sleep(2)
+    except asyncio.CancelledError:
+        pass
+
+
+async def _start_broadcast(app: Application) -> None:
+    app[WS_CLIENTS_KEY] = set()
+    app[WS_TASK_KEY] = asyncio.create_task(_ws_broadcast(app))
 
 
 async def health(request: Request) -> Response:
@@ -88,7 +186,7 @@ async def _get_job(request: Request) -> Job:
 
 @web.middleware
 async def exceptions(request: Request, handler: Handler) -> StreamResponse:
-    if request.path.startswith("/api"):
+    if "/api/" in request.path:
         try:
             resp = await handler(request)
             return resp
@@ -100,6 +198,11 @@ async def exceptions(request: Request, handler: Handler) -> StreamResponse:
 
 
 async def shutdown(app: Application) -> None:
+    ws_task = app.get(WS_TASK_KEY)
+    if ws_task:
+        ws_task.cancel()
+    for ws in app.get(WS_CLIENTS_KEY, set()):
+        await ws.close()
     for queue in app.get(QUEUES_KEY, {}).values():
         await queue.disconnect()
 
@@ -120,6 +223,10 @@ def create_app(queues: list[Queue]) -> Application:
     app.add_routes(
         [
             web.static("/static", STATIC_PATH, append_version=True),
+            web.get("/ws", websocket),
+            web.post("/api/queues/{queue}/jobs/batch/retry", batch_retry),
+            web.post("/api/queues/{queue}/jobs/batch/abort", batch_abort),
+            web.get("/api/queues/{queue}/jobs", job_list),
             web.get("/api/queues/{queue}/jobs/{job}", jobs),
             web.post("/api/queues/{queue}/jobs/{job}/retry", retry),
             web.post("/api/queues/{queue}/jobs/{job}/abort", abort),
@@ -131,5 +238,6 @@ def create_app(queues: list[Queue]) -> Application:
             web.get("/health", health),
         ]
     )
+    app.on_startup.append(_start_broadcast)
     app.on_shutdown.append(shutdown)
     return app

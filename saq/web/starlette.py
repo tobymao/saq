@@ -97,6 +97,57 @@ async def abort(request: Request) -> JSONResponse:
     return JSONResponse({})
 
 
+async def job_list(request: Request) -> JSONResponse:
+    """List jobs with optional filtering."""
+    queue_name = request.path_params["queue"]
+    queue = _get_queue(queue_name)
+
+    statuses_str = request.query_params.get("status")
+    statuses = None
+    if statuses_str:
+        from saq.job import Status as _Status
+
+        statuses = [_Status(s.strip()) for s in statuses_str.split(",") if s.strip()]
+
+    function = request.query_params.get("function")
+    offset = int(request.query_params.get("offset", "0"))
+    limit = min(int(request.query_params.get("limit", "100")), 1000)
+
+    jobs = await queue.list_jobs(
+        statuses=statuses,
+        function=function,
+        offset=offset,
+        limit=limit,
+    )
+    return JSONResponse({"jobs": [job_dict(j) for j in jobs]})
+
+
+async def batch_retry(request: Request) -> JSONResponse:
+    """Batch retry multiple jobs."""
+    body = await request.json()
+    keys = body.get("keys")
+    if keys is None:
+        return JSONResponse({"error": "keys is required"}, status_code=400)
+
+    queue_name = request.path_params["queue"]
+    queue = _get_queue(queue_name)
+    result = await queue.batch_retry(keys)
+    return JSONResponse(result)
+
+
+async def batch_abort(request: Request) -> JSONResponse:
+    """Batch abort multiple jobs."""
+    body = await request.json()
+    keys = body.get("keys")
+    if keys is None:
+        return JSONResponse({"error": "keys is required"}, status_code=400)
+
+    queue_name = request.path_params["queue"]
+    queue = _get_queue(queue_name)
+    result = await queue.batch_abort(keys)
+    return JSONResponse(result)
+
+
 async def _get_all_info() -> list[QueueInfo]:
     return [await q.info() for q in QUEUES.values()]
 
@@ -144,6 +195,9 @@ def saq_web(root_path: str, queues: list[Queue]) -> Starlette:
             Route("/queues/{queue}/jobs/{job}", views),
             Route("/api/queues", queues_),
             Route("/api/queues/{queue}", queues_),
+            Route("/api/queues/{queue}/jobs/batch/retry", batch_retry, methods=["POST"]),
+            Route("/api/queues/{queue}/jobs/batch/abort", batch_abort, methods=["POST"]),
+            Route("/api/queues/{queue}/jobs", job_list),
             Route("/api/queues/{queue}/jobs/{job}", jobs),
             Route("/api/queues/{queue}/jobs/{job}/retry", retry, methods=["POST"]),
             Route("/api/queues/{queue}/jobs/{job}/abort", abort, methods=["POST"]),

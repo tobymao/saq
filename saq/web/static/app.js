@@ -9,6 +9,11 @@ const h = snabbdom.h
 
 let container = document.getElementById("app")
 
+// --- State ---
+let filterStatus = ""
+let filterFunction = ""
+let wsConnected = false
+
 const render = function(vnode) {
   patch(container, vnode)
   container = vnode
@@ -69,6 +74,21 @@ const button = function(children, handler, data) {
   return h("a", data, children)
 }
 
+const sm_button = function(label, handler, danger) {
+  return h("a", {
+    attrs: { role: "button" },
+    class: { "btn-danger": !!danger },
+    on: { click: async event => {
+      event.preventDefault()
+      event.stopPropagation()
+      event.target.setAttribute("aria-busy", true)
+      await handler()
+      event.target.setAttribute("aria-busy", false)
+      renderPage()
+    }},
+  }, label)
+}
+
 const link = function(data, children) {
   const handler = function(event) {
     event.preventDefault()
@@ -116,19 +136,59 @@ const job_headers = () => [
   h("th", "Started"),
   h("td", "Completed"),
   h("th", "Status"),
+  h("th", "Actions"),
 ]
 
-const job_columns = job => [
+const job_action_buttons = function(queue_name, job) {
+  const status = job.status
+  const btns = []
+  if (status === "failed" || status === "aborted" || status === "aborting" || status === "complete") {
+    btns.push(sm_button("Retry", _ =>
+      post(root_path + "/queues/" + queue_name + "/jobs/" + job.key + "/retry")
+    ))
+  }
+  if (status === "queued" || status === "active" || status === "new" || status === "aborting") {
+    btns.push(sm_button("Abort", _ =>
+      post(root_path + "/queues/" + queue_name + "/jobs/" + job.key + "/abort")
+    , true))
+  }
+  return h("td", h("span", { class: { "action-btns": true } }, btns))
+}
+
+const job_columns = (queue_name, job) => [
   h("td", job.function),
   h("td", job.kwargs),
   h("td", format_time(job.queued)),
   h("td", format_time(job.started)),
   h("td", format_time(job.completed)),
   h("td", job.status),
+  job_action_buttons(queue_name, job),
 ]
 
-const queue_view = function(data, queue_name) {
+const status_options = [
+  { value: "", label: "Filter by status..." },
+  { value: "new", label: "New" },
+  { value: "queued", label: "Queued" },
+  { value: "active", label: "Active" },
+  { value: "aborting", label: "Aborting" },
+  { value: "aborted", label: "Aborted" },
+  { value: "failed", label: "Failed" },
+  { value: "complete", label: "Complete" },
+]
+
+const fetchFilteredJobs = async function(queue_name) {
+  const params = new URLSearchParams()
+  if (filterStatus) params.set("status", filterStatus)
+  if (filterFunction) params.set("function", filterFunction)
+  const qs = params.toString()
+  const path = root_path + "/queues/" + queue_name + "/jobs" + (qs ? "?" + qs : "")
+  const data = await get(path)
+  return data.jobs || []
+}
+
+const queue_view = function(data, queue_name, filteredJobs) {
   const queue = data.queue
+  const jobs = filteredJobs || queue.jobs || []
 
   return h("div", [
     h("hgroup", [
@@ -171,12 +231,33 @@ const queue_view = function(data, queue_name) {
       )),
     ]),
     h("h2", "Jobs"),
-    h("table", { attrs: { role: "grid" } }, [
+    // Filter bar
+    h("div", { style: { display: "flex", gap: "1rem", marginBottom: "1rem", alignItems: "center" } }, [
+      h("label", [
+        "Status ",
+        h("select", {
+          props: { value: filterStatus },
+          on: { change: event => { filterStatus = event.target.value; renderPage() } },
+        }, status_options.map(opt =>
+          h("option", { props: { value: opt.value } }, opt.label)
+        )),
+      ]),
+      h("label", [
+        "Function ",
+        h("input", {
+          props: { type: "text", value: filterFunction, placeholder: "Filter..." },
+          on: { input: event => { filterFunction = event.target.value } },
+        }),
+      ]),
+      button("Apply", _ => renderPage(), { attrs: {} }),
+      button("Clear", _ => { filterStatus = ""; filterFunction = ""; renderPage() }, { attrs: {} }),
+    ]),
+    h("table", { attrs: { role: "grid" }, class: { "job-table": true } }, [
       h("thead", h("tr", [h("th", "Key"), ...job_headers()])),
-      h("tbody", queue.jobs.map(job =>
+      h("tbody", jobs.map(job =>
         h("tr", [
           link({ props: { href: root_path + "/queues/" + queue_name + "/jobs/" + job.key } }, h("td", job.key)),
-          ...job_columns(job),
+          ...job_columns(queue_name, job),
         ])
       )),
     ]),
@@ -213,7 +294,7 @@ const job_view = function(data, queue_name, job_key) {
         h("td", "Attempts"),
       ])),
       h("tbody", h("tr", [
-        ...job_columns(job),
+        ...job_columns(queue_name, job),
         h("td", link({ props: { href: "/queues/" + job.queue } }, job.queue)),
         h("td", h("progress", { props: { value: job.progress || 0, max: 1.0 } })),
         h("td", job.attempts),
@@ -261,12 +342,24 @@ const page = async function(path) {
   if (route) {
     const data = await get(route.data || path)
     const args = path.match(route.path).slice(1)
-    view = data.error ? error_view(data.error) : route.view(data, ...args)
+    if (data.error) {
+      view = error_view(data.error)
+    } else if (route.view === queue_view) {
+      const filteredJobs = await fetchFilteredJobs(args[0])
+      view = route.view(data, ...args, filteredJobs)
+    } else {
+      view = route.view(data, ...args)
+    }
   }
+
+  // WebSocket status indicator
+  const wsDot = h("span", {
+    class: { "ws-dot": true, connected: wsConnected, disconnected: !wsConnected },
+  })
 
   return h("div", [
     h("nav.container", [
-      h("ul", h("li", link({ props: { href: root_path + "/" } }, h("strong", "SAQ")))),
+      h("ul", h("li", link({ props: { href: root_path + "/" } }, [h("strong", "SAQ"), wsDot]))),
       h("ul", [
         h("li", h("a", { props: { href: "https://saq-py.readthedocs.io" } }, "Docs")),
       ]),
@@ -275,5 +368,30 @@ const page = async function(path) {
   ])
 }
 
+// --- WebSocket ---
+const connectWS = function() {
+  const wsUrl = (location.protocol === "https:" ? "wss://" : "ws://") + location.host + root_path + "/ws"
+  const ws = new WebSocket(wsUrl)
+
+  ws.onopen = function() {
+    wsConnected = true
+    renderPage()
+  }
+
+  ws.onmessage = function(event) {
+    renderPage()
+  }
+
+  ws.onclose = function() {
+    wsConnected = false
+    renderPage()
+    setTimeout(connectWS, 3000)
+  }
+
+  ws.onerror = function() {
+    ws.close()
+  }
+}
+
 renderPage()
-setInterval(_ => renderPage(), 2000)
+connectWS()
