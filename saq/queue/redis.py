@@ -44,6 +44,13 @@ if t.TYPE_CHECKING:
 
 ID_PREFIX = "saq:job:"
 
+# Multiplier for encoding priority + sequence into a single sorted set score.
+# Score = priority * SCORE_MULTIPLIER + sequence_number
+# This ensures priority ordering (lower number = higher priority) with FIFO
+# within the same priority level. 10^7 allows priorities up to ~900 million
+# and 10 million sequence numbers per priority before float64 precision loss.
+SCORE_MULTIPLIER = 10_000_000
+
 
 class RedisQueue(Queue):
     """
@@ -73,16 +80,21 @@ class RedisQueue(Queue):
         load: LoadType | None = None,
         max_concurrent_ops: int = 20,
         swept_error_message: str | None = None,
+        result_cache_ttl: int = 0,
     ) -> None:
-        super().__init__(name=name, dump=dump, load=load, swept_error_message=swept_error_message)
+        super().__init__(name=name, dump=dump, load=load, swept_error_message=swept_error_message, result_cache_ttl=result_cache_ttl)
 
         self.redis = redis
         self._version: VersionTuple | None = None
         self._schedule_script: AsyncScript | None = None
         self._enqueue_script: AsyncScript | None = None
         self._cleanup_script: AsyncScript | None = None
+        self._dequeue_script: AsyncScript | None = None
         self._incomplete = self.namespace("incomplete")
         self._queued = self.namespace("queued")
+        self._queued_seq = self.namespace("queued_seq")
+        self._priorities = self.namespace("priorities")
+        self._dequeue_notify = self.namespace("dequeue_notify")
         self._active = self.namespace("active")
         self._schedule = self.namespace("schedule")
         self._sweep = self.namespace("sweep")
@@ -184,7 +196,7 @@ class RedisQueue(Queue):
             kind: The type of Kind you want counts info on
         """
         if kind == "queued":
-            return await self.redis.llen(self._queued)
+            return await self.redis.zcard(self._queued)
         if kind == "active":
             return await self.redis.llen(self._active)
         if kind == "incomplete":
@@ -201,7 +213,10 @@ class RedisQueue(Queue):
 
                     for _, v in ipairs(jobs) do
                         redis.call('ZADD', KEYS[2], 0, v)
-                        redis.call('RPUSH', KEYS[3], v)
+                        local priority = tonumber(redis.call('HGET', KEYS[4], v)) or 0
+                        local seq = redis.call('INCR', KEYS[5])
+                        local score = priority * """ + str(SCORE_MULTIPLIER) + """ + seq
+                        redis.call('ZADD', KEYS[3], score, v)
                     end
 
                     return jobs
@@ -209,14 +224,19 @@ class RedisQueue(Queue):
                 """
             )
 
-        return [
+        result = [
             job_id.decode("utf-8")
             for job_id in await self._schedule_script(
-                keys=[self._schedule, self._incomplete, self._queued],
+                keys=[self._schedule, self._incomplete, self._queued, self._priorities, self._queued_seq],
                 args=[lock, now_seconds()],
             )
             or []
         ]
+
+        if result:
+            await self.redis.rpush(self._dequeue_notify, *(["1"] * len(result)))
+
+        return result
 
     async def sweep(self, lock: int = 60, abort: float = 5.0) -> list[str]:
         if not self._cleanup_script:
@@ -247,6 +267,7 @@ class RedisQueue(Queue):
                     logger.info(
                         "Sweeping job %s",
                         job.info(logger.isEnabledFor(logging.DEBUG)),
+                        extra={"job_key": job.key, "queue": self.name},
                     )
                     swept.append(job_id)
 
@@ -255,7 +276,11 @@ class RedisQueue(Queue):
                     try:
                         await job.refresh(abort)
                     except asyncio.TimeoutError:
-                        logger.info("Could not abort job %s", job_id)
+                        logger.info(
+                            "Could not abort job %s",
+                            job_id,
+                            extra={"queue": self.name},
+                        )
 
                     if job.retryable:
                         await self.retry(job, error=self.swept_error_message)
@@ -266,9 +291,16 @@ class RedisQueue(Queue):
 
                 async with self.redis.pipeline(transaction=True) as pipe:
                     await (
-                        pipe.lrem(self._active, 0, job_id).zrem(self._incomplete, job_id).execute()
+                        pipe.lrem(self._active, 0, job_id)
+                        .zrem(self._incomplete, job_id)
+                        .zrem(self._queued, job_id)
+                        .execute()
                     )
-                logger.info("Sweeping missing job %s", job_id)
+                logger.info(
+                    "Sweeping missing job %s",
+                    job_id,
+                    extra={"queue": self.name},
+                )
 
         return [job_id.decode("utf-8") for job_id in swept]
 
@@ -325,8 +357,9 @@ class RedisQueue(Queue):
                 job.error = error
 
                 dequeued, *_ = await (
-                    pipe.lrem(self._queued, 0, job.id)
+                    pipe.zrem(self._queued, job.id)
                     .zrem(self._incomplete, job.id)
+                    .hdel(self._priorities, job.id)
                     .set(job.id, self.serialize(job))
                     .setex(job.abort_id, ttl, error)
                     .publish(job.id, job.status)
@@ -340,24 +373,55 @@ class RedisQueue(Queue):
                 await self.redis.lrem(self._active, 0, job.id)
 
     async def dequeue(self, timeout: float = 0.0, poll_interval: float = 0.0) -> Job | None:
-        if await self.version() < (6, 2, 0):
-            job_id = await self.redis.brpoplpush(
-                self._queued,
-                self._active,
-                timeout,  # type:ignore[arg-type]
+        if not self._dequeue_script:
+            self._dequeue_script = self.redis.register_script(
+                """
+                local items = redis.call('ZPOPMIN', KEYS[1])
+                if items and #items > 0 then
+                    local job_id = items[1]
+                    redis.call('RPUSH', KEYS[2], job_id)
+                    return job_id
+                end
+                return nil
+                """
             )
-        else:
-            job_id = await self.redis.blmove(
-                self._queued,
-                self._active,
-                timeout,
-                "LEFT",
-                "RIGHT",
-            )
-        if job_id is not None:
+
+        # First try non-blocking
+        job_id = await self._dequeue_script(
+            keys=[self._queued, self._active],
+            client=self.redis,
+        )
+        if job_id:
             return await self._get_job_by_id(job_id)
 
-        logger.debug("Dequeue timed out")
+        # Block on notification list, then retry ZPOPMIN.
+        # timeout=0 means block indefinitely (matching BRPOPLPUSH semantics).
+        deadline = time.monotonic() + timeout if timeout > 0 else float("inf")
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+
+            blpop_timeout = max(1.0, remaining) if timeout > 0 else 5.0
+            result = await self.redis.blpop(
+                self._dequeue_notify,
+                blpop_timeout,  # type:ignore[arg-type]
+            )
+            if not result:
+                if timeout > 0:
+                    break
+                # timeout=0: indefinite — loop and wait again
+                continue
+
+            # Woken by notification — try to dequeue
+            job_id = await self._dequeue_script(
+                keys=[self._queued, self._active],
+                client=self.redis,
+            )
+            if job_id:
+                return await self._get_job_by_id(job_id)
+
+        logger.debug("Dequeue timed out", extra={"queue": self.name})
         return None
 
     async def listen(
@@ -410,15 +474,20 @@ class RedisQueue(Queue):
 
         async with self.redis.pipeline(transaction=True) as pipe:
             pipe = pipe.lrem(self._active, 1, job_id)
-            pipe = pipe.lrem(self._queued, 1, job_id)
+            pipe = pipe.zrem(self._queued, job_id)
             if next_retry_delay:
                 scheduled = time.time() + next_retry_delay
                 pipe = pipe.zadd(self._incomplete, {job_id: scheduled})
             else:
                 pipe = pipe.zadd(self._incomplete, {job_id: job.scheduled})
-                pipe = pipe.rpush(self._queued, job_id)
+                seq = await self.redis.incr(self._queued_seq)
+                score = job.priority * SCORE_MULTIPLIER + seq
+                pipe = pipe.zadd(self._queued, {job_id: score})
+                pipe = pipe.hset(self._priorities, job_id, str(job.priority))
             await pipe.set(job_id, self.serialize(job)).execute()
             await self.notify(job)
+            if not next_retry_delay:
+                await self.redis.rpush(self._dequeue_notify, "1")
 
     async def _finish(
         self,
@@ -431,7 +500,7 @@ class RedisQueue(Queue):
         job_id = job.id
 
         async with self.redis.pipeline(transaction=True) as pipe:
-            pipe = pipe.lrem(self._active, 1, job_id).zrem(self._incomplete, job_id)
+            pipe = pipe.lrem(self._active, 1, job_id).zrem(self._incomplete, job_id).hdel(self._priorities, job_id)
 
             if job.ttl > 0:
                 pipe = pipe.setex(job_id, job.ttl, self.serialize(job))
@@ -451,7 +520,12 @@ class RedisQueue(Queue):
                 if not redis.call('ZSCORE', KEYS[1], KEYS[2]) and redis.call('EXISTS', KEYS[4]) == 0 then
                     redis.call('SET', KEYS[2], ARGV[1])
                     redis.call('ZADD', KEYS[1], ARGV[2], KEYS[2])
-                    if ARGV[2] == '0' then redis.call('RPUSH', KEYS[3], KEYS[2]) end
+                    redis.call('HSET', KEYS[5], KEYS[2], ARGV[3])
+                    if ARGV[2] == '0' then
+                        local seq = redis.call('INCR', KEYS[6])
+                        local score = tonumber(ARGV[3]) * """ + str(SCORE_MULTIPLIER) + """ + seq
+                        redis.call('ZADD', KEYS[3], score, KEYS[2])
+                    end
                     return 1
                 else
                     return nil
@@ -461,14 +535,28 @@ class RedisQueue(Queue):
 
         async with self._op_sem:
             if not await self._enqueue_script(
-                keys=[self._incomplete, job.id, self._queued, job.abort_id],
-                args=[self.serialize(job), job.scheduled],
+                keys=[self._incomplete, job.id, self._queued, job.abort_id, self._priorities, self._queued_seq],
+                args=[self.serialize(job), job.scheduled, job.priority],
                 client=self.redis,
             ):
                 return None
 
-        logger.info("Enqueuing %s", job.info(logger.isEnabledFor(logging.DEBUG)))
+        await self.redis.rpush(self._dequeue_notify, "1")
+        logger.info(
+            "Enqueuing %s",
+            job.info(logger.isEnabledFor(logging.DEBUG)),
+            extra={"job_key": job.key, "job_function": job.function, "queue": self.name},
+        )
         return job
+
+    async def _get_cached_result(self, cache_key: str) -> t.Any:
+        data = await self.redis.get(cache_key)
+        if data is None:
+            return None
+        return self._load(data)
+
+    async def _set_cached_result(self, cache_key: str, result: t.Any, ttl: int) -> None:
+        await self.redis.setex(cache_key, ttl, self._dump(result))
 
 
 class PubSubMultiplexer(Multiplexer):
@@ -500,7 +588,10 @@ class PubSubMultiplexer(Multiplexer):
             except asyncio.CancelledError:
                 return
             except Exception:
-                logger.exception("Failed to consume message")
+                logger.exception(
+                    "Failed to consume message",
+                    extra={"queue": self.name},
+                )
 
     async def _close(self) -> None:
         await self.pubsub.punsubscribe()

@@ -517,6 +517,157 @@ class TestRedisQueue(TestQueue):
         self.assertEqual("a", self.queue.job_key_from_id(self.queue.job_id("a")))
         self.assertEqual("a:b", self.queue.job_key_from_id(self.queue.job_id("a:b")))
 
+    # --- Priority queue tests ---
+
+    async def test_dequeue_respects_priority(self) -> None:
+        """Higher priority (lower number) jobs are dequeued first."""
+        await self.enqueue("low", priority=100)
+        await self.enqueue("high", priority=1)
+        await self.enqueue("medium", priority=50)
+
+        first = await self.dequeue()
+        second = await self.dequeue()
+        third = await self.dequeue()
+
+        self.assertEqual(first.function, "high")
+        self.assertEqual(second.function, "medium")
+        self.assertEqual(third.function, "low")
+
+    async def test_default_priority_zero(self) -> None:
+        """Jobs without explicit priority default to 0 (highest)."""
+        await self.enqueue("default_prio")
+        await self.enqueue("explicit_prio", priority=10)
+
+        first = await self.dequeue()
+        second = await self.dequeue()
+
+        self.assertEqual(first.function, "default_prio")
+        self.assertEqual(second.function, "explicit_prio")
+
+    async def test_same_priority_is_fifo(self) -> None:
+        """Jobs with same priority maintain FIFO order."""
+        await self.enqueue("first")
+        await self.enqueue("second")
+        await self.enqueue("third")
+
+        first = await self.dequeue()
+        second = await self.dequeue()
+        third = await self.dequeue()
+
+        self.assertEqual(first.function, "first")
+        self.assertEqual(second.function, "second")
+        self.assertEqual(third.function, "third")
+
+    async def test_priority_stored_in_job(self) -> None:
+        """Priority is correctly stored and retrievable from job data."""
+        job = await self.enqueue("test", priority=42)
+        retrieved = await self.queue.job(job.key)
+        self.assertEqual(retrieved.priority, 42)
+
+    async def test_mixed_priority_enqueue(self) -> None:
+        """Mixed priorities in batch enqueue are dequeued in priority order."""
+        for prio in [5, 1, 10, 0, 3]:
+            await self.enqueue("test", priority=prio)
+
+        order = []
+        for _ in range(5):
+            job = await self.dequeue()
+            order.append(job.priority)
+
+        self.assertEqual(order, [0, 1, 3, 5, 10])
+
+    async def test_priority_negative(self) -> None:
+        """Negative priority (even higher) works correctly."""
+        await self.enqueue("negative", priority=-5)
+        await self.enqueue("zero", priority=0)
+        await self.enqueue("positive", priority=5)
+
+        first = await self.dequeue()
+        second = await self.dequeue()
+        third = await self.dequeue()
+
+        self.assertEqual(first.function, "negative")
+        self.assertEqual(second.function, "zero")
+        self.assertEqual(third.function, "positive")
+
+    async def test_priority_large_value(self) -> None:
+        """Large priority values work correctly."""
+        await self.enqueue("small", priority=1)
+        await self.enqueue("large", priority=1000000)
+
+        first = await self.dequeue()
+        second = await self.dequeue()
+
+        self.assertEqual(first.function, "small")
+        self.assertEqual(second.function, "large")
+
+    async def test_retry_preserves_priority(self) -> None:
+        """Retry preserves the job's priority."""
+        job = await self.enqueue("test", priority=42, retries=2)
+        await self.dequeue()
+        await self.queue.retry(job, None)
+
+        dequeued = await self.dequeue()
+        self.assertEqual(dequeued.function, "test")
+        self.assertEqual(dequeued.priority, 42)
+
+    async def test_abort_with_priority(self) -> None:
+        """Abort correctly removes a prioritized job from queue."""
+        job = await self.enqueue("test", priority=10, retries=2)
+        self.assertEqual(await self.count("queued"), 1)
+        await self.queue.abort(job, "test")
+        self.assertEqual(await self.count("queued"), 0)
+        self.assertEqual(await self.count("incomplete"), 0)
+
+    async def test_count_queued_priority(self) -> None:
+        """count('queued') works with priority sorted set."""
+        await self.enqueue("test", priority=1)
+        await self.enqueue("test", priority=2)
+        await self.enqueue("test", priority=3)
+        self.assertEqual(await self.count("queued"), 3)
+
+    async def test_sweep_with_priority(self) -> None:
+        """Sweep works correctly with prioritized jobs."""
+        job = await self.enqueue("test", timeout=1, priority=5, retries=0)
+        await self.dequeue()
+        job.started = 1000
+        await self.queue.update(job, status=Status.ACTIVE)
+
+        with mock.patch("saq.utils.time") as mock_time:
+            mock_time.time.return_value = 3
+            swept = await self.queue.sweep(abort=0.01)
+
+        self.assertIn(job.id, swept)
+        await job.refresh()
+        self.assertEqual(job.status, Status.ABORTED)
+
+    async def test_priority_with_scheduled_jobs(self) -> None:
+        """Scheduled jobs retain priority when becoming due."""
+        with mock.patch("saq.utils.time") as mock_time:
+            mock_time.time.return_value = 0
+            await self.enqueue("scheduled_high", priority=1, scheduled=1)
+            await self.enqueue("scheduled_low", priority=10, scheduled=1)
+            await self.enqueue("normal", priority=5)
+
+            # Only normal job is queued initially
+            self.assertEqual(await self.count("queued"), 1)
+
+            # Advance time and schedule
+            mock_time.time.return_value = 2
+            await self.queue.schedule()
+
+            self.assertEqual(await self.count("queued"), 3)
+
+            # Dequeue should respect priority: 1, 5, 10
+            first = await self.dequeue()
+            self.assertEqual(first.function, "scheduled_high")
+
+            second = await self.dequeue()
+            self.assertEqual(second.function, "normal")
+
+            third = await self.dequeue()
+            self.assertEqual(third.function, "scheduled_low")
+
 
 class TestPostgresQueue(TestQueue):
     async def asyncSetUp(self) -> None:
