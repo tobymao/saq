@@ -18,18 +18,21 @@ def run(
     port: int = 8080,
     check: bool = False,
     quiet: bool = False,
+    log_format: str = "text",
 ) -> None:
     if not quiet:
+        from saq.logging import setup
+
         level = verbose
 
         if level == 0:
-            level = logging.WARNING
+            level_name = "WARNING"
         elif level == 1:
-            level = logging.INFO
+            level_name = "INFO"
         else:
-            level = logging.DEBUG
+            level_name = "DEBUG"
 
-        logging.basicConfig(level=level)
+        setup(format=log_format, level=level_name)
 
     if check:
         sys.exit(check_health(settings))

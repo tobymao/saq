@@ -49,6 +49,13 @@ def main() -> None:
         action="store_true",
         help="Disable automatic logging configuration",
     )
+    parser.add_argument(
+        "--log-format",
+        choices=["text", "json"],
+        default=os.environ.get("SAQ_LOG_FORMAT", "text"),
+        help="Log output format: 'text' (default) or 'json'. "
+        "Can also be set via SAQ_LOG_FORMAT env var",
+    )
 
     args = parser.parse_args()
 
@@ -64,6 +71,7 @@ def main() -> None:
         port=args.port,
         check=args.check,
         quiet=args.quiet,
+        log_format=args.log_format,
     )
 
 
