@@ -113,6 +113,9 @@ class TestWorker(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(job.status, Status.ACTIVE)
         task.cancel()
         await task
+        # the in-flight job is re-queued in the worker's CancelledError
+        # handler, which may land just after the worker task returns
+        await asyncio.sleep(0.1)
         await job.refresh()
         self.assertEqual(job.status, Status.QUEUED)
 
@@ -128,6 +131,7 @@ class TestWorker(unittest.IsolatedAsyncioTestCase):
         await self.worker.stop()
         await asyncio.sleep(0.01)
         assert task.done()
+        await asyncio.sleep(0.1)
         await job.refresh()
         self.assertEqual(job.status, Status.QUEUED)
 
