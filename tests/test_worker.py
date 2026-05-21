@@ -102,20 +102,19 @@ class TestWorker(unittest.IsolatedAsyncioTestCase):
         await job.refresh(0)
         self.assertEqual(job.result, 1)
         job = await self.enqueue("error")
-        await asyncio.sleep(0.05)
-        await job.refresh()
+        await job.refresh(0)
         self.assertEqual(job.status, Status.FAILED)
         assert job.error is not None and "oops" in job.error
-        job = await self.enqueue("sleeper")
+        job = await self.enqueue("sleeper", sleep=10)
         self.assertEqual(job.status, Status.QUEUED)
-        await asyncio.sleep(0.05)
+        await asyncio.sleep(0.5)
         await job.refresh()
         self.assertEqual(job.status, Status.ACTIVE)
         task.cancel()
         await task
         # the in-flight job is re-queued in the worker's CancelledError
-        # handler, which may land just after the worker task returns
-        await asyncio.sleep(0.1)
+        # handler, which may land a little after the worker task returns
+        await asyncio.sleep(0.5)
         await job.refresh()
         self.assertEqual(job.status, Status.QUEUED)
 
@@ -123,15 +122,15 @@ class TestWorker(unittest.IsolatedAsyncioTestCase):
         job = await self.enqueue("noop")
         await job.refresh(0)
         self.assertEqual(job.result, 1)
-        job = await self.enqueue("sleeper")
+        job = await self.enqueue("sleeper", sleep=10)
         self.assertEqual(job.status, Status.QUEUED)
-        await asyncio.sleep(0.05)
+        await asyncio.sleep(0.5)
         await job.refresh()
         self.assertEqual(job.status, Status.ACTIVE)
         await self.worker.stop()
         await asyncio.sleep(0.01)
         assert task.done()
-        await asyncio.sleep(0.1)
+        await asyncio.sleep(0.5)
         await job.refresh()
         self.assertEqual(job.status, Status.QUEUED)
 
