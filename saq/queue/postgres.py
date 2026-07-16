@@ -351,8 +351,7 @@ class PostgresQueue(Queue):
             return result[0]
 
     async def schedule(self, lock: int = 1) -> t.List[str]:
-        await self._dequeue()
-        return []
+        return await self._dequeue()
 
     async def sweep(self, lock: int = 60, abort: float = 5.0) -> list[str]:
         """Delete jobs and stats past their expiration and sweep stuck jobs"""
@@ -633,14 +632,15 @@ class PostgresQueue(Queue):
 
         return job
 
-    async def _dequeue(self) -> None:
+    async def _dequeue(self) -> list[str]:
+        dequeued_ids: list[str] = []
         if self._dequeue_lock.locked():
-            return
+            return dequeued_ids
 
         async with self._dequeue_lock:
             async with self.pool.connection() as conn, conn.transaction(), conn.cursor() as cursor:
                 if not self._waiting:
-                    return
+                    return dequeued_ids
                 await cursor.execute(
                     SQL(
                         dedent(
@@ -693,9 +693,12 @@ class PostgresQueue(Queue):
                     job.touched = dequeued
                     await self._update(job, status=Status.ACTIVE, connection=conn)
                     self._job_queue.put_nowait(job)
+                    dequeued_ids.append(job.id)
 
             if rows:
                 await self._notify(DEQUEUE)
+
+        return dequeued_ids
 
     async def _enqueue(self, job: Job) -> Job | None:
         async with self.pool.connection() as conn, conn.cursor() as cursor:
