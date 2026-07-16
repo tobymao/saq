@@ -633,14 +633,15 @@ class PostgresQueue(Queue):
         return job
 
     async def _dequeue(self) -> list[str]:
-        dequeued_ids: list[str] = []
         if self._dequeue_lock.locked():
-            return dequeued_ids
+            return []
+
+        scheduled_ids: list[str] = []
 
         async with self._dequeue_lock:
             async with self.pool.connection() as conn, conn.transaction(), conn.cursor() as cursor:
                 if not self._waiting:
-                    return dequeued_ids
+                    return scheduled_ids
                 await cursor.execute(
                     SQL(
                         dedent(
@@ -693,12 +694,14 @@ class PostgresQueue(Queue):
                     job.touched = dequeued
                     await self._update(job, status=Status.ACTIVE, connection=conn)
                     self._job_queue.put_nowait(job)
-                    dequeued_ids.append(job.id)
+                    # only report explicitly scheduled jobs, matching RedisQueue.schedule
+                    if job.scheduled:
+                        scheduled_ids.append(job.id)
 
             if rows:
                 await self._notify(DEQUEUE)
 
-        return dequeued_ids
+        return scheduled_ids
 
     async def _enqueue(self, job: Job) -> Job | None:
         async with self.pool.connection() as conn, conn.cursor() as cursor:
