@@ -152,7 +152,8 @@ class PostgresQueue(Queue):
     async def init_db(self) -> None:
         async with self.pool.connection() as conn, conn.cursor() as cursor, conn.transaction():
             await cursor.execute(
-                SQL("SELECT pg_try_advisory_lock(%(key1)s, 0)"),
+                # transaction-scoped so the lock can't outlive init_db on a pooled connection
+                SQL("SELECT pg_try_advisory_xact_lock(%(key1)s, 0)"),
                 {"key1": self.saq_lock_keyspace},
             )
             result = await cursor.fetchone()

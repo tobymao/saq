@@ -40,6 +40,12 @@ async def setup_postgres() -> None:
     async with await psycopg.AsyncConnection.connect(
         "postgres://postgres@localhost", autocommit=True
     ) as conn:
+        # kill connections leaked by previous tests so they can't block the drop
+        # or hold the init_db advisory lock
+        await conn.execute(
+            "SELECT pg_terminate_backend(pid) FROM pg_stat_activity"
+            " WHERE pid <> pg_backend_pid() AND datname = current_database()"
+        )
         await conn.execute(f"DROP SCHEMA IF EXISTS {POSTGRES_TEST_SCHEMA} CASCADE")
         await conn.execute(f"CREATE SCHEMA IF NOT EXISTS {POSTGRES_TEST_SCHEMA}")
 
