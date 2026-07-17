@@ -26,6 +26,8 @@ from tests.helpers import (
     create_postgres_queue,
     setup_postgres,
     teardown_postgres,
+    wait_for_job,
+    wait_for_status,
 )
 from saq.types import Context
 
@@ -107,15 +109,13 @@ class TestWorker(unittest.IsolatedAsyncioTestCase):
         assert job.error is not None and "oops" in job.error
         job = await self.enqueue("sleeper", sleep=10)
         self.assertEqual(job.status, Status.QUEUED)
-        await asyncio.sleep(0.5)
-        await job.refresh()
+        await wait_for_status(job, Status.ACTIVE)
         self.assertEqual(job.status, Status.ACTIVE)
         task.cancel()
         await task
         # the in-flight job is re-queued in the worker's CancelledError
         # handler, which may land a little after the worker task returns
-        await asyncio.sleep(0.5)
-        await job.refresh()
+        await wait_for_status(job, Status.QUEUED)
         self.assertEqual(job.status, Status.QUEUED)
 
         task = asyncio.create_task(self.worker.start())
@@ -124,14 +124,12 @@ class TestWorker(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(job.result, 1)
         job = await self.enqueue("sleeper", sleep=10)
         self.assertEqual(job.status, Status.QUEUED)
-        await asyncio.sleep(0.5)
-        await job.refresh()
+        await wait_for_status(job, Status.ACTIVE)
         self.assertEqual(job.status, Status.ACTIVE)
         await self.worker.stop()
         await asyncio.sleep(0.01)
         assert task.done()
-        await asyncio.sleep(0.5)
-        await job.refresh()
+        await wait_for_status(job, Status.QUEUED)
         self.assertEqual(job.status, Status.QUEUED)
 
     async def test_noop(self) -> None:
@@ -361,12 +359,7 @@ class TestWorker(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(worker.context["dependency"], DEPENDENCY_VALUE)
 
         job = await self.enqueue(dependent_task.__name__, sleep=2)
-        # wait for pickup instead of a fixed sleep: polling workers (TestHttpPoll)
-        # can take a few poll intervals on a loaded runner
-        deadline = time.monotonic() + 5
-        while job.status != Status.ACTIVE and time.monotonic() < deadline:
-            await asyncio.sleep(0.05)
-            await job.refresh()
+        await wait_for_status(job, Status.ACTIVE)
         self.assertEqual(job.status, Status.ACTIVE)
         stop_called_at = time.monotonic()
         await worker.stop()
@@ -748,21 +741,27 @@ class TestWorker(unittest.IsolatedAsyncioTestCase):
             ],
         )
 
+        async def abort_active_job(job: Job) -> None:
+            # wait for pickup, then abort until the worker has actually
+            # registered and cancelled the job: worker.abort is a no-op for
+            # jobs it hasn't started processing yet
+            await wait_for_status(job, Status.ACTIVE)
+            await job.update(status=Status.ABORTING)
+            deadline = time.monotonic() + 10
+            while job.status != Status.ABORTED and time.monotonic() < deadline:
+                await worker.abort(0)
+                await asyncio.sleep(0.05)
+                await job.refresh()
+
         job = await self.enqueue("yes_cancel")
         asyncio.create_task(worker.process())
-        await asyncio.sleep(0.1)
-        await job.update(status=Status.ABORTING)
-        await worker.abort(0)
-        await job.refresh()
+        await abort_active_job(job)
         self.assertEqual(job.status, Status.ABORTED)
         self.assertEqual(state["counter"], 0)
 
         job = await self.enqueue("no_cancel")
         asyncio.create_task(worker.process())
-        await asyncio.sleep(0.1)
-        await job.update(status=Status.ABORTING)
-        await worker.abort(0)
-        await job.refresh()
+        await abort_active_job(job)
         self.assertEqual(job.status, Status.ABORTED)
         self.assertEqual(state["counter"], 1)
 
@@ -770,8 +769,9 @@ class TestWorker(unittest.IsolatedAsyncioTestCase):
     async def test_worker_id(self, _mock_logger: MagicMock) -> None:
         task = asyncio.create_task(self.worker.start())
         job = await self.enqueue("sleeper", sleep=60)
-        await asyncio.sleep(5)
-        await job.refresh()
+        # dequeue marks the job active queue-side before the worker's own update
+        # writes worker_id, so wait for both
+        await wait_for_job(job, lambda j: j.status == Status.ACTIVE and bool(j.worker_id))
         self.assertEqual(job.status, Status.ACTIVE)
         self.assertEqual(self.worker.id, job.worker_id)
         task.cancel()

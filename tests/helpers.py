@@ -1,8 +1,10 @@
 import asyncio
+import time
 import typing as t
 
 import psycopg
 
+from saq.job import Job, Status
 from saq.queue import Queue
 from saq.queue.postgres import PostgresQueue
 from saq.queue.redis import RedisQueue
@@ -28,6 +30,24 @@ async def create_postgres_queue(**kwargs: t.Any) -> PostgresQueue:
     await queue.connect()
     await asyncio.sleep(0.1)  # Give some time for the tasks to start
     return queue
+
+
+async def wait_for_job(job: Job, predicate: t.Callable[[Job], bool], timeout: float = 10) -> None:
+    """Refresh the job until the predicate holds or the deadline expires.
+
+    Callers still assert on the job afterwards, so a timeout surfaces the actual
+    state instead of hiding it. Use this instead of a fixed sleep before asserting
+    job state: fixed sleeps are the main source of flakes on loaded CI runners.
+    """
+    deadline = time.monotonic() + timeout
+    while not predicate(job) and time.monotonic() < deadline:
+        await asyncio.sleep(0.05)
+        await job.refresh()
+
+
+async def wait_for_status(job: Job, *statuses: Status, timeout: float = 10) -> None:
+    """Refresh the job until its status is one of statuses or the deadline expires."""
+    await wait_for_job(job, lambda j: j.status in statuses, timeout=timeout)
 
 
 async def cleanup_queue(queue: Queue) -> None:
