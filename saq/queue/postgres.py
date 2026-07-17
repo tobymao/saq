@@ -610,9 +610,7 @@ class PostgresQueue(Queue):
 
                             return None
 
-                        job = await (
-                            wait_for(_poll(), timeout) if timeout > 0.0 else _poll()
-                        )
+                        job = await (wait_for(_poll(), timeout) if timeout > 0.0 else _poll())
                     else:
                         async for payload in self._listener.listen(
                             ENQUEUE, DEQUEUE, timeout=timeout
