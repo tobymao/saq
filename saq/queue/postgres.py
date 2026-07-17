@@ -152,7 +152,8 @@ class PostgresQueue(Queue):
     async def init_db(self) -> None:
         async with self.pool.connection() as conn, conn.cursor() as cursor, conn.transaction():
             await cursor.execute(
-                SQL("SELECT pg_try_advisory_lock(%(key1)s, 0)"),
+                # transaction-scoped so the lock can't outlive init_db on a pooled connection
+                SQL("SELECT pg_try_advisory_xact_lock(%(key1)s, 0)"),
                 {"key1": self.saq_lock_keyspace},
             )
             result = await cursor.fetchone()
@@ -351,8 +352,7 @@ class PostgresQueue(Queue):
             return result[0]
 
     async def schedule(self, lock: int = 1) -> t.List[str]:
-        await self._dequeue()
-        return []
+        return await self._dequeue()
 
     async def sweep(self, lock: int = 60, abort: float = 5.0) -> list[str]:
         """Delete jobs and stats past their expiration and sweep stuck jobs"""
@@ -633,14 +633,16 @@ class PostgresQueue(Queue):
 
         return job
 
-    async def _dequeue(self) -> None:
+    async def _dequeue(self) -> list[str]:
         if self._dequeue_lock.locked():
-            return
+            return []
+
+        scheduled_ids: list[str] = []
 
         async with self._dequeue_lock:
             async with self.pool.connection() as conn, conn.transaction(), conn.cursor() as cursor:
                 if not self._waiting:
-                    return
+                    return scheduled_ids
                 await cursor.execute(
                     SQL(
                         dedent(
@@ -693,9 +695,14 @@ class PostgresQueue(Queue):
                     job.touched = dequeued
                     await self._update(job, status=Status.ACTIVE, connection=conn)
                     self._job_queue.put_nowait(job)
+                    # only report explicitly scheduled jobs, matching RedisQueue.schedule
+                    if job.scheduled:
+                        scheduled_ids.append(job.id)
 
             if rows:
                 await self._notify(DEQUEUE)
+
+        return scheduled_ids
 
     async def _enqueue(self, job: Job) -> Job | None:
         async with self.pool.connection() as conn, conn.cursor() as cursor:

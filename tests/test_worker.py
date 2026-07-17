@@ -454,7 +454,8 @@ class TestWorker(unittest.IsolatedAsyncioTestCase):
             await asyncio.sleep(2)
             self.assertEqual(await self.queue.count("active"), 1)
 
-            # Remove if statement when schedule is implemented for Postgres queue
+            # Redis only: on Postgres, schedule() surfaces a job only while a consumer is
+            # waiting, so this log races the dequeue poll (return value covered by test_schedule)
             if isinstance(self.queue, RedisQueue):
                 mock_logger.info.assert_any_call("Scheduled %s", ["saq:job:default:cron:sleeper"])
 

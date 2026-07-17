@@ -532,10 +532,27 @@ class TestPostgresQueue(TestQueue):
     async def test_job_key(self) -> None:
         pass
 
-    @unittest.skip("Not implemented")
     @mock.patch("saq.utils.time")
     async def test_schedule(self, mock_time: MagicMock) -> None:
-        pass
+        mock_time.time.return_value = 2
+        # schedule() only dequeues while a consumer is waiting
+        self.queue._waiting = 10
+        self.assertEqual(await self.count("queued"), 0)
+        self.assertEqual(await self.count("active"), 0)
+        await self.enqueue("test")
+        job1 = await self.enqueue("test", scheduled=1)
+        job2 = await self.enqueue("test", scheduled=2)
+        await self.enqueue("test", scheduled=3)
+        self.assertEqual(await self.count("queued"), 3)
+        self.assertEqual(await self.count("active"), 0)
+        jobs1 = await self.queue.schedule()
+        jobs2 = await self.queue.schedule()
+        # the unscheduled job is dequeued too, but only jobs with an explicit
+        # scheduled time are reported, matching RedisQueue.schedule
+        self.assertEqual(jobs1, [job1.id, job2.id])
+        self.assertEqual(jobs2, [])
+        self.assertEqual(await self.count("queued"), 0)
+        self.assertEqual(await self.count("active"), 3)
 
     async def test_enqueue_dup(self) -> None:
         job = await self.enqueue("test", key="1")
