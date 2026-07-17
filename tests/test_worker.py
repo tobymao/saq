@@ -360,9 +360,13 @@ class TestWorker(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(x["shutdown_b"], 0)
         self.assertEqual(worker.context["dependency"], DEPENDENCY_VALUE)
 
-        job = await self.enqueue(dependent_task.__name__, sleep=0.1)
-        await asyncio.sleep(0.05)
-        await job.refresh()
+        job = await self.enqueue(dependent_task.__name__, sleep=2)
+        # wait for pickup instead of a fixed sleep: polling workers (TestHttpPoll)
+        # can take a few poll intervals on a loaded runner
+        deadline = time.monotonic() + 5
+        while job.status != Status.ACTIVE and time.monotonic() < deadline:
+            await asyncio.sleep(0.05)
+            await job.refresh()
         self.assertEqual(job.status, Status.ACTIVE)
         stop_called_at = time.monotonic()
         await worker.stop()
