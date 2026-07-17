@@ -64,16 +64,41 @@ def exponential_backoff(
     return backoff
 
 
+async def wait_for(awaitable: t.Awaitable, timeout: float | None) -> t.Any:
+    """Like asyncio.wait_for, but robust to swallowed cancellations.
+
+    Before Python 3.12, asyncio.wait_for cancels the task once when the timeout
+    fires and then waits forever for it to finish. That cancellation is lost if
+    it races a completing future inside a nested wait_for (bpo-42130) - e.g. the
+    waits inside psycopg's connection pool - deadlocking a task that polls in a
+    loop, like Queue.listen. Cancel repeatedly until the task actually finishes.
+    """
+    task = asyncio.ensure_future(awaitable)
+    try:
+        done, _ = await asyncio.wait({task}, timeout=timeout)
+        if done:
+            return task.result()
+        raise asyncio.TimeoutError
+    finally:
+        while not task.done():
+            task.cancel()
+            await asyncio.wait({task}, timeout=0.1)
+
+
 async def cancel_tasks(
     tasks: Iterable[asyncio.Task],
     timeout: float | None = 1.0,
 ) -> bool:
     """Cancel tasks and wait for all of them to finish"""
+    tasks = list(tasks)
     for task in tasks:
         task.cancel()
 
-    try:
-        await asyncio.wait_for(asyncio.gather(*tasks, return_exceptions=True), timeout)
-    except (asyncio.TimeoutError, asyncio.CancelledError):
-        pass
+    if tasks:
+        # asyncio.wait instead of wait_for(gather(...)): wait_for waits for the
+        # gather to finish even after its timeout, hanging on a stuck task.
+        await asyncio.wait(tasks, timeout=timeout)
+    for task in tasks:
+        if task.done() and not task.cancelled():
+            task.exception()
     return all(task.done() for task in tasks)

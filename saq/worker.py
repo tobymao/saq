@@ -220,12 +220,12 @@ class Worker(t.Generic[CtxType]):
             try:
                 all_tasks = list(self.tasks)
                 self.tasks.clear()
-                try:
-                    await asyncio.wait_for(
-                        asyncio.gather(*all_tasks, return_exceptions=True),
-                        timeout=self._shutdown_grace_period_s or 0,
-                    )
-                except asyncio.TimeoutError:
+                # asyncio.wait instead of wait_for(gather(...)): wait_for waits
+                # for the gather to finish even after its timeout, hanging on a
+                # task that doesn't finish promptly.
+                if all_tasks:
+                    await asyncio.wait(all_tasks, timeout=self._shutdown_grace_period_s or 0)
+                if not all(task.done() for task in all_tasks):
                     logger.warning(
                         "Some tasks did not finish within the shutdown grace period, requesting cancellation"
                     )
@@ -236,6 +236,9 @@ class Worker(t.Generic[CtxType]):
                         logger.warning(
                             "Some tasks did not finish cancellation in time, they may be stuck or blocked"
                         )
+                for task in all_tasks:
+                    if task.done() and not task.cancelled():
+                        task.exception()
 
                 if sys.version_info[0:2] < (3, 9):
                     self.pool.shutdown(True)

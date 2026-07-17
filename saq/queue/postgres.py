@@ -21,7 +21,7 @@ from saq.job import (
 from saq.multiplexer import Multiplexer
 from saq.queue.base import Queue, logger
 from saq.queue.postgres_migrations import get_migrations
-from saq.utils import now, now_seconds
+from saq.utils import now, now_seconds, wait_for
 
 if t.TYPE_CHECKING:
     from collections.abc import Iterable
@@ -611,7 +611,7 @@ class PostgresQueue(Queue):
                             return None
 
                         job = await (
-                            asyncio.wait_for(_poll(), timeout) if timeout > 0.0 else _poll()
+                            wait_for(_poll(), timeout) if timeout > 0.0 else _poll()
                         )
                     else:
                         async for payload in self._listener.listen(

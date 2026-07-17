@@ -20,7 +20,7 @@ from saq.job import (
     Status,
     get_default_job_key,
 )
-from saq.utils import now
+from saq.utils import now, wait_for
 
 if t.TYPE_CHECKING:
     from collections.abc import AsyncIterator, Iterable, Sequence
@@ -387,7 +387,7 @@ class Queue(ABC):
                 await asyncio.sleep(poll_interval)
 
         if timeout:
-            await asyncio.wait_for(listen(), timeout)
+            await wait_for(listen(), timeout)
         else:
             await listen()
 
@@ -491,7 +491,7 @@ class Queue(ABC):
                 await asyncio.sleep(poll_interval)
             return list(results.values())
 
-        return await asyncio.wait_for(_map(), timeout)
+        return await wait_for(_map(), timeout)
 
     @asynccontextmanager
     async def batch(self) -> AsyncIterator[None]:
