@@ -26,6 +26,7 @@ if t.TYPE_CHECKING:
 
 
 QUEUES_KEY = web.AppKey("queues", t.Dict[str, Queue])
+ROOT_PATH_KEY = web.AppKey("root_path", str)
 
 
 async def queues_(request: Request) -> Response:
@@ -58,8 +59,9 @@ async def abort(request: Request) -> Response:
     return web.json_response({})
 
 
-async def views(_request: Request) -> Response:
-    return web.Response(text=render(root_path=""), content_type="text/html")
+async def views(request: Request) -> Response:
+    root_path = request.app[ROOT_PATH_KEY]
+    return web.Response(text=render(root_path=root_path), content_type="text/html")
 
 
 async def health(request: Request) -> Response:
@@ -104,7 +106,7 @@ async def shutdown(app: Application) -> None:
         await queue.disconnect()
 
 
-def create_app(queues: list[Queue]) -> Application:
+def create_app(queues: list[Queue], root_path: str = "") -> Application:
     middlewares = [exceptions]
     password = os.environ.get("AUTH_PASSWORD")
 
@@ -116,6 +118,7 @@ def create_app(queues: list[Queue]) -> Application:
 
     app = web.Application(middlewares=middlewares)
     app[QUEUES_KEY] = {q.name: q for q in queues}
+    app[ROOT_PATH_KEY] = root_path
 
     app.add_routes(
         [

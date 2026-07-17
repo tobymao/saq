@@ -23,8 +23,26 @@ const handle_error = function(error) {
   return { error: error.toString() }
 }
 
-const apiPath = function(path) {
-  return root_path + "/api" + path.replace(RegExp(`^${root_path}`), '')
+const _rp = root_path.endsWith('/') ? root_path.slice(0, -1) : root_path
+
+const path = function(p) {
+  return _rp + p
+}
+
+const R = {
+  home: '/',
+  queue: '/queues/:queue_id',
+  job: '/queues/:queue_id/jobs/:job_id',
+  retry: '/queues/:queue_id/jobs/:job_id/retry',
+  abort: '/queues/:queue_id/jobs/:job_id/abort',
+}
+
+const resolve = function(template, params) {
+  return template.replace(/:\w+/g, match => params && match.slice(1) in params ? params[match.slice(1)] : match)
+}
+
+const apiPath = function(p) {
+  return path("/api" + p)
 }
 
 const get = async function(path) {
@@ -70,15 +88,15 @@ const button = function(children, handler, data) {
 }
 
 const link = function(data, children) {
+  const href = _rp + data.props.href
   const handler = function(event) {
     event.preventDefault()
-    const path = data.props.href
-    page(path).then(view => render(view))
-    window.history.pushState(null, null, path)
+    page(href).then(view => render(view))
+    window.history.pushState(null, null, href)
     event.target.blur()
   }
 
-  return h("a", Object.assign({ on: { click: handler } }, data), children)
+  return h("a", Object.assign({ on: { click: handler } }, data, { props: { href } }), children)
 }
 
 const format_time = time => time ? new Date(time).toLocaleString() : ""
@@ -98,7 +116,7 @@ const home_view = function(data) {
       ]),
       h("tbody", { attrs: { role: "grid" } }, data.queues.map(queue =>
         h("tr", [
-          h("td", link({ props: { href: root_path + "/queues/" + queue.name } }, queue.name)),
+          h("td", link({ props: { href: resolve(R.queue, { queue_id: queue.name }) } }, queue.name)),
           h("td", queue.active),
           h("td", queue.queued),
           h("td", queue.scheduled),
@@ -175,7 +193,7 @@ const queue_view = function(data, queue_name) {
       h("thead", h("tr", [h("th", "Key"), ...job_headers()])),
       h("tbody", queue.jobs.map(job =>
         h("tr", [
-          link({ props: { href: root_path + "/queues/" + queue_name + "/jobs/" + job.key } }, h("td", job.key)),
+          link({ props: { href: resolve(R.job, { queue_id: queue_name, job_id: job.key }) } }, h("td", job.key)),
           ...job_columns(job),
         ])
       )),
@@ -187,14 +205,14 @@ const job_view = function(data, queue_name, job_key) {
   const job = data.job
   const buttons = [button(
     "Retry",
-    event => post(root_path + "/queues/" + queue_name + "/jobs/" + job_key + "/retry"),
+    event => post(resolve(R.retry, { queue_id: queue_name, job_id: job_key })),
     { style: { marginRight: "1rem" } },
   )]
 
   if (!job.completed) {
     buttons.push(button(
       "Abort",
-      event => post(root_path + "/queues/" + queue_name + "/jobs/" + job_key + "/abort"),
+      event => post(resolve(R.abort, { queue_id: queue_name, job_id: job_key })),
       { style: { borderColor: "#d81b60", backgroundColor: "#d81b60" } },
     ))
   }
@@ -214,7 +232,7 @@ const job_view = function(data, queue_name, job_key) {
       ])),
       h("tbody", h("tr", [
         ...job_columns(job),
-        h("td", link({ props: { href: "/queues/" + job.queue } }, job.queue)),
+        h("td", link({ props: { href: resolve(R.queue, { queue_id: job.queue }) } }, job.queue)),
         h("td", h("progress", { props: { value: job.progress || 0, max: 1.0 } })),
         h("td", job.attempts),
       ])),
@@ -237,12 +255,10 @@ const error_view = function(error) {
   ])
 }
 
-const root_path_1 = root_path + '/'
-
 let routes = {}
-routes[root_path + '/'] = { view: home_view, data: "/queues" }
-routes[root_path + '/queues/:queue_id'] = { view: queue_view }
-routes[root_path + '/queues/:queue_id/jobs/:job_id'] = { view: job_view }
+routes[path(R.home)] = { view: home_view, data: "/queues" }
+routes[path(R.queue)] = { view: queue_view }
+routes[path(R.job)] = { view: job_view }
 
 routes = Object.keys(routes)
   .sort(function(a, b) { return b.length - a.length; })
@@ -254,19 +270,20 @@ routes = Object.keys(routes)
     };
   })
 
-const page = async function(path) {
-  path ||= window.location.pathname
-  const route = routes.find(route => path.match(route.path))
+const page = async function(p) {
+  p ||= window.location.pathname
+  const route = routes.find(route => p.match(route.path))
   let view = error_view("404 not found")
   if (route) {
-    const data = await get(route.data || path)
-    const args = path.match(route.path).slice(1)
+    const api = p.startsWith(_rp) && (p.length === _rp.length || p[_rp.length] === '/') ? p.slice(_rp.length) : p
+    const data = await get(route.data || api)
+    const args = p.match(route.path).slice(1)
     view = data.error ? error_view(data.error) : route.view(data, ...args)
   }
 
   return h("div", [
     h("nav.container", [
-      h("ul", h("li", link({ props: { href: root_path + "/" } }, h("strong", "SAQ")))),
+      h("ul", h("li", link({ props: { href: R.home } }, h("strong", "SAQ")))),
       h("ul", [
         h("li", h("a", { props: { href: "https://saq-py.readthedocs.io" } }, "Docs")),
       ]),
