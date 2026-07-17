@@ -54,4 +54,6 @@ jobs:
         pip install -e .[dev,web]
     - name: Run Checks
       run: |
-        make style test
+        make style
+        # abort with a full stack dump of all threads if the suite hangs
+        PYTHONFAULTHANDLER=1 timeout --signal=ABRT 600 python -m coverage run -m unittest -vv
