@@ -554,6 +554,23 @@ class TestPostgresQueue(TestQueue):
         self.assertEqual(await self.count("queued"), 0)
         self.assertEqual(await self.count("active"), 3)
 
+    async def test_schedule_activates_at_most_one_job_per_group(self) -> None:
+        self.queue._waiting = 10
+        await self.enqueue("test", group_key="shared")
+        await self.enqueue("test", group_key="shared")
+        await self.enqueue("test", group_key="independent")
+
+        await self.queue.schedule()
+
+        self.assertEqual(await self.count("active"), 2)
+        self.assertEqual(await self.count("queued"), 1)
+
+        await self.enqueue("test")
+        await self.queue.schedule()
+
+        self.assertEqual(await self.count("active"), 3)
+        self.assertEqual(await self.count("queued"), 1)
+
     async def test_enqueue_dup(self) -> None:
         job = await self.enqueue("test", key="1")
         self.assertEqual(job.id, "1")

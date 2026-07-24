@@ -645,23 +645,36 @@ class PostgresQueue(Queue):
                     SQL(
                         dedent(
                             """
-                            WITH locked_job AS (
-                              SELECT key
-                              FROM {jobs_table}
-                              WHERE status = 'queued'
-                                AND queue = %(queue)s
+                            WITH eligible_jobs AS (
+                              SELECT DISTINCT ON (COALESCE(queued.group_key, queued.key))
+                                queued.key, queued.priority, queued.scheduled
+                              FROM {jobs_table} AS queued
+                              WHERE queued.status = 'queued'
+                                AND queued.queue = %(queue)s
                                 AND %(now)s >= scheduled
                                 AND priority BETWEEN %(plow)s AND %(phigh)s
-                                AND group_key NOT IN (
-                                  SELECT DISTINCT group_key
-                                  FROM {jobs_table}
-                                  WHERE status = 'active'
-                                    AND queue = %(queue)s
-                                    AND group_key IS NOT NULL
+                                AND (
+                                  queued.group_key IS NULL
+                                  OR NOT EXISTS (
+                                    SELECT 1
+                                    FROM {jobs_table} AS active
+                                    WHERE active.status = 'active'
+                                      AND active.queue = %(queue)s
+                                      AND active.group_key = queued.group_key
+                                  )
                                 )
-                              ORDER BY priority, scheduled
+                              ORDER BY
+                                COALESCE(queued.group_key, queued.key),
+                                queued.priority,
+                                queued.scheduled
+                            ),
+                            locked_job AS (
+                              SELECT queued.key
+                              FROM {jobs_table} AS queued
+                              JOIN eligible_jobs USING (key)
+                              ORDER BY queued.priority, queued.scheduled
                               LIMIT %(limit)s
-                              FOR UPDATE SKIP LOCKED
+                              FOR UPDATE OF queued SKIP LOCKED
                             )
                             UPDATE {jobs_table} SET status = 'active'
                             FROM locked_job
