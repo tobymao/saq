@@ -646,7 +646,10 @@ class PostgresQueue(Queue):
                         dedent(
                             """
                             WITH eligible_jobs AS (
-                              SELECT DISTINCT ON (COALESCE(queued.group_key, queued.key))
+                              SELECT DISTINCT ON (
+                                queued.group_key IS NULL,
+                                COALESCE(queued.group_key, queued.key)
+                              )
                                 queued.key, queued.priority, queued.scheduled
                               FROM {jobs_table} AS queued
                               WHERE queued.status = 'queued'
@@ -664,6 +667,7 @@ class PostgresQueue(Queue):
                                   )
                                 )
                               ORDER BY
+                                queued.group_key IS NULL,
                                 COALESCE(queued.group_key, queued.key),
                                 queued.priority,
                                 queued.scheduled
