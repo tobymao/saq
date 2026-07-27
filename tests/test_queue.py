@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 import pickle
 import time
 import typing as t
 import unittest
+import uuid
 from functools import partial
 from unittest import mock
 
@@ -257,6 +259,18 @@ class TestQueue(unittest.IsolatedAsyncioTestCase):
         await worker.queue.sweep()
         info = await self.queue.info(jobs=True)
         self.assertEqual(info["workers"], {})
+
+    async def test_info_jobs_json_safe(self) -> None:
+        # Queues that pickle payloads can carry kwargs/results that aren't JSON-native
+        # (dates, UUIDs, etc). info(jobs=True) must still produce a JSON-serializable
+        # payload, mirroring the safety conversion applied to the single-job route.
+        self.queue = await self.create_queue(dump=pickle.dumps, load=pickle.loads)
+        await self.enqueue("echo", a=uuid.uuid4())
+
+        info = await self.queue.info(jobs=True)
+        self.assertEqual(len(info["jobs"]), 1)
+        json.dumps(info)  # must not raise TypeError
+        self.assertIsInstance(info["jobs"][0]["kwargs"], str)
 
     @mock.patch("saq.utils.time")
     async def test_schedule(self, mock_time: MagicMock) -> None:

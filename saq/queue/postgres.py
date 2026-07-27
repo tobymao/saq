@@ -288,7 +288,7 @@ class PostgresQueue(Queue):
                 )
                 rows = await cursor.fetchall()
             deserialized_jobs = (self.deserialize(*row) for row in rows)
-            jobs_info = [job.to_dict() for job in deserialized_jobs if job]
+            jobs_info = [job.to_dict(safe=True) for job in deserialized_jobs if job]
         else:
             jobs_info = []
 

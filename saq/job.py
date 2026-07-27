@@ -207,9 +207,16 @@ class Job:
     def abort_id(self) -> str:
         return f"{ABORT_ID_PREFIX}{self.key}"
 
-    def to_dict(self) -> dict[str, t.Any]:
+    def to_dict(self, safe: bool = False) -> dict[str, t.Any]:
         """
         Serialises the Job to dict
+
+        Args:
+            safe: If True, `kwargs`/`result` are converted to their repr() so the
+                dict is always JSON-serializable regardless of the queue's
+                `dump`/`load` (e.g. pickle-based queues carrying dates, UUIDs,
+                or other non-JSON-native payloads). Use for display/API purposes
+                only — never for round-trip (de)serialization.
         """
         result = {}
         for field in dataclasses.fields(self):
@@ -221,6 +228,8 @@ class Job:
                 continue
             if key == "queue" and value:
                 value = value.name
+            if safe and key in ("kwargs", "result"):
+                value = repr(value)
             result[key] = value
         return result
 
