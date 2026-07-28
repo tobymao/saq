@@ -30,9 +30,4 @@ def render(root_path: str) -> str:
 
 
 def job_dict(job: Job) -> dict:
-    data = job.to_dict()
-    if "kwargs" in data:
-        data["kwargs"] = repr(data["kwargs"])
-    if "result" in data:
-        data["result"] = repr(data["result"])
-    return data
+    return job.to_dict(safe=True)

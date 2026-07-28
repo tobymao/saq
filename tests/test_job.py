@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import typing as t
 import unittest
+import uuid
 from unittest import mock
 
 from saq.job import Job, Status
@@ -152,6 +154,27 @@ class TestJob(unittest.IsolatedAsyncioTestCase):
 
         assert job.to_dict()["result"].equals(df)
         assert "result: Empty DataFrame" in job.info(True)
+
+    async def test_to_dict_safe(self) -> None:
+        # safe=False (default) is unaffected, and is what (de)serialization relies on
+        job = Job("f", key="a", kwargs={"x": uuid.uuid4()}, result=uuid.uuid4())
+        assert job.to_dict() == {
+            "function": "f",
+            "key": "a",
+            "kwargs": job.kwargs,
+            "result": job.result,
+        }
+
+        # safe=True reprs non-JSON-safe fields so the dict is always serializable
+        safe = job.to_dict(safe=True)
+        assert safe["kwargs"] == repr(job.kwargs)
+        assert safe["result"] == repr(job.result)
+        json.dumps(safe)
+
+        # Fields at their default are still omitted entirely, safe or not
+        job = Job("f", key="a")
+        assert "kwargs" not in job.to_dict(safe=True)
+        assert "result" not in job.to_dict(safe=True)
 
 
 class TestJobRedisQueue(TestJob):
