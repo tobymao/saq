@@ -469,7 +469,7 @@ class Worker(t.Generic[CtxType]):
 P = te.ParamSpec("P")
 R = te.TypeVar("R")
 
-OneOrManyCallable = t.Callable[P, R] | t.Collection[t.Callable[P, R]]
+OneOrManyCallable = t.Union[t.Callable[P, R], t.Collection[t.Callable[P, R]]]
 
 
 def ensure_coroutine_function_many(
