@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable
 import contextvars
 import logging
 import time
 import typing as t
 import unittest
+from collections.abc import Awaitable
 from datetime import datetime, timedelta, timezone
 from unittest import mock
 
@@ -14,22 +14,22 @@ from aiohttp import web
 from aiohttp.test_utils import AioHTTPTestCase
 from time_machine import travel
 
-from saq.job import CronJob, Job, Status, ACTIVE_STATUSES
+from saq.job import ACTIVE_STATUSES, CronJob, Job, Status
 from saq.queue import Queue
 from saq.queue.http import HttpProxy
 from saq.queue.redis import RedisQueue
+from saq.types import Context
 from saq.utils import uuid1
 from saq.worker import Worker
 from tests.helpers import (
     cleanup_queue,
-    create_redis_queue,
     create_postgres_queue,
+    create_redis_queue,
     setup_postgres,
     teardown_postgres,
     wait_for_job,
     wait_for_status,
 )
-from saq.types import Context
 
 if t.TYPE_CHECKING:
     from unittest.mock import MagicMock

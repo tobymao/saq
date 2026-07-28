@@ -1,13 +1,12 @@
-import typing as t
-
-from psycopg.sql import Identifier, SQL, Composed
 from textwrap import dedent
+
+from psycopg.sql import SQL, Composed, Identifier
 
 
 def get_migrations(
     jobs_table: Identifier,
     stats_table: Identifier,
-) -> t.List[t.Tuple[int, t.List[Composed]]]:
+) -> list[tuple[int, list[Composed]]]:
     return [
         (
             1,

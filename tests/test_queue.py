@@ -27,7 +27,6 @@ from tests.helpers import (
     teardown_postgres,
 )
 
-
 if t.TYPE_CHECKING:
     from unittest.mock import MagicMock
 
@@ -253,7 +252,7 @@ class TestQueue(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(info["queued"], 1)
         self.assertEqual(len(info["jobs"]), 1)
 
-        time.sleep(4)
+        time.sleep(4)  # noqa: ASYNC251
         info = await self.queue.info(jobs=True)
         self.assertEqual(info["workers"], {})
         await worker.queue.sweep()

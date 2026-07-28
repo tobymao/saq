@@ -60,7 +60,7 @@ class TestAiohttpWeb(unittest.IsolatedAsyncioTestCase):
         resp = await self.client.get("/api/queues")
         self.assertEqual(self.status_code(resp), 200)
         json = await self.json(resp)
-        self.assertEqual(set(q["name"] for q in json["queues"]), {"queue1", "queue2"})
+        self.assertEqual({q["name"] for q in json["queues"]}, {"queue1", "queue2"})
 
         resp = await self.client.get(f"/api/queues/{self.queue1.name}")
         self.assertEqual(self.status_code(resp), 200)

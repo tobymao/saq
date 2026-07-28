@@ -1,12 +1,13 @@
 """Validate that the worker id in the context of the http proxy is the id of the worker rather than the queue."""
 
 import unittest
+
 from aiohttp import web
 
 from saq import Queue, Worker
 from saq.queue.http import HttpProxy
 from saq.types import Context
-from tests.helpers import setup_postgres, create_postgres_queue, teardown_postgres
+from tests.helpers import create_postgres_queue, setup_postgres, teardown_postgres
 
 
 async def echo(_ctx: Context, *, a: int) -> int:

@@ -1,13 +1,9 @@
 import logging
-import typing as t
 import unittest
 from unittest import mock
 from unittest.mock import MagicMock
 
 from saq.runner import run
-
-if t.TYPE_CHECKING:
-    from unittest.mock import MagicMock
 
 
 class TestRunner(unittest.TestCase):

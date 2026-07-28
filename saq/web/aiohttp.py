@@ -14,6 +14,8 @@ from aiohttp import web
 from saq.queue import Queue
 from saq.web.common import STATIC_PATH, job_dict, render
 
+logger = logging.getLogger(__name__)
+
 if t.TYPE_CHECKING:
     from aiohttp.typedefs import Handler
     from aiohttp.web import StreamResponse
@@ -25,7 +27,7 @@ if t.TYPE_CHECKING:
     from saq.types import QueueInfo
 
 
-QUEUES_KEY = web.AppKey("queues", t.Dict[str, Queue])
+QUEUES_KEY = web.AppKey("queues", dict[str, Queue])
 ROOT_PATH_KEY = web.AppKey("root_path", str)
 
 
@@ -94,9 +96,9 @@ async def exceptions(request: Request, handler: Handler) -> StreamResponse:
         try:
             resp = await handler(request)
             return resp
-        except Exception:
+        except Exception:  # noqa: BLE001
             error = traceback.format_exc()
-            logging.error(error)
+            logger.error(error)
             return web.json_response({"error": error})
     return await handler(request)
 

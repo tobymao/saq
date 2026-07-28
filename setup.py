@@ -1,20 +1,16 @@
 from setuptools import setup
 
-version = (
-    open("saq/__init__.py", encoding="utf8")
-    .read()
-    .split("__version__ = ")[-1]
-    .split("\n")[0]
-    .strip("")
-    .strip("'")
-    .strip('"')
-)
+with open("saq/__init__.py", encoding="utf8") as f:
+    version = f.read().split("__version__ = ")[-1].split("\n")[0].strip("").strip("'").strip('"')
+
+with open("README.md", encoding="utf8") as f:
+    readme = f.read()
 
 setup(
     name="saq",
     version=version,
     description="Distributed Python job queue with asyncio and redis",
-    long_description=open("README.md", encoding="utf8").read(),
+    long_description=readme,
     long_description_content_type="text/markdown",
     url="https://github.com/tobymao/saq",
     author="Toby Mao",

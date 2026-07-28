@@ -4,9 +4,9 @@ HTTP Queue
 
 from __future__ import annotations
 
+import asyncio
 import json
 import typing as t
-import asyncio
 
 from saq.errors import MissingDependencyError
 from saq.job import Job, Status
@@ -23,8 +23,13 @@ if t.TYPE_CHECKING:
     )
 
 try:
-    from aiohttp import ClientSession
-    from aiohttp import ClientError, ClientResponseError, ServerTimeoutError, ClientConnectorError
+    from aiohttp import (
+        ClientConnectorError,
+        ClientError,
+        ClientResponseError,
+        ClientSession,
+        ServerTimeoutError,
+    )
 except ModuleNotFoundError as e:
     raise MissingDependencyError(
         "Missing dependencies for Http. Install them with `pip install saq[http]`. "
@@ -40,7 +45,7 @@ class HttpProxy:
         self.queue = queue
 
     @staticmethod
-    def serialize(job: t.Optional[Job]) -> str | None:
+    def serialize(job: Job | None) -> str | None:
         if job:
             return json.dumps(job.to_dict())
         return None
@@ -116,7 +121,7 @@ class HttpQueue(Queue):
         self,
         url: str,
         name: str = "default",
-        session_callback: t.Optional[t.Callable[[], t.Awaitable[ClientSession]]] = None,
+        session_callback: t.Callable[[], t.Awaitable[ClientSession]] | None = None,
         swept_error_message: str | None = None,
         max_retries: int = 3,
         retry_delay: float = 1.0,
@@ -132,7 +137,7 @@ class HttpQueue(Queue):
         )
         self.url = url
         self.session_kwargs = kwargs
-        self.session: t.Optional[ClientSession] = None
+        self.session: ClientSession | None = None
         self.session_callback = session_callback
         self.max_retries = max_retries
         self.retry_delay = retry_delay
@@ -157,9 +162,7 @@ class HttpQueue(Queue):
             return True
         if isinstance(exception, ClientResponseError):
             return exception.status >= 500
-        if isinstance(exception, ClientError):
-            return True
-        return False
+        return isinstance(exception, ClientError)
 
     async def _retry_on_failure(
         self, operation_name: str, coro_func: t.Callable, *args: t.Any, **kwargs: t.Any
@@ -219,7 +222,7 @@ class HttpQueue(Queue):
     async def job(self, job_key: str) -> Job | None:
         return self.deserialize(await self._send("job", job_key=job_key))
 
-    async def jobs(self, job_keys: Iterable[str]) -> t.List[Job | None]:
+    async def jobs(self, job_keys: Iterable[str]) -> list[Job | None]:
         return [
             self.deserialize(job_dict)
             for job_dict in json.loads(await self._send("jobs", job_keys=list(job_keys)))
@@ -227,9 +230,11 @@ class HttpQueue(Queue):
 
     async def iter_jobs(
         self,
-        statuses: t.List[Status] = list(Status),
+        statuses: list[Status] | None = None,
         batch_size: int = 100,
     ) -> t.AsyncIterator[Job]:
+        if statuses is None:
+            statuses = list(Status)
         async for job_dict in json.loads(
             await self._send("iter_jobs", statuses=statuses, batch_size=batch_size)
         ):

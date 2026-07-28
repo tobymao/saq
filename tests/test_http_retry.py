@@ -1,6 +1,7 @@
 import unittest
-from unittest.mock import Mock, patch, AsyncMock, MagicMock
-from aiohttp import ClientResponseError, ClientError, ServerTimeoutError
+from unittest.mock import AsyncMock, MagicMock, Mock, patch
+
+from aiohttp import ClientError, ClientResponseError, ServerTimeoutError
 
 from saq.queue.http import HttpQueue
 
@@ -23,7 +24,6 @@ class TestHttpRetry(unittest.IsolatedAsyncioTestCase):
     async def asyncTearDown(self) -> None:
         """Clean up test fixtures."""
         # No need to close mock session
-        pass
 
     def create_response_mock(self, response_text="success", should_raise=None):
         """Helper to create a properly mocked aiohttp response."""

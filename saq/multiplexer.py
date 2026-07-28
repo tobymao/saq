@@ -9,16 +9,15 @@ import typing as t
 from abc import ABC, abstractmethod
 from collections import defaultdict
 
-
 if t.TYPE_CHECKING:
     Q = asyncio.Queue[dict]
 
 
 class Multiplexer(ABC):
     def __init__(self) -> None:
-        self._subscriptions: t.Dict[str, t.Set[Q]] = defaultdict(set)
-        self._queues: t.Dict[Q, t.Set[str]] = defaultdict(set)
-        self._daemon_task: t.Optional[asyncio.Task] = None
+        self._subscriptions: dict[str, set[Q]] = defaultdict(set)
+        self._queues: dict[Q, set[str]] = defaultdict(set)
+        self._daemon_task: asyncio.Task | None = None
         self._lock = asyncio.Lock()
 
     async def start(self) -> None:

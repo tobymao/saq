@@ -36,7 +36,7 @@ if t.TYPE_CHECKING:
 
 try:
     from psycopg import AsyncConnection
-    from psycopg.sql import Identifier, SQL
+    from psycopg.sql import SQL, Identifier
     from psycopg_pool import AsyncConnectionPool
 except ModuleNotFoundError as e:
     raise MissingDependencyError(
@@ -121,8 +121,8 @@ class PostgresQueue(Queue):
         )
 
         if callable(self.pool.kwargs):
-            func = t.cast(t.Callable[[], t.Awaitable[t.Dict[str, t.Any]]], self.pool.kwargs)
-            kwargs: t.Dict[str, t.Any] = asyncio.run(func())  # type: ignore
+            func = t.cast(t.Callable[[], t.Awaitable[dict[str, t.Any]]], self.pool.kwargs)
+            kwargs: dict[str, t.Any] = asyncio.run(func())  # type: ignore
             autocommit = kwargs.get("autocommit")
             self.pool.kwargs = lambda: kwargs | {"autocommit": True}  # type: ignore[assignment, unused-ignore]
         else:
@@ -351,7 +351,7 @@ class PostgresQueue(Queue):
             assert result
             return result[0]
 
-    async def schedule(self, lock: int = 1) -> t.List[str]:
+    async def schedule(self, lock: int = 1) -> list[str]:
         return await self._dequeue()
 
     async def sweep(self, lock: int = 60, abort: float = 5.0) -> list[str]:
@@ -508,7 +508,7 @@ class PostgresQueue(Queue):
                 return self.deserialize(*row)
         return None
 
-    async def jobs(self, job_keys: Iterable[str]) -> t.List[Job | None]:
+    async def jobs(self, job_keys: Iterable[str]) -> list[Job | None]:
         keys = list(job_keys)
 
         async with self.pool.connection() as conn, conn.cursor() as cursor:
@@ -529,9 +529,11 @@ class PostgresQueue(Queue):
 
     async def iter_jobs(
         self,
-        statuses: t.List[Status] = list(Status),
+        statuses: list[Status] | None = None,
         batch_size: int = 100,
     ) -> t.AsyncIterator[Job]:
+        if statuses is None:
+            statuses = list(Status)
         async with self.pool.connection() as conn, conn.cursor() as cursor:
             last_key = ""
 

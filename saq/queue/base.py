@@ -103,7 +103,7 @@ class Queue(ABC):
     async def count(self, kind: CountKind) -> int:
         pass
 
-    async def schedule(self, _lock: int = 1) -> t.List[str]:
+    async def schedule(self, _lock: int = 1) -> list[str]:
         return []
 
     @abstractmethod
@@ -129,13 +129,13 @@ class Queue(ABC):
         pass
 
     @abstractmethod
-    async def jobs(self, job_keys: t.Iterable[str]) -> t.List[Job | None]:
+    async def jobs(self, job_keys: t.Iterable[str]) -> list[Job | None]:
         pass
 
     @abstractmethod
     def iter_jobs(
         self,
-        statuses: t.List[Status] = list(Status),
+        statuses: list[Status] | None = None,
         batch_size: int = 100,
     ) -> t.AsyncIterator[Job]:
         pass
@@ -169,7 +169,6 @@ class Queue(ABC):
             stats: The stats to write.
             ttl: The time-to-live in seconds.
         """
-        pass
 
     @abstractmethod
     async def _retry(self, job: Job, error: str | None) -> None:
@@ -234,7 +233,7 @@ class Queue(ABC):
         return Job(**job_dict, queue=self)
 
     async def worker_info(
-        self, worker_id: str, queue_key: str, metadata: t.Optional[dict] = None, ttl: int = 60
+        self, worker_id: str, queue_key: str, metadata: dict | None = None, ttl: int = 60
     ) -> WorkerInfo:
         """
         Method to be used by workers to update worker info.

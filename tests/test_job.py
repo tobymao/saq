@@ -16,7 +16,6 @@ from tests.helpers import (
     teardown_postgres,
 )
 
-
 if t.TYPE_CHECKING:
     from unittest.mock import MagicMock
 

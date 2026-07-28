@@ -11,7 +11,6 @@ import typing as t
 from saq.types import CtxType
 from saq.utils import exponential_backoff, now, seconds, uuid1
 
-
 if t.TYPE_CHECKING:
     from saq.queue import Queue
     from saq.types import DurationKind, Function
@@ -139,7 +138,7 @@ class Job:
     meta: dict[t.Any, t.Any] = dataclasses.field(default_factory=dict)
     worker_id: str | None = None
 
-    _EXCLUDE_NON_FULL = {
+    _EXCLUDE_NON_FULL: t.ClassVar[set[str]] = {
         "kwargs",
         "timeout",
         "heartbeat",
@@ -195,7 +194,7 @@ class Job:
     def __hash__(self) -> int:
         return hash(self.key)
 
-    def __eq__(self, other: t.Any) -> bool:
+    def __eq__(self, other: object) -> bool:
         return isinstance(other, Job) and self.key == other.key
 
     @property

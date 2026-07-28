@@ -5,8 +5,8 @@ Redis Queue
 from __future__ import annotations
 
 import asyncio
-import logging
 import json
+import logging
 import time
 import typing as t
 
@@ -29,7 +29,7 @@ except ModuleNotFoundError as e:
 if t.TYPE_CHECKING:
     from collections.abc import Iterable
 
-    from redis.asyncio.client import Redis, PubSub
+    from redis.asyncio.client import PubSub, Redis
     from redis.commands.core import AsyncScript
 
     from saq.types import (
@@ -100,7 +100,7 @@ class RedisQueue(Queue):
         return job_id[len(f"{ID_PREFIX}{self.name}:") :]
 
     def namespace(self, key: str) -> str:
-        return ":".join(["saq", self.name, key])
+        return f"saq:{self.name}:{key}"
 
     async def disconnect(self) -> None:
         await self._pubsub.close()
@@ -193,7 +193,7 @@ class RedisQueue(Queue):
             return await self.redis.zcard(self._incomplete)
         raise ValueError("Can't count unknown type {kind}")
 
-    async def schedule(self, lock: int = 1) -> t.List[str]:
+    async def schedule(self, lock: int = 1) -> list[str]:
         if not self._schedule_script:
             self._schedule_script = self.redis.register_script(
                 """
@@ -289,7 +289,7 @@ class RedisQueue(Queue):
         job_id = self.job_id(job_key)
         return await self._get_job_by_id(job_id)
 
-    async def jobs(self, job_keys: Iterable[str]) -> t.List[Job | None]:
+    async def jobs(self, job_keys: Iterable[str]) -> list[Job | None]:
         return [
             self.deserialize(job_bytes)
             for job_bytes in await self.redis.mget(self.job_id(key) for key in job_keys)
@@ -297,9 +297,11 @@ class RedisQueue(Queue):
 
     async def iter_jobs(
         self,
-        statuses: t.List[Status] = list(Status),
+        statuses: list[Status] | None = None,
         batch_size: int = 100,
     ) -> t.AsyncIterator[Job]:
+        if statuses is None:
+            statuses = list(Status)
         cursor = 0
         while True:
             cursor, job_ids = await self.redis.scan(
@@ -501,7 +503,7 @@ class PubSubMultiplexer(Multiplexer):
                     self.publish(message["channel"], message)
             except asyncio.CancelledError:
                 return
-            except Exception:
+            except Exception:  # noqa: BLE001
                 logger.exception("Failed to consume message")
 
     async def _close(self) -> None:
