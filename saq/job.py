@@ -93,7 +93,8 @@ class Job:
             The second retry will have retry_delay*2. The third retry will have retry_delay*4. And so on.
             This always includes jitter, where the final retry delay is a random number between 0 and the calculated retry delay.
             If retry_backoff is set to a number, that number is the maximum retry delay, in seconds.
-        scheduled (int): epoch seconds for when the job should be scheduled, defaults to 0 (schedule right away)
+        scheduled (int): epoch seconds for when the job should be scheduled, defaults to 0 (schedule right away).
+            Note this one is in seconds, unlike the millisecond timestamps below.
         progress (float): job progress 0.0..1.0
         meta (dict): arbitrary metadata to attach to the job
 
@@ -102,10 +103,10 @@ class Job:
 
     Parameters:
         attempts: number of attempts a job has had
-        completed: job completion time epoch seconds
-        queued: job enqueued time epoch seconds
-        started: job started time epoch seconds
-        touched: job touched/updated time epoch seconds
+        completed: job completion time, epoch milliseconds
+        queued: job enqueued time, epoch milliseconds
+        started: job started time, epoch milliseconds
+        touched: job touched/updated time, epoch milliseconds
         result: payload containing the results, this is the return of the function provided, must be serializable, defaults to json
         error: stack trace if a runtime error occurs
         status: Status Enum, default to Status.New
