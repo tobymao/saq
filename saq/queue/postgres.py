@@ -121,8 +121,12 @@ class PostgresQueue(Queue):
         )
 
         if callable(self.pool.kwargs):
-            func = t.cast(t.Callable[[], t.Awaitable[dict[str, t.Any]]], self.pool.kwargs)
-            kwargs: dict[str, t.Any] = asyncio.run(func())  # type: ignore
+            # Coroutine rather than Awaitable, because that is what asyncio.run takes
+            # and, up to 3.13, all it accepts at runtime either
+            func = t.cast(
+                t.Callable[[], t.Coroutine[t.Any, t.Any, dict[str, t.Any]]], self.pool.kwargs
+            )
+            kwargs: dict[str, t.Any] = asyncio.run(func())
             autocommit = kwargs.get("autocommit")
             self.pool.kwargs = lambda: kwargs | {"autocommit": True}  # type: ignore[assignment, unused-ignore]
         else:
