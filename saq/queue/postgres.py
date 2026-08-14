@@ -11,6 +11,7 @@ import time
 import typing as t
 from contextlib import asynccontextmanager
 from functools import cached_property
+from inspect import isawaitable
 from textwrap import dedent
 
 from saq.errors import MissingDependencyError
@@ -49,6 +50,38 @@ DEQUEUE = "saq:dequeue"
 JOBS_TABLE = "saq_jobs"
 STATS_TABLE = "saq_stats"
 VERSIONS_TABLE = "saq_versions"
+
+
+def _autocommit(kwargs: t.Any) -> t.Callable[[], t.Coroutine[t.Any, t.Any, dict[str, t.Any]]]:
+    """Wrap a pool's kwargs, in any of its shapes, so autocommit is on.
+
+    psycopg takes None, a dict, a callable returning one, or an async callable,
+    and asks again for every connection. Answering that question is the one thing
+    this has to do, so it does it once for all four rather than unpacking them.
+
+    SAQ needs autocommit because a worker waits on LISTEN, and without it that
+    statement sits in a transaction nobody commits: no notification is ever
+    delivered and the connection stays INTRANS for as long as the worker runs. A
+    caller who asked for the opposite is told rather than overruled, since the
+    pool may be one they use for their own queries too.
+    """
+
+    def check(resolved: dict[str, t.Any] | None) -> dict[str, t.Any]:
+        if resolved and resolved.get("autocommit") is False:
+            raise ValueError("SAQ connection pool must have autocommit enabled.")
+        # A copy: the pool holds the caller's own dict rather than one of its own.
+        return {**(resolved or {}), "autocommit": True}
+
+    if not callable(kwargs):
+        # Known now, so said now. Left to the callable below, psycopg would read
+        # the refusal as a failed connection and retry it until the pool times out.
+        check(kwargs)
+
+    async def resolve() -> dict[str, t.Any]:
+        resolved = kwargs() if callable(kwargs) else kwargs
+        return check(await resolved if isawaitable(resolved) else resolved)
+
+    return resolve
 
 
 class PostgresQueue(Queue):
@@ -120,19 +153,7 @@ class PostgresQueue(Queue):
             open=False,
         )
 
-        if callable(self.pool.kwargs):
-            func = t.cast(t.Callable[[], t.Awaitable[dict[str, t.Any]]], self.pool.kwargs)
-            kwargs: dict[str, t.Any] = asyncio.run(func())  # type: ignore
-            autocommit = kwargs.get("autocommit")
-            self.pool.kwargs = lambda: kwargs | {"autocommit": True}  # type: ignore[assignment, unused-ignore]
-        else:
-            if self.pool.kwargs is None:
-                self.pool.kwargs = {}  # type: ignore[unreachable, unused-ignore]
-            autocommit = self.pool.kwargs.get("autocommit")
-            self.pool.kwargs["autocommit"] = True
-
-        if autocommit is False:
-            raise ValueError("SAQ Connection pool must have autocommit enabled.")
+        self.pool.kwargs = _autocommit(self.pool.kwargs)  # type: ignore[assignment, unused-ignore]
 
         self._manage_pool_lifecycle = (
             manage_pool_lifecycle if manage_pool_lifecycle is not None else pool is None

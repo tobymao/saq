@@ -12,6 +12,7 @@ from functools import partial
 from unittest import mock
 
 from psycopg.sql import SQL
+from psycopg_pool import AsyncConnectionPool
 
 from saq.errors import InvalidUrlError
 from saq.job import Job, Status
@@ -55,6 +56,76 @@ class TestQueueError(unittest.IsolatedAsyncioTestCase):
     async def test_queue(self) -> None:
         with self.assertRaises(InvalidUrlError):
             self.queue: RedisQueue = await self.create_queue()
+
+
+class TestPostgresPoolKwargs(unittest.IsolatedAsyncioTestCase):
+    """The pool kwargs SAQ has to force autocommit onto.
+
+    psycopg takes a dict, a plain callable returning one, or an async callable,
+    and re-runs a callable for every connection, which is what makes the callable
+    form useful: a credential that rotates gets re-read. These construct a pool
+    with open=False, so nothing here talks to a database.
+    """
+
+    @staticmethod
+    def pool(kwargs: t.Any) -> AsyncConnectionPool:
+        return AsyncConnectionPool("postgres://postgres@localhost", kwargs=kwargs, open=False)
+
+    @staticmethod
+    async def resolve(queue: PostgresQueue) -> dict[str, t.Any]:
+        """The parameters psycopg would open the next connection with."""
+        kwargs = queue.pool.kwargs
+        return await kwargs() if callable(kwargs) else kwargs
+
+    async def test_a_dict_gets_autocommit(self) -> None:
+        queue = PostgresQueue(pool=self.pool({"application_name": "saq"}))
+
+        self.assertEqual(await self.resolve(queue), {"application_name": "saq", "autocommit": True})
+
+    async def test_the_callers_dict_is_left_alone(self) -> None:
+        # A pool keeps the dict it was handed rather than copying it, so writing
+        # autocommit into it edits an object the caller still owns and may reuse.
+        kwargs = {"application_name": "saq"}
+        PostgresQueue(pool=self.pool(kwargs))
+
+        self.assertEqual(kwargs, {"application_name": "saq"})
+
+    async def test_a_plain_callable_is_accepted(self) -> None:
+        # psycopg allows one. Resolving with asyncio.run used to reject it.
+        queue = PostgresQueue(pool=self.pool(lambda: {"application_name": "saq"}))
+
+        self.assertEqual(await self.resolve(queue), {"application_name": "saq", "autocommit": True})
+
+    async def test_an_async_callable_is_re_read_rather_than_frozen(self) -> None:
+        # This test method is itself running inside an event loop, which is where
+        # an async application builds its queue, and where resolving the callable
+        # during __init__ raised "asyncio.run() cannot be called from a running
+        # event loop".
+        calls = 0
+
+        async def credentials() -> dict[str, t.Any]:
+            nonlocal calls
+            calls += 1
+            return {"password": f"token-{calls}"}
+
+        queue = PostgresQueue(pool=self.pool(credentials))
+
+        self.assertEqual(calls, 0)
+        self.assertEqual((await self.resolve(queue))["password"], "token-1")
+        self.assertEqual((await self.resolve(queue))["password"], "token-2")
+
+    async def test_a_dict_with_autocommit_off_is_refused(self) -> None:
+        # The regex matters: __init__ raises ValueError for two other reasons.
+        with self.assertRaisesRegex(ValueError, "autocommit"):
+            PostgresQueue(pool=self.pool({"autocommit": False}))
+
+    async def test_a_callable_returning_autocommit_off_is_refused(self) -> None:
+        # A callable cannot be judged before it runs, so this one is caught when
+        # psycopg asks for the connection parameters.
+        queue = PostgresQueue(pool=self.pool(lambda: {"autocommit": False}))
+
+        with self.assertRaisesRegex(ValueError, "autocommit"):
+            await self.resolve(queue)
 
 
 class TestQueue(unittest.IsolatedAsyncioTestCase):
