@@ -14,6 +14,7 @@ from urllib.parse import urlparse
 
 from saq.errors import InvalidUrlError
 from saq.job import (
+    DEFAULTED_FIELDS,
     TERMINAL_STATUSES,
     UNSUCCESSFUL_TERMINAL_STATUSES,
     Job,
@@ -324,6 +325,9 @@ class Queue(ABC):
             job_or_func: The job or function to enqueue.
                 If a job instance is passed in, it's properties are overriden.
             kwargs: Kwargs can be arguments of the function or properties of the job.
+                A job property given as None counts as not supplied, so the job keeps
+                its default. To switch a limit off, pass the value that property
+                documents, such as timeout=0.
 
         Returns:
             If the job has already been enqueued, this returns None, else Job
@@ -332,6 +336,8 @@ class Queue(ABC):
 
         for k, v in kwargs.items():
             if k in Job.__dataclass_fields__:
+                if v is None and k in DEFAULTED_FIELDS:
+                    continue
                 job_kwargs[k] = v
             else:
                 job_kwargs.setdefault("kwargs", {})[k] = v
@@ -463,7 +469,10 @@ class Queue(ABC):
         """
         iter_kwargs = [
             {
-                "timeout": timeout,
+                # This timeout is how long the caller waits, and it also becomes each
+                # job's own limit. Left out, it has always meant no limit, and 0 is
+                # how a job says that now that None keeps the default.
+                "timeout": timeout or 0,
                 "key": kwargs.get("key", "") or get_default_job_key(),
                 **kwargs,
                 **kw,

@@ -419,6 +419,20 @@ class TestWorker(unittest.IsolatedAsyncioTestCase):
         await job.refresh()
         self.assertEqual(job.result, 1)
 
+    async def test_cron_unset_fields_use_the_job_defaults(self) -> None:
+        # Every CronJob field a caller leaves alone is None, and schedule() now
+        # hands them all to enqueue(). An unset timeout must arrive as 10, not None.
+        worker = Worker(
+            self.queue, functions=FUNCTIONS, cron_jobs=[CronJob(sleeper, cron="* * * * *")]
+        )
+        await worker.schedule()
+        job = await self.queue.job("cron:sleeper")
+        assert job is not None
+        self.assertEqual(job.timeout, 10)
+        self.assertEqual(job.retries, 1)
+        self.assertEqual(job.ttl, 600)
+        self.assertIsNone(job.kwargs)
+
     @mock.patch("saq.worker.logger")
     async def test_cron(self, mock_logger: MagicMock) -> None:
         with self.assertRaises(ValueError):

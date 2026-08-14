@@ -352,6 +352,15 @@ class Job:
         return self.queue
 
 
+# Job fields with a default of their own. None is not one of their values, it is
+# an argument that was not supplied. timeout is the one that matters: the worker
+# reads a falsy timeout as "no limit", and 0 is the documented way to ask for
+# that. Fields declared with a None default are not in here and still take None.
+DEFAULTED_FIELDS: t.Final = frozenset(
+    field.name for field in dataclasses.fields(Job) if field.default is not None
+)
+
+
 def _safe_eq(a: object, b: object) -> bool:
     try:
         return bool(a == b)

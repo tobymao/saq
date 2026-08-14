@@ -262,11 +262,8 @@ class Worker(t.Generic[CtxType]):
             start_time = datetime.now(self.cron_tz)
             scheduled = croniter(kwargs.pop("cron"), start_time).get_next()
 
-            await self.queue.enqueue(
-                function,
-                scheduled=int(scheduled),
-                **{k: v for k, v in kwargs.items() if v is not None},
-            )
+            # An unset CronJob field is None, which enqueue() reads as "not supplied".
+            await self.queue.enqueue(function, scheduled=int(scheduled), **kwargs)
 
         job_ids = await self.queue.schedule(lock)
 
