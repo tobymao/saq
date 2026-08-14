@@ -102,9 +102,6 @@ class TestQueue(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(job.heartbeat, 0)
 
     async def test_enqueue_none_keeps_the_default(self) -> None:
-        # What `timeout=config.get("timeout")` gives you when the key is missing.
-        # That None is an argument nobody supplied, not a request for an unlimited
-        # job: Job.timeout is an int and 0 is the documented way to ask for one.
         job = await self.enqueue("test", timeout=None, heartbeat=None, retries=None, ttl=None)
         self.assertEqual(job.timeout, 10)
         self.assertEqual(job.heartbeat, 0)
@@ -116,13 +113,10 @@ class TestQueue(unittest.IsolatedAsyncioTestCase):
 
     async def test_enqueue_none_still_sets_a_nullable_field(self) -> None:
         job = await self.enqueue(Job("test", timeout=30, error="oops"), error=None, timeout=None)
-        self.assertIsNone(job.error)  # declared optional, so None is a value
-        self.assertEqual(job.timeout, 30)  # declared int, so None is not one
+        self.assertIsNone(job.error)
+        self.assertEqual(job.timeout, 30)
 
     async def test_map_does_not_impose_a_job_timeout_by_default(self) -> None:
-        # map hands its own wait timeout to each job, and leaving it out has always
-        # meant "run as long as it takes". The job still has to be told that, and
-        # 0 is how it is told now that None means something else.
         with contextlib.suppress(asyncio.TimeoutError):
             await asyncio.wait_for(self.queue.map("test", [{"key": "mapped"}]), 0.2)
         job = await self.queue.job("mapped")

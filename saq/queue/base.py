@@ -469,9 +469,8 @@ class Queue(ABC):
         """
         iter_kwargs = [
             {
-                # This timeout is how long the caller waits, and it also becomes each
-                # job's own limit. Left out, it has always meant no limit, and 0 is
-                # how a job says that now that None keeps the default.
+                # None must become 0: leaving this out has always meant "no limit",
+                # and enqueue now treats None as "not supplied".
                 "timeout": timeout or 0,
                 "key": kwargs.get("key", "") or get_default_job_key(),
                 **kwargs,

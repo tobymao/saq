@@ -420,8 +420,6 @@ class TestWorker(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(job.result, 1)
 
     async def test_cron_unset_fields_use_the_job_defaults(self) -> None:
-        # Every CronJob field a caller leaves alone is None, and schedule() now
-        # hands them all to enqueue(). An unset timeout must arrive as 10, not None.
         worker = Worker(
             self.queue, functions=FUNCTIONS, cron_jobs=[CronJob(sleeper, cron="* * * * *")]
         )
