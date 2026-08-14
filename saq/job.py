@@ -352,6 +352,13 @@ class Job:
         return self.queue
 
 
+# None means "not supplied" here, not a value: the worker treats a falsy timeout
+# as "no limit", so falling back to the field default keeps 0 as the opt-out.
+DEFAULTED_FIELDS: t.Final = frozenset(
+    field.name for field in dataclasses.fields(Job) if field.default is not None
+)
+
+
 def _safe_eq(a: object, b: object) -> bool:
     try:
         return bool(a == b)
