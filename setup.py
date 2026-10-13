@@ -44,7 +44,7 @@ setup(
             "psycopg[pool]>=3.2.0",
             "pre-commit",
             "redis>=4.2,<8.0",
-            "ruff",
+            "ruff==0.17.0",
             "time-machine",
             "types-croniter",
             "types-redis",

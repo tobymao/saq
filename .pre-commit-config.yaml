@@ -6,6 +6,7 @@ repos:
         description: "Run 'ruff' for extremely fast Python linting"
         entry: ruff check
           --force-exclude --fix
+          --target-version py39
           --ignore E721
           --ignore E741
           --ignore UP007
