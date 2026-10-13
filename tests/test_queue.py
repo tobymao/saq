@@ -530,15 +530,13 @@ class TestRedisQueue(TestQueue):
         mock_time.time.return_value = 3
         self.assertEqual(await self.count("active"), 6)
         swept = await self.queue.sweep(abort=0.01)
-        self.assertEqual(
-            set(swept),
-            {
-                job1.id,
-                job2.id,
-                job3.id,
-                job4.id,
-            },
-        )
+        # job3 is still QUEUED in active: only swept on second sweep run
+        self.assertEqual(set(swept), {job1.id, job2.id, job4.id})
+        self.assertEqual(await self.count("active"), 3)
+
+        await self.queue.redis.delete(self.queue._sweep)
+        swept = await self.queue.sweep(abort=0.01)
+        self.assertEqual(set(swept), {job3.id})
         await job1.refresh()
         await job2.refresh()
         await job3.refresh()
@@ -547,6 +545,47 @@ class TestRedisQueue(TestQueue):
         self.assertEqual(job2.status, Status.QUEUED)
         self.assertEqual(job3.status, Status.QUEUED)
         self.assertEqual(await self.count("active"), 2)
+
+    async def test_sweep_skips_queued_job_on_first_sight(self) -> None:
+        """dequeue() moves a job to _active before the worker marks it ACTIVE.
+
+        A sweep landing in that window must not treat the job as stuck.
+        """
+        job = await self.enqueue("test", timeout=3600, retries=0)
+        dequeued = await self.dequeue()
+        self.assertEqual(dequeued.status, Status.QUEUED)
+        self.assertEqual(await self.count("active"), 1)
+
+        swept = await self.queue.sweep(abort=0.01)
+
+        self.assertEqual(swept, [])
+        self.assertEqual(await self.count("active"), 1)
+        self.assertIsNone(await self.queue.redis.get(job.abort_id))
+        await job.refresh()
+        self.assertEqual(job.status, Status.QUEUED)
+        self.assertIsNone(job.error)
+
+        # a job still QUEUED on the next sweep is stranded and gets swept
+        await self.queue.redis.delete(self.queue._sweep)
+        swept = await self.queue.sweep(abort=0.01)
+        self.assertEqual(set(swept), {job.id})
+
+    async def test_sweep_between_dequeue_and_active(self) -> None:
+        """Replay the worker steps dequeue -> sweep -> update(ACTIVE) -> finish."""
+        job = await self.enqueue("test", timeout=3600, retries=0)
+        dequeued = await self.dequeue()
+
+        await self.queue.sweep(abort=0.01)
+        await dequeued.update(status=Status.ACTIVE)
+
+        self.assertIsNone(await self.queue.redis.get(job.abort_id))
+        self.assertEqual(await self.count("active"), 1)
+        self.assertEqual(await self.count("incomplete"), 1)
+
+        await self.finish(dequeued, Status.COMPLETE, result=1)
+        await job.refresh()
+        self.assertEqual(job.status, Status.COMPLETE)
+        self.assertEqual(job.result, 1)
 
     async def test_job_key(self) -> None:
         self.assertEqual("a", self.queue.job_key_from_id(self.queue.job_id("a")))

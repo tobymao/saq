@@ -245,6 +245,8 @@ class RedisQueue(Queue):
             job = self.deserialize(job_bytes)
 
             if job:
+                if job.status == Status.QUEUED and await self._first_queued_sighting(job, lock):
+                    continue
                 if job.status != Status.ACTIVE or job.stuck:
                     logger.info(
                         "Sweeping job %s",
@@ -273,6 +275,19 @@ class RedisQueue(Queue):
                 logger.info("Sweeping missing job %s", job_id)
 
         return [job_id.decode("utf-8") for job_id in swept]
+
+    async def _first_queued_sighting(self, job: Job, lock: int) -> bool:
+        """Records a QUEUED job seen in the active list, returns False if a previous sweep saw it.
+
+        The job is only swept when seen QUEUED in active queue for the second time.
+        """
+        marker = self.namespace(f"sweep_seen:{job.key}")
+        touched = str(job.touched).encode()
+        if await self.redis.get(marker) == touched:
+            return False
+        # Must outlive the gap to the next sweep, which can be run by any worker.
+        await self.redis.set(marker, touched, ex=lock * 3)
+        return True
 
     async def notify(self, job: Job) -> None:
         await self.redis.publish(job.id, job.status)
