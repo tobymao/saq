@@ -203,8 +203,9 @@ class TestHttpRetry(unittest.IsolatedAsyncioTestCase):
         jitter_queue.session = MagicMock()
         jitter_queue.session.post.side_effect = ServerTimeoutError()
 
-        with patch("asyncio.sleep") as mock_sleep, patch(
-            "saq.utils.random", return_value=0.5
+        with (
+            patch("asyncio.sleep") as mock_sleep,
+            patch("saq.utils.random", return_value=0.5),
         ):  # Mock random for predictable jitter
             with self.assertRaises(ServerTimeoutError):
                 await jitter_queue._send("enqueue", job="test")

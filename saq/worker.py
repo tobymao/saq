@@ -13,9 +13,8 @@ import threading
 import traceback
 import typing as t
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timezone, tzinfo
+from datetime import UTC, datetime, tzinfo
 
-import typing_extensions as te
 from croniter import croniter
 
 from saq.job import Status
@@ -90,7 +89,7 @@ class Worker(t.Generic[CtxType]):
         id: str | None = None,
         concurrency: int = 10,
         cron_jobs: Collection[CronJob[CtxType]] | None = None,
-        cron_tz: tzinfo = timezone.utc,
+        cron_tz: tzinfo = UTC,
         startup: LifecycleFunctionsType[CtxType] | None = None,
         shutdown: LifecycleFunctionsType[CtxType] | None = None,
         before_process: LifecycleFunctionsType[CtxType] | None = None,
@@ -196,7 +195,11 @@ class Worker(t.Generic[CtxType]):
 
             self.tasks.update(await self.upkeep())
 
-            for _ in range(self.concurrency):
+            slots = self.concurrency
+            if self.burst and self.max_burst_jobs is not None:
+                slots = min(slots, self.max_burst_jobs)
+
+            for _ in range(slots):
                 self._process()
 
             await self.event.wait()
@@ -364,7 +367,7 @@ class Worker(t.Generic[CtxType]):
                 result = await asyncio.wait_for(
                     asyncio.shield(task), job.timeout if job.timeout else None
                 )
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 # Since we have a shield around the task passed to wait_for,
                 # we need to explicitly cancel it on timeout.
                 task.cancel()
@@ -463,10 +466,10 @@ class Worker(t.Generic[CtxType]):
         return self.burst_condition_met
 
 
-P = te.ParamSpec("P")
-R = te.TypeVar("R")
+P = t.ParamSpec("P")
+R = t.TypeVar("R")
 
-OneOrManyCallable = t.Union[t.Callable[P, R], t.Collection[t.Callable[P, R]]]
+OneOrManyCallable = t.Callable[P, R] | t.Collection[t.Callable[P, R]]
 
 
 def ensure_coroutine_function_many(

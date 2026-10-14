@@ -78,7 +78,7 @@ async def wait_for(awaitable: t.Awaitable, timeout: float | None) -> t.Any:
         done, _ = await asyncio.wait({task}, timeout=timeout)
         if done:
             return task.result()
-        raise asyncio.TimeoutError
+        raise TimeoutError
     finally:
         while not task.done():
             task.cancel()

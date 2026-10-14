@@ -49,7 +49,7 @@ class Multiplexer(ABC):
                 try:
                     yield await asyncio.wait_for(queue.get(), timeout if timeout else 1.0)
                     queue.task_done()
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     if timeout:
                         raise
         finally:

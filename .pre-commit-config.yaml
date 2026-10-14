@@ -8,7 +8,6 @@ repos:
           --force-exclude --fix
           --ignore E721
           --ignore E741
-          --ignore UP007
         language: python
         types_or: [python, pyi]
         require_serial: true
@@ -20,7 +19,7 @@ repos:
         entry: ruff format
           --force-exclude
           --line-length 100
-          --target-version "py38"
+          --target-version "py311"
         language: python
         types_or: [python, pyi]
         require_serial: true
