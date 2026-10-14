@@ -586,6 +586,7 @@ class PostgresQueue(Queue):
     async def dequeue(self, timeout: float = 0.0, poll_interval: float = 0.0) -> Job | None:
         job = None
 
+        cancelled = False
         try:
             self._waiting += 1
 
@@ -629,10 +630,14 @@ class PostgresQueue(Queue):
                             if not self._job_queue.empty():
                                 job = self._job_queue.get_nowait()
                                 break
-        except (TimeoutError, asyncio.CancelledError):
+        except asyncio.CancelledError:
+            cancelled = True
+        except TimeoutError:
             pass
         finally:
             self._waiting -= 1
+            if job is None and not cancelled and not self._job_queue.empty():
+                job = self._job_queue.get_nowait()
             if job is not None:
                 self._job_queue.task_done()
 

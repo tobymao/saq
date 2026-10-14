@@ -567,6 +567,21 @@ class TestPostgresQueue(TestQueue):
     async def test_job_key(self) -> None:
         pass
 
+    async def test_dequeue_takes_job_buffered_while_waiting(self) -> None:
+        # a concurrent fetch (a schedule tick serving this waiter) can land a job
+        # in the buffer after the notification wait started; a dequeue that times
+        # out must still take it instead of reporting an empty queue
+        queued = Job("test", queue=self.queue)
+
+        async def buffer_late() -> None:
+            await asyncio.sleep(0.05)
+            self.queue._job_queue.put_nowait(queued)
+
+        task = asyncio.create_task(buffer_late())
+        job = await asyncio.wait_for(self.queue.dequeue(timeout=0.1), timeout=2)
+        await task
+        self.assertIs(job, queued)
+
     @mock.patch("saq.utils.time")
     async def test_schedule(self, mock_time: MagicMock) -> None:
         mock_time.time.return_value = 2
