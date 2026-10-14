@@ -121,8 +121,10 @@ class PostgresQueue(Queue):
         )
 
         if callable(self.pool.kwargs):
-            func = t.cast(t.Callable[[], t.Awaitable[dict[str, t.Any]]], self.pool.kwargs)
-            kwargs: dict[str, t.Any] = asyncio.run(func())  # type: ignore
+            func = t.cast(
+                t.Callable[[], t.Coroutine[t.Any, t.Any, dict[str, t.Any]]], self.pool.kwargs
+            )
+            kwargs: dict[str, t.Any] = asyncio.run(func())
             autocommit = kwargs.get("autocommit")
             self.pool.kwargs = lambda: kwargs | {"autocommit": True}  # type: ignore[assignment, unused-ignore]
         else:
@@ -443,7 +445,7 @@ class PostgresQueue(Queue):
 
             try:
                 await job.refresh(abort)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 logger.info("Could not abort job %s", key)
 
             if job.retryable:
@@ -456,9 +458,10 @@ class PostgresQueue(Queue):
         expire_at = kwargs.pop("expire_at", -1)
         connection = kwargs.pop("connection", None)
 
-        async with self.nullcontext(
-            connection
-        ) if connection else self.pool.connection() as conn, conn.transaction():
+        async with (
+            self.nullcontext(connection) if connection else self.pool.connection() as conn,
+            conn.transaction(),
+        ):
             if not status:
                 status = await self.get_job_status(job.key, for_update=True, connection=conn)
 
@@ -603,6 +606,9 @@ class PostgresQueue(Queue):
 
                         async def _poll() -> Job | None:
                             while self._connected:
+                                if not self._job_queue.empty():
+                                    return self._job_queue.get_nowait()
+
                                 await self._dequeue()
 
                                 if not self._job_queue.empty():
@@ -623,13 +629,12 @@ class PostgresQueue(Queue):
                             if not self._job_queue.empty():
                                 job = self._job_queue.get_nowait()
                                 break
-        except (asyncio.TimeoutError, asyncio.CancelledError):
+        except (TimeoutError, asyncio.CancelledError):
             pass
         finally:
             self._waiting -= 1
-
-        if job:
-            self._job_queue.task_done()
+            if job is not None:
+                self._job_queue.task_done()
 
         return job
 
@@ -641,7 +646,7 @@ class PostgresQueue(Queue):
 
         async with self._dequeue_lock:
             async with self.pool.connection() as conn, conn.transaction(), conn.cursor() as cursor:
-                if not self._waiting:
+                if not self._waiting or self._job_queue.qsize() >= self._waiting:
                     return scheduled_ids
                 await cursor.execute(
                     SQL(
@@ -677,7 +682,7 @@ class PostgresQueue(Queue):
                     {
                         "queue": self.name,
                         "now": now_seconds(),
-                        "limit": self._waiting,
+                        "limit": self._waiting - self._job_queue.qsize(),
                         "plow": self._priorities[0],
                         "phigh": self._priorities[1],
                     },
@@ -686,6 +691,7 @@ class PostgresQueue(Queue):
                 rows = await cursor.fetchall()
                 dequeued = now()
 
+                jobs = []
                 for row in rows:
                     # there can be a race condition where a job is swept right after it is dequeued
                     # but before it's updated for processing
@@ -693,11 +699,16 @@ class PostgresQueue(Queue):
                     assert job
                     job.started = dequeued
                     job.touched = dequeued
-                    await self._update(job, status=Status.ACTIVE, connection=conn)
+                    jobs.append(job)
+
+                for job in jobs:
                     self._job_queue.put_nowait(job)
                     # only report explicitly scheduled jobs, matching RedisQueue.schedule
                     if job.scheduled:
                         scheduled_ids.append(job.id)
+
+                for job in jobs:
+                    await self._update(job, status=Status.ACTIVE, connection=conn)
 
             if rows:
                 await self._notify(DEQUEUE)
@@ -794,9 +805,10 @@ class PostgresQueue(Queue):
         for_update: bool = False,
         connection: AsyncConnection | None = None,
     ) -> Status | None:
-        async with self.nullcontext(
-            connection
-        ) if connection else self.pool.connection() as conn, conn.cursor() as cursor:
+        async with (
+            self.nullcontext(connection) if connection else self.pool.connection() as conn,
+            conn.cursor() as cursor,
+        ):
             await cursor.execute(
                 SQL(
                     dedent(

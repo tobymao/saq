@@ -7,7 +7,7 @@ import time
 import typing as t
 import unittest
 from collections.abc import Awaitable
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta, timezone
 from unittest import mock
 
 from aiohttp import web
@@ -27,6 +27,7 @@ from tests.helpers import (
     create_redis_queue,
     setup_postgres,
     teardown_postgres,
+    wait_for_count,
     wait_for_job,
     wait_for_status,
 )
@@ -440,7 +441,7 @@ class TestWorker(unittest.IsolatedAsyncioTestCase):
                 cron_jobs=[CronJob(sleeper, cron="x")],
             )
 
-        with travel(datetime(2025, 1, 1, 0, 0, 1, tzinfo=timezone.utc), tick=True) as traveller:
+        with travel(datetime(2025, 1, 1, 0, 0, 1, tzinfo=UTC), tick=True) as traveller:
             worker = Worker(
                 self.queue,
                 functions=FUNCTIONS,
@@ -455,12 +456,12 @@ class TestWorker(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(await self.queue.count("incomplete"), 1)
             self.assertEqual(await self.queue.count("queued"), 0)
 
-            traveller.move_to(datetime(2025, 1, 1, 12, 0, 0, tzinfo=timezone.utc))  # noon UTC
+            traveller.move_to(datetime(2025, 1, 1, 12, 0, 0, tzinfo=UTC))  # noon UTC
             await asyncio.sleep(2)
             self.assertEqual(await self.queue.count("active"), 0)
 
-            traveller.move_to(datetime(2025, 1, 1, 15, 0, 0, tzinfo=timezone.utc))  # noon in tz
-            await asyncio.sleep(2)
+            traveller.move_to(datetime(2025, 1, 1, 15, 0, 0, tzinfo=UTC))  # noon in tz
+            await wait_for_count(self.queue, "active", 1)
             self.assertEqual(await self.queue.count("active"), 1)
 
             # Redis only: on Postgres, schedule() surfaces a job only while a consumer is
@@ -848,7 +849,6 @@ class TestHttpRedis(AioHTTPTestCase, TestWorker):
             self.server_queue,
             functions={},
             concurrency=0,
-            timers={"sweep": 1},  # type: ignore
             **self.server_worker_kwargs,
         )
 
@@ -877,7 +877,6 @@ class TestHttpRedis(AioHTTPTestCase, TestWorker):
 
         async def startup(_app) -> None:
             await self.server_queue.connect()
-            asyncio.create_task(self.server_worker.start())
 
         async def process(request):
             result = await proxy.process(await request.text())

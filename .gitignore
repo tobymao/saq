@@ -133,3 +133,4 @@ dmypy.json
 
 # PyCharm
 .idea/
+.pi-loop.json.lock

@@ -8,6 +8,7 @@ from saq.job import Job, Status
 from saq.queue import Queue
 from saq.queue.postgres import PostgresQueue
 from saq.queue.redis import RedisQueue
+from saq.types import CountKind
 
 POSTGRES_TEST_SCHEMA = "test_saq"
 
@@ -48,6 +49,17 @@ async def wait_for_job(job: Job, predicate: t.Callable[[Job], bool], timeout: fl
 async def wait_for_status(job: Job, *statuses: Status, timeout: float = 10) -> None:
     """Refresh the job until its status is one of statuses or the deadline expires."""
     await wait_for_job(job, lambda j: j.status in statuses, timeout=timeout)
+
+
+async def wait_for_count(queue: Queue, kind: CountKind, count: int, timeout: float = 10) -> None:
+    """Poll the queue until kind count reaches count or the deadline expires.
+
+    Callers still assert on the count afterwards, so a timeout surfaces the actual
+    state. Use this instead of a fixed sleep before asserting queue counts.
+    """
+    deadline = time.monotonic() + timeout
+    while await queue.count(kind) != count and time.monotonic() < deadline:
+        await asyncio.sleep(0.05)
 
 
 async def cleanup_queue(queue: Queue) -> None:

@@ -6,10 +6,7 @@ from __future__ import annotations
 
 import typing as t
 from collections.abc import Collection
-from typing import Generic
-
-import typing_extensions as te
-from typing_extensions import Required, TypedDict
+from typing import Generic, Required, TypedDict
 
 if t.TYPE_CHECKING:
     from asyncio import Task
@@ -133,16 +130,16 @@ class SettingsDict(TypedDict, Generic[CtxType], total=False):
     dequeue_timeout: float
 
 
-P = te.ParamSpec("P")
+P = t.ParamSpec("P")
 
 BeforeEnqueueType = t.Callable[["Job"], t.Awaitable[t.Any]]
 CountKind = t.Literal["queued", "active", "incomplete"]
-DumpType = t.Callable[[t.Mapping[t.Any, t.Any]], t.Union[bytes, str]]
+DumpType = t.Callable[[t.Mapping[t.Any, t.Any]], bytes | str]
 DurationKind = t.Literal["process", "start", "total", "running"]
-Function = t.Callable[te.Concatenate[CtxType, ...], t.Any]
-FunctionsType: te.TypeAlias = Collection[t.Union[Function[CtxType], tuple[str, Function[CtxType]]]]
+Function = t.Callable[t.Concatenate[CtxType, ...], t.Any]
+FunctionsType: t.TypeAlias = Collection[Function[CtxType] | tuple[str, Function[CtxType]]]
 ReceivesContext = t.Callable[[CtxType], t.Any]
-LifecycleFunctionsType = t.Union[ReceivesContext[CtxType], Collection[ReceivesContext[CtxType]]]
+LifecycleFunctionsType = ReceivesContext[CtxType] | Collection[ReceivesContext[CtxType]]
 ListenCallback = t.Callable[[str, "Status"], t.Any]
-LoadType = t.Callable[[t.Union[bytes, str]], t.Any]
+LoadType = t.Callable[[bytes | str], t.Any]
 VersionTuple = tuple[int, ...]

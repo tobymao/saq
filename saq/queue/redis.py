@@ -256,7 +256,7 @@ class RedisQueue(Queue):
 
                     try:
                         await job.refresh(abort)
-                    except asyncio.TimeoutError:
+                    except TimeoutError:
                         logger.info("Could not abort job %s", job_id)
 
                     if job.retryable:
