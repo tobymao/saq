@@ -9,7 +9,7 @@ import json
 import logging
 import time
 import typing as t
-from contextlib import asynccontextmanager
+from contextlib import nullcontext
 from functools import cached_property
 from textwrap import dedent
 
@@ -459,7 +459,7 @@ class PostgresQueue(Queue):
         connection = kwargs.pop("connection", None)
 
         async with (
-            self.nullcontext(connection) if connection else self.pool.connection() as conn,
+            nullcontext(connection) if connection else self.pool.connection() as conn,
             conn.transaction(),
         ):
             if not status:
@@ -806,7 +806,7 @@ class PostgresQueue(Queue):
         connection: AsyncConnection | None = None,
     ) -> Status | None:
         async with (
-            self.nullcontext(connection) if connection else self.pool.connection() as conn,
+            nullcontext(connection) if connection else self.pool.connection() as conn,
             conn.cursor() as cursor,
         ):
             await cursor.execute(
@@ -852,7 +852,7 @@ class PostgresQueue(Queue):
     ) -> None:
         key = job.key
 
-        async with self.nullcontext(connection) if connection else self.pool.connection() as conn:
+        async with nullcontext(connection) if connection else self.pool.connection() as conn:
             if job.ttl >= 0:
                 expire_at = now_seconds() + job.ttl if job.ttl > 0 else None
                 await self.update(job, status=status, expire_at=expire_at, connection=conn)
@@ -870,18 +870,10 @@ class PostgresQueue(Queue):
                 )
 
     async def _notify(self, key: str, connection: AsyncConnection | None = None) -> None:
-        async with self.nullcontext(connection) if connection else self.pool.connection() as conn:
+        async with nullcontext(connection) if connection else self.pool.connection() as conn:
             await conn.execute(
                 SQL("NOTIFY {channel}, {key}").format(channel=Identifier(self._channel), key=key)
             )
-
-    @asynccontextmanager
-    async def nullcontext(self, enter_result: t.Any | None = None) -> t.AsyncGenerator:
-        """Async version of contextlib.nullcontext
-
-        Async support has been added to contextlib.nullcontext in Python 3.10.
-        """
-        yield enter_result
 
     @cached_property
     def _job_queue(self) -> asyncio.Queue:
