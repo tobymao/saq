@@ -328,20 +328,21 @@ class RedisQueue(Queue):
                 job.status = Status.ABORTING
                 job.error = error
 
-                dequeued, *_ = await (
+                dequeued, incomplete, active, *_ = await (
                     pipe.lrem(self._queued, 0, job.id)
                     .zrem(self._incomplete, job.id)
+                    .lrem(self._active, 0, job.id)
                     .set(job.id, self.serialize(job))
                     .setex(job.abort_id, ttl, error)
                     .publish(job.id, job.status)
                     .execute()
                 )
 
-            if dequeued:
+            # A job scheduled for later, or waiting out a retry delay, is in neither
+            # queued nor active, so no worker will pick it up to finish the abort.
+            if dequeued or (incomplete and not active):
                 await self.finish(job, Status.ABORTED, error=error)
                 await self.redis.delete(job.abort_id)
-            else:
-                await self.redis.lrem(self._active, 0, job.id)
 
     async def dequeue(self, timeout: float = 0.0, poll_interval: float = 0.0) -> Job | None:
         if await self.version() < (6, 2, 0):
