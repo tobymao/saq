@@ -508,6 +508,41 @@ class TestRedisQueue(TestQueue):
         self.assertEqual(await self.count("active"), 0)
         self.assertEqual(await self.queue.redis.get(job.abort_id), b"test")
 
+    async def test_abort_scheduled(self) -> None:
+        job = await self.enqueue("test", scheduled=time.time() + 3600)
+        self.assertEqual(await self.count("queued"), 0)
+        self.assertEqual(await self.count("incomplete"), 1)
+        await self.queue.abort(job, "test")
+        self.assertEqual(await self.count("incomplete"), 0)
+        await job.refresh()
+        self.assertEqual(job.status, Status.ABORTED)
+        self.assertEqual(job.error, "test")
+        self.assertIsNone(await self.queue.redis.get(job.abort_id))
+
+        job = await self.enqueue("test", retries=2, retry_delay=3600)
+        await self.dequeue()
+        await self.queue.retry(job, "error")
+        self.assertEqual(await self.count("queued"), 0)
+        self.assertEqual(await self.count("active"), 0)
+        await self.queue.abort(job, "test")
+        self.assertEqual(await self.count("incomplete"), 0)
+        await job.refresh()
+        self.assertEqual(job.status, Status.ABORTED)
+
+    async def test_abort_active_retried_scheduled(self) -> None:
+        # A retried job keeps its scheduled time as its score, even while active.
+        job = await self.enqueue("test", scheduled=time.time() - 1, retries=2)
+        await self.queue.schedule()
+        await self.dequeue()
+        await self.queue.retry(job, "error")
+        await self.dequeue()
+        self.assertEqual(await self.count("active"), 1)
+        self.assertGreater(await self.queue.redis.zscore(self.queue._incomplete, job.id), 0)
+        await self.queue.abort(job, "test")
+        await job.refresh()
+        self.assertEqual(job.status, Status.ABORTING)
+        self.assertEqual(await self.queue.redis.get(job.abort_id), b"test")
+
     @mock.patch("saq.utils.time")
     async def test_sweep(self, mock_time: MagicMock) -> None:
         mock_time.time.return_value = 1
@@ -631,6 +666,14 @@ class TestPostgresQueue(TestQueue):
         self.assertEqual(await self.count("incomplete"), 0)
         self.assertEqual(await self.count("active"), 0)
         self.assertEqual(await self.queue.get_job_status(job.key), Status.ABORTING)
+
+    async def test_abort_scheduled(self) -> None:
+        job = await self.enqueue("test", scheduled=time.time() + 3600)
+        await self.queue.abort(job, "test")
+        await job.refresh()
+        self.assertEqual(job.status, Status.ABORTED)
+        self.assertEqual(job.error, "test")
+        self.assertEqual(await self.queue.get_job_status(job.key), Status.ABORTED)
 
     @mock.patch("saq.utils.time")
     async def test_sweep(self, mock_time: MagicMock) -> None:
