@@ -506,6 +506,7 @@ class PubSubMultiplexer(Multiplexer):
                 return
             except Exception:  # noqa: BLE001
                 logger.exception("Failed to consume message")
+                await asyncio.sleep(1)
 
     async def _close(self) -> None:
         await self.pubsub.punsubscribe()
