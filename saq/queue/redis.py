@@ -17,7 +17,7 @@ from saq.job import (
 )
 from saq.multiplexer import Multiplexer
 from saq.queue.base import Queue, logger
-from saq.utils import millis, now, now_seconds
+from saq.utils import iscoroutinefunction, millis, now, now_seconds
 
 try:
     from redis import asyncio as aioredis
@@ -381,7 +381,7 @@ class RedisQueue(Queue):
             job_id = message["channel"]
             job_key = self.job_key_from_id(job_id)
             status = Status[message["data"].decode("utf-8").upper()]
-            if asyncio.iscoroutinefunction(callback):
+            if iscoroutinefunction(callback):
                 stop = await callback(job_key, status)
             else:
                 stop = callback(job_key, status)

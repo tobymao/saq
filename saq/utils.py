@@ -5,6 +5,8 @@ Utils
 from __future__ import annotations
 
 import asyncio
+import inspect
+import sys
 import time
 import typing as t
 import uuid
@@ -12,6 +14,12 @@ from random import random
 
 if t.TYPE_CHECKING:
     from collections.abc import Iterable
+
+if sys.version_info >= (3, 12):
+    iscoroutinefunction = inspect.iscoroutinefunction
+else:
+    # inspect misses callables marked like asgiref's sync_to_async
+    iscoroutinefunction = asyncio.iscoroutinefunction
 
 
 def now() -> int:

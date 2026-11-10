@@ -26,7 +26,7 @@ from saq.types import (
     LifecycleFunctionsType,
     SettingsDict,
 )
-from saq.utils import cancel_tasks, millis, now, uuid1
+from saq.utils import cancel_tasks, iscoroutinefunction, millis, now, uuid1
 
 if t.TYPE_CHECKING:
     from asyncio import Task
@@ -485,7 +485,7 @@ def ensure_coroutine_function(
     func: Callable[P, R] | Callable[P, Coroutine[t.Any, t.Any, R]],
     pool: ThreadPoolExecutor,
 ) -> Callable[P, Coroutine[t.Any, t.Any, R]]:
-    if asyncio.iscoroutinefunction(func):
+    if iscoroutinefunction(func):
         return func
 
     async def wrapped(*args: t.Any, **kwargs: t.Any) -> t.Any:

@@ -1,8 +1,10 @@
 import asyncio
+import inspect
+import sys
 import time
 import unittest
 
-from saq.utils import exponential_backoff, wait_for
+from saq.utils import exponential_backoff, iscoroutinefunction, wait_for
 
 
 class TestUtils(unittest.IsolatedAsyncioTestCase):
@@ -64,3 +66,15 @@ class TestUtils(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(asyncio.TimeoutError):
             await wait_for(swallows_first_cancel(), 0.01)
         self.assertLess(time.monotonic() - start, 5)
+
+    def test_iscoroutinefunction_marked_callable(self) -> None:
+        # saq must await callables marked as async (e.g. asgiref's sync_to_async),
+        # but on 3.11 inspect.iscoroutinefunction doesn't recognize the marker
+        def marked() -> None: ...
+
+        if sys.version_info >= (3, 12):
+            inspect.markcoroutinefunction(marked)
+        else:
+            marked._is_coroutine = asyncio.coroutines._is_coroutine
+
+        self.assertTrue(iscoroutinefunction(marked))

@@ -21,7 +21,7 @@ from saq.job import (
     Status,
     get_default_job_key,
 )
-from saq.utils import now, wait_for
+from saq.utils import iscoroutinefunction, now, wait_for
 
 if t.TYPE_CHECKING:
     from collections.abc import AsyncIterator, Iterable, Sequence
@@ -383,7 +383,7 @@ class Queue(ABC):
                 for job in await self.jobs(job_keys):
                     if not job:
                         continue
-                    if asyncio.iscoroutinefunction(callback):
+                    if iscoroutinefunction(callback):
                         stop = await callback(job.id, job.status)
                     else:
                         stop = callback(job.id, job.status)
