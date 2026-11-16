@@ -728,6 +728,31 @@ class TestWorker(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(job_b.status, Status.QUEUED)
         self.assertEqual(job_c.status, Status.QUEUED)
 
+    async def test_max_burst_jobs_with_concurrency(self) -> None:
+        """The cap counts started jobs, so parallel slots cannot overshoot it (#316)."""
+        worker = Worker(
+            self.queue,
+            functions=FUNCTIONS,
+            burst=True,
+            max_burst_jobs=2,
+            concurrency=2,
+            # poll instead of listen: a listen timeout can report an empty dequeue
+            # while jobs are still queued, which stops the burst early
+            dequeue_timeout=0.5,
+            poll_interval=0.1,
+        )
+        jobs = [await self.enqueue("sleeper") for _ in range(3)]
+
+        worker_task = asyncio.create_task(worker.start())
+        await asyncio.wait_for(worker_task, timeout=10)
+
+        statuses = []
+        for job in jobs:
+            await job.refresh()
+            statuses.append(job.status)
+        self.assertEqual(statuses.count(Status.COMPLETE), 2, statuses)
+        self.assertEqual(statuses.count(Status.QUEUED), 1, statuses)
+
     async def test_sync_cancel(self) -> None:
         state = {"counter": 0}
 

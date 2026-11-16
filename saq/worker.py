@@ -9,7 +9,6 @@ import contextvars
 import logging
 import os
 import signal
-import threading
 import traceback
 import typing as t
 from concurrent.futures import ThreadPoolExecutor
@@ -133,8 +132,7 @@ class Worker(t.Generic[CtxType]):
         self.dequeue_timeout = dequeue_timeout
         self.burst = burst
         self.max_burst_jobs = max_burst_jobs
-        self.burst_jobs_processed = 0
-        self.burst_jobs_processed_lock = threading.Lock()
+        self.burst_jobs_started = 0
         self.burst_condition_met = False
         self._metadata = metadata
         self._poll_interval = poll_interval
@@ -447,6 +445,9 @@ class Worker(t.Generic[CtxType]):
                 return
 
         if not self.event.is_set():
+            if self.burst:
+                self.burst_jobs_started += 1
+
             new_task = asyncio.create_task(self.process(), name="process")
             self.tasks.add(new_task)
             new_task.add_done_callback(self._process)
@@ -455,14 +456,11 @@ class Worker(t.Generic[CtxType]):
         if self.burst_condition_met:
             return self.burst_condition_met
 
-        job_dequeued = previous_task.result()
-        if not job_dequeued:
+        if not previous_task.result() or (
+            self.max_burst_jobs is not None and self.burst_jobs_started >= self.max_burst_jobs
+        ):
             self.burst_condition_met = True
-        elif self.max_burst_jobs is not None:
-            with self.burst_jobs_processed_lock:
-                self.burst_jobs_processed += 1
-                if self.burst_jobs_processed >= self.max_burst_jobs:
-                    self.burst_condition_met = True
+
         return self.burst_condition_met
 
 
