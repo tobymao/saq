@@ -465,6 +465,36 @@ class TestRedisQueue(TestQueue):
             scheduled,
         )
 
+    async def test_info_jobs_offset(self) -> None:
+        for i in range(25):
+            await self.enqueue("test", key=f"job-{i:02}")
+
+        async def page(offset: int, limit: int) -> list[str]:
+            info = await self.queue.info(jobs=True, offset=offset, limit=limit)
+            return sorted(job["key"] for job in info["jobs"])
+
+        keys = [f"job-{i:02}" for i in range(25)]
+        self.assertEqual(await page(0, 10), keys[0:10])
+        self.assertEqual(await page(5, 10), keys[5:15])
+        self.assertEqual(await page(10, 10), keys[10:20])
+        self.assertEqual(await page(20, 10), keys[20:25])
+
+    async def test_info_active_jobs_offset(self) -> None:
+        for i in range(25):
+            await self.enqueue("test", key=f"started-{i:02}")
+        for _ in range(25):
+            await self.dequeue()
+        # Equal scores order the incomplete set by key, so these come first there
+        # and started-10 and later can only be paged through the active list.
+        for i in range(25):
+            await self.enqueue("test", key=f"queued-{i:02}")
+
+        started = set()
+        for offset in (0, 10, 20):
+            info = await self.queue.info(jobs=True, offset=offset, limit=10)
+            started |= {job["key"] for job in info["jobs"] if job["key"].startswith("started-")}
+        self.assertEqual(sorted(started), [f"started-{i:02}" for i in range(25)])
+
     async def test_finish_ttl_positive(self) -> None:
         job = await self.enqueue("test", ttl=5)
         await self.dequeue()

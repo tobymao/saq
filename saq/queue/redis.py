@@ -150,10 +150,10 @@ class RedisQueue(Queue):
             deserialized_jobs = (
                 self.deserialize(job_bytes)
                 for job_bytes in await self.redis.mget(
-                    (await self.redis.lrange(self._active, offset, limit - 1))
+                    (await self.redis.lrange(self._active, offset, offset + limit - 1))
                     + (
                         await self.redis.zrange(
-                            self._incomplete, offset, limit - 1, withscores=False
+                            self._incomplete, offset, offset + limit - 1, withscores=False
                         )
                     )
                 )
