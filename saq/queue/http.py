@@ -235,7 +235,7 @@ class HttpQueue(Queue):
     ) -> t.AsyncIterator[Job]:
         if statuses is None:
             statuses = list(Status)
-        async for job_dict in json.loads(
+        for job_dict in json.loads(
             await self._send("iter_jobs", statuses=statuses, batch_size=batch_size)
         ):
             job = self.deserialize(job_dict)
