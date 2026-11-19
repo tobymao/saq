@@ -274,7 +274,8 @@ class PostgresQueue(Queue):
         active = await self.count("active")
         incomplete = await self.count("incomplete")
 
-        if jobs:
+        bounds = self.page_bounds(offset, limit) if jobs else None
+        if bounds is not None:
             async with self.pool.connection() as conn, conn.cursor() as cursor:
                 await cursor.execute(
                     SQL(
@@ -283,10 +284,12 @@ class PostgresQueue(Queue):
                             SELECT job, status FROM {jobs_table}
                             WHERE status IN ('new', 'deferred', 'queued', 'active')
                               AND queue = %(queue)s
+                            ORDER BY scheduled, key
+                            LIMIT %(limit)s OFFSET %(offset)s
                             """
                         )
                     ).format(jobs_table=self.jobs_table),
-                    {"queue": self.name},
+                    {"queue": self.name, "limit": limit, "offset": offset},
                 )
                 rows = await cursor.fetchall()
             deserialized_jobs = (self.deserialize(*row) for row in rows)

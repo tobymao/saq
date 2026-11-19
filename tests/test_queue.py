@@ -293,6 +293,66 @@ class TestQueue(unittest.IsolatedAsyncioTestCase):
         json.dumps(info)  # must not raise TypeError
         self.assertIsInstance(info["jobs"][0]["kwargs"], str)
 
+    async def info_page(self, offset: int, limit: int) -> list[str]:
+        info = await self.queue.info(jobs=True, offset=offset, limit=limit)
+        return [job["key"] for job in info["jobs"]]
+
+    async def test_info_jobs_offset(self) -> None:
+        for i in range(25):
+            await self.enqueue("test", key=f"job-{i:02}")
+
+        keys = [f"job-{i:02}" for i in range(25)]
+        self.assertEqual(await self.info_page(0, 10), keys[0:10])
+        self.assertEqual(await self.info_page(5, 10), keys[5:15])
+        self.assertEqual(await self.info_page(10, 10), keys[10:20])
+        self.assertEqual(await self.info_page(20, 10), keys[20:25])
+        self.assertEqual(await self.info_page(25, 10), [])
+
+    async def test_info_jobs_offset_orders_by_scheduled_then_key(self) -> None:
+        # schedule order is deliberately the reverse of key order, with a same-schedule tie
+        for key, scheduled in (
+            ("job-00", 3000),
+            ("job-03", 2000),
+            ("job-01", 2000),
+            ("job-02", 1000),
+        ):
+            await self.enqueue("test", key=key, scheduled=scheduled)
+
+        keys = ["job-02", "job-01", "job-03", "job-00"]
+        self.assertEqual(await self.info_page(0, 4), keys)
+        for offset in range(5):
+            self.assertEqual(await self.info_page(offset, 10), keys[offset:])
+        self.assertEqual(await self.info_page(1, 2), keys[1:3])
+
+    async def test_info_jobs_limit_zero_is_empty(self) -> None:
+        for i in range(3):
+            await self.enqueue("test", key=f"job-{i:02}")
+        self.assertEqual(await self.info_page(0, 0), [])
+
+    async def test_info_jobs_negative_paging_raises(self) -> None:
+        await self.enqueue("test", key="job-00")
+        for offset, limit in ((-1, 10), (0, -1)):
+            with self.assertRaises(ValueError):
+                await self.info_page(offset, limit)
+
+    async def test_info_jobs_offset_covers_active(self) -> None:
+        for i in range(25):
+            await self.enqueue("test", key=f"started-{i:02}")
+        for _ in range(25):
+            await self.dequeue()
+        for i in range(25):
+            await self.enqueue("test", key=f"queued-{i:02}")
+
+        seen: list[str] = []
+        for offset in range(0, 50, 10):
+            page = await self.info_page(offset, 10)
+            self.assertLessEqual(len(page), 10)
+            seen += page
+
+        self.assertEqual(len(seen), len(set(seen)))
+        expected = [f"started-{i:02}" for i in range(25)] + [f"queued-{i:02}" for i in range(25)]
+        self.assertEqual(sorted(seen), sorted(expected))
+
     @mock.patch("saq.utils.time")
     async def test_schedule(self, mock_time: MagicMock) -> None:
         mock_time.time.return_value = 2

@@ -84,6 +84,17 @@ class Queue(ABC):
     def job_id(self, job_key: str) -> str:
         return job_key
 
+    def page_bounds(self, offset: int, limit: int) -> tuple[int, int] | None:
+        """Validates info() paging arguments and returns inclusive (start, stop) bounds.
+
+        Returns None when the page is empty, which is the only sane reading of a limit of 0.
+        """
+        if offset < 0 or limit < 0:
+            raise ValueError(f"offset and limit must be >= 0, got offset={offset}, limit={limit}")
+        if limit == 0:
+            return None
+        return offset, offset + limit - 1
+
     @property
     def swept_error_message(self) -> str:
         return self._swept_error_message

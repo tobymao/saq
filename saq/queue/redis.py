@@ -146,26 +146,18 @@ class RedisQueue(Queue):
         active = await self.count("active")
         incomplete = await self.count("incomplete")
 
-        if jobs:
-            deserialized_jobs = (
-                self.deserialize(job_bytes)
-                for job_bytes in await self.redis.mget(
-                    (await self.redis.lrange(self._active, offset, limit - 1))
-                    + (
-                        await self.redis.zrange(
-                            self._incomplete, offset, limit - 1, withscores=False
-                        )
+        bounds = self.page_bounds(offset, limit) if jobs else None
+        if bounds is not None:
+            job_info = [
+                job.to_dict(safe=True)
+                for job in (
+                    self.deserialize(job_bytes)
+                    for job_bytes in await self.redis.mget(
+                        await self.redis.zrange(self._incomplete, bounds[0], bounds[1])
                     )
                 )
-            )
-            job_info = list(
-                {
-                    job["key"]: job
-                    for job in (
-                        job.to_dict(safe=True) for job in deserialized_jobs if job is not None
-                    )
-                }.values()
-            )
+                if job is not None
+            ]
         else:
             job_info = []
 
