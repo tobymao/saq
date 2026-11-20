@@ -2,12 +2,15 @@
 
 import unittest
 
-from aiohttp import web
-
-from saq import Queue, Worker
-from saq.queue.http import HttpProxy
+from saq import Worker
 from saq.types import Context
-from tests.helpers import create_postgres_queue, setup_postgres, teardown_postgres
+from tests.helpers import (
+    create_http_queue,
+    create_postgres_queue,
+    serve_http_proxy,
+    setup_postgres,
+    teardown_postgres,
+)
 
 
 async def echo(_ctx: Context, *, a: int) -> int:
@@ -15,35 +18,18 @@ async def echo(_ctx: Context, *, a: int) -> int:
 
 
 class TestQueue(unittest.IsolatedAsyncioTestCase):
-    async def handle_post(self, request):
-        body = await request.text()
-        response = await self.proxy.process(body)
-        if response:
-            return web.Response(text=response, content_type="application/json")
-        else:
-            return web.Response(status=200)
-
     async def asyncSetUp(self) -> None:
         await setup_postgres()
         self.queue = await create_postgres_queue()
-        self.proxy = HttpProxy(queue=self.queue)
-        self.app = web.Application()
-        self.app.add_routes([web.post("/", self.handle_post)])
-        self.runner = web.AppRunner(self.app)
-        await self.runner.setup()
-        self.site = web.TCPSite(self.runner, "localhost", 8080)
-        await self.site.start()
+        self.runner, self.url = await serve_http_proxy(self.queue)
 
     async def asyncTearDown(self) -> None:
         await teardown_postgres()
-        await self.site.stop()
         await self.runner.cleanup()
 
     async def test_http_proxy_with_two_workers(self) -> None:
-        queue1 = Queue.from_url("http://localhost:8080/")
-        await queue1.connect()
-        queue2 = Queue.from_url("http://localhost:8080/")
-        await queue2.connect()
+        queue1 = await create_http_queue(self.url)
+        queue2 = await create_http_queue(self.url)
 
         worker = Worker(
             queue=queue1,

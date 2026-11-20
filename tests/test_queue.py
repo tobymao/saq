@@ -11,6 +11,7 @@ import uuid
 from functools import partial
 from unittest import mock
 
+from aiohttp import ClientResponseError
 from psycopg.sql import SQL
 
 from saq.errors import InvalidUrlError
@@ -21,8 +22,10 @@ from saq.utils import uuid1
 from saq.worker import Worker
 from tests.helpers import (
     cleanup_queue,
+    create_http_queue,
     create_postgres_queue,
     create_redis_queue,
+    serve_http_proxy,
     setup_postgres,
     teardown_postgres,
 )
@@ -464,6 +467,7 @@ class TestQueue(unittest.IsolatedAsyncioTestCase):
                 job = await self.enqueue("echo", a=1)
                 raise ValueError()
 
+        await job.refresh()
         self.assertEqual(job.status, Status.ABORTED)
 
     async def test_before_enqueue(self) -> None:
@@ -646,6 +650,35 @@ class TestRedisQueue(TestQueue):
     async def test_job_key(self) -> None:
         self.assertEqual("a", self.queue.job_key_from_id(self.queue.job_id("a")))
         self.assertEqual("a:b", self.queue.job_key_from_id(self.queue.job_id("a:b")))
+
+
+class TestHttpQueue(TestQueue):
+    async def asyncSetUp(self) -> None:
+        self.backend = await create_redis_queue()
+        self.addAsyncCleanup(cleanup_queue, self.backend)
+        runner, url = await serve_http_proxy(self.backend)
+        self.addAsyncCleanup(runner.cleanup)
+        self.create_queue = partial(create_http_queue, url, max_retries=0)
+        self.queue = await self.create_queue()
+
+    async def test_enqueue_dup(self) -> None:
+        job = await self.enqueue("test", key="1")
+        # the proxy's ids are the backing queue's ids, not this client's
+        self.assertEqual(job.id, "1")
+        self.assertIsNone(await self.queue.enqueue("test", key="1"))
+        self.assertIsNone(await self.queue.enqueue(job))
+
+    async def test_schedule(self) -> None:
+        self.skipTest("schedule() returns ids from the backing queue")
+
+    async def test_info_jobs_json_safe(self) -> None:
+        self.skipTest("HttpQueue always serializes with json")
+
+    async def test_info_jobs_negative_paging_raises(self) -> None:
+        await self.enqueue("test", key="job-00")
+        for offset, limit in ((-1, 10), (0, -1)):
+            with self.assertRaises(ClientResponseError):
+                await self.info_page(offset, limit)
 
 
 class TestPostgresQueue(TestQueue):

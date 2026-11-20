@@ -3,9 +3,11 @@ import time
 import typing as t
 
 import psycopg
+from aiohttp import web
 
 from saq.job import Job, Status
 from saq.queue import Queue
+from saq.queue.http import HttpProxy, HttpQueue
 from saq.queue.postgres import PostgresQueue
 from saq.queue.redis import RedisQueue
 from saq.types import CountKind
@@ -18,6 +20,34 @@ async def create_redis_queue(url="redis://localhost:6379", **kwargs: t.Any) -> R
     await queue.connect()
     await queue.redis.flushdb()
     return queue
+
+
+async def create_http_queue(url: str, **kwargs: t.Any) -> HttpQueue:
+    queue = t.cast(HttpQueue, Queue.from_url(url, **kwargs))
+    await queue.connect()
+    return queue
+
+
+async def serve_http_proxy(queue: Queue) -> tuple[web.AppRunner, str]:
+    """Serves HttpProxy for queue on a free localhost port; returns the runner and its url."""
+    proxy = HttpProxy(queue=queue)
+
+    async def handle_post(request: web.Request) -> web.Response:
+        response = await proxy.process(await request.text())
+        if response is None:
+            return web.Response(status=200)
+        return web.Response(text=response, content_type="application/json")
+
+    app = web.Application()
+    app.add_routes([web.post("/", handle_post)])
+    # a proxied dequeue with no timeout blocks the backend forever, so teardown must
+    # not wait out the default 60s shutdown grace for a handler that never returns
+    runner = web.AppRunner(app, shutdown_timeout=1)
+    await runner.setup()
+    site = web.TCPSite(runner, "127.0.0.1", 0)
+    await site.start()
+    host, port = runner.addresses[0][:2]
+    return runner, f"http://{host}:{port}/"
 
 
 async def create_postgres_queue(**kwargs: t.Any) -> PostgresQueue:
