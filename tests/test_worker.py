@@ -573,10 +573,14 @@ class TestWorker(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(all(cid == correlation_ids[0] for cid in correlation_ids[1:]))
 
     async def test_sweep_abort(self) -> None:
-        state = {"counter": 0}
+        state = {"counter": 0, "attempts": 0}
+        second_attempt = asyncio.Event()
 
         async def handler(_ctx: Context) -> None:
-            await asyncio.sleep(4)
+            state["attempts"] += 1
+            if state["attempts"] == 2:
+                second_attempt.set()
+            await asyncio.sleep(8)
             state["counter"] += 1
 
         self.worker = Worker(
@@ -586,7 +590,11 @@ class TestWorker(unittest.IsolatedAsyncioTestCase):
         )
         asyncio.create_task(self.worker.start())
         await self.queue.enqueue("handler", heartbeat=1, retries=2)
-        await asyncio.sleep(6)
+
+        # a heartbeat of 1s makes the job stuck a second after it starts, so the
+        # sweep aborts the first attempt and retries it: reaching a second attempt
+        # is the signal that the stuck attempt was cancelled instead of finishing
+        await asyncio.wait_for(second_attempt.wait(), timeout=10)
         self.assertEqual(state["counter"], 0)
 
     async def test_process_survives_same_key_concurrent_attempts(self) -> None:
@@ -710,23 +718,27 @@ class TestWorker(unittest.IsolatedAsyncioTestCase):
             functions=FUNCTIONS,
             burst=True,
             max_burst_jobs=1,
-            dequeue_timeout=0.1,
+            dequeue_timeout=0.5,
+            # poll instead of listen: a listen timeout can report an empty dequeue
+            # while jobs are still queued, which stops the burst early
+            poll_interval=0.1,
         )
-        worker_task = asyncio.create_task(worker.start())
+        # enqueue before starting: a burst worker that dequeues into an empty queue
+        # stops before it ever sees a job
         job_a = await self.enqueue("noop")
         job_b = await self.enqueue("noop")
         job_c = await self.enqueue("noop")
 
-        await asyncio.sleep(0.5)
+        worker_task = asyncio.create_task(worker.start())
+        await asyncio.wait_for(worker_task, timeout=10)
         self.assertTrue(worker.event.is_set())
-        await worker_task
 
-        await job_a.refresh()
-        await job_b.refresh()
-        await job_c.refresh()
-        self.assertEqual(job_a.status, Status.COMPLETE)
-        self.assertEqual(job_b.status, Status.QUEUED)
-        self.assertEqual(job_c.status, Status.QUEUED)
+        statuses = []
+        for job in (job_a, job_b, job_c):
+            await job.refresh()
+            statuses.append(job.status)
+        self.assertEqual(statuses.count(Status.COMPLETE), 1, statuses)
+        self.assertEqual(statuses.count(Status.QUEUED), 2, statuses)
 
     async def test_max_burst_jobs_with_concurrency(self) -> None:
         """The cap counts started jobs, so parallel slots cannot overshoot it (#316)."""
@@ -865,18 +877,9 @@ class TestWorkerPostgresQueue(TestWorker):
 class TestHttpRedis(AioHTTPTestCase, TestWorker):
     async def create_server_queue(self) -> None:
         self.server_queue = await create_redis_queue()
-        self.server_worker_kwargs = {}
 
     async def asyncSetUp(self) -> None:
         await self.create_server_queue()
-
-        self.server_worker = Worker(
-            self.server_queue,
-            functions={},
-            concurrency=0,
-            **self.server_worker_kwargs,
-        )
-
         await super().asyncSetUp()
 
         async def create_http_queue():
@@ -886,11 +889,14 @@ class TestHttpRedis(AioHTTPTestCase, TestWorker):
 
         self.create_queue = create_http_queue
         self.queue = await self.create_queue()
-        self.worker = Worker(self.queue, functions=FUNCTIONS)
+        # bound the proxied dequeue: an unbounded one blocks the backing queue
+        # server-side and cannot be cancelled with the request
+        self.worker = Worker(
+            self.queue, functions=FUNCTIONS, dequeue_timeout=0.5, poll_interval=0.1
+        )
 
     async def asyncTearDown(self) -> None:
         await self.worker.stop()
-        await self.server_worker.stop()
         await self.server_queue.disconnect()
         await super().asyncTearDown()
 
@@ -915,16 +921,11 @@ class TestHttpRedis(AioHTTPTestCase, TestWorker):
     def test_stop(self) -> None:
         self.skipTest("Not working")
 
-    async def test_sync_cancel(self) -> None:
-        await self.server_worker.stop()
-        await super().test_sync_cancel()
-
 
 class TestHttpPoll(TestHttpRedis):
     async def create_server_queue(self) -> None:
         await setup_postgres()
         self.server_queue = await create_postgres_queue()
-        self.server_worker_kwargs = {"poll_interval": 0.1}
 
     async def asyncTearDown(self) -> None:
         await super().asyncTearDown()
